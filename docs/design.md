@@ -23,8 +23,15 @@ split into framing, metadata parsing, data decoding and a small high-level API.
 
 Unsupported structures raise `UnsupportedFeature` rather than returning
 plausible-looking but incorrect data. This applies to filtered chunks, layout
-message v4, dense attribute storage, external links, unsupported datatype
+message v4, dense group/attribute storage, external links, unsupported datatype
 classes and v2/fractal-heap chunk indexes.
+
+For modern groups, link-info messages are checked before returning links.
+Allocated fractal-heap or index addresses indicate unsupported dense storage;
+undefined addresses are interpreted using the file's address width. Creation
+order tracking alone does not imply dense storage, so compact ordered groups
+and empty groups remain readable. Invalid or truncated link-info messages
+raise errors rather than being mistaken for an empty group.
 
 All byte reads go through `reader.mbt`, which checks bounds before every access.
 HDF5 addresses are converted to file offsets with the superblock base address,

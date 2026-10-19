@@ -98,7 +98,7 @@ Not supported yet (reported as `UnsupportedFeature`, never silently decoded):
 
 - Filtered chunked datasets, including gzip/deflate, shuffle and fletcher32.
 - Compound, enum, array, bitfield, opaque and reference datatypes.
-- Dense attribute storage and fractal-heap/v2 chunk indexes.
+- Dense group and attribute storage, and modern chunk indexes.
 - External links and writing HDF5 files.
 
 ## Project layout
@@ -126,6 +126,11 @@ committed under `testdata/`. CI therefore does not require Python or an HDF5
 installation. Fixtures cover legacy and latest superblocks, user blocks,
 symbol-table and link-message groups, integer/float/string datasets, scalar
 values, chunked edge cases, attributes and soft links.
+
+Group-storage regression fixtures distinguish empty and compact groups from
+dense groups, which raise `UnsupportedFeature` during link listing, traversal
+or lookup through the group. See `testdata/README.md` for the h5py generator
+and expected contents.
 
 ## Implementation notes
 

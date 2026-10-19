@@ -733,6 +733,133 @@ test "high-level API follows soft links and rejects external links" {
 }
 
 ///|
+test "compact and empty groups remain readable" {
+  let file = Hdf5File::parse(
+    @fs.read_file_to_bytes("testdata/group_storage.h5"),
+  )
+  let empty = file.resolve("/empty")
+  assert_eq(file.links(file.object_header_at(empty.address)).length(), 0)
+  for path in ["/compact", "/compact_ordered"] {
+    let node = file.resolve(path)
+    let links = file.links(file.object_header_at(node.address))
+    assert_eq(links.map(link => link.name), ["value_00", "value_01"])
+    assert_eq(integer_values(file.open_dataset(path + "/value_00")), [0L, 100L])
+    assert_eq(integer_values(file.open_dataset(path + "/value_01")), [1L, 101L])
+  }
+}
+
+///|
+test "dense groups report unsupported storage instead of missing links" {
+  let file = Hdf5File::parse(
+    @fs.read_file_to_bytes("testdata/group_storage.h5"),
+  )
+  let expected = Some(
+    UnsupportedFeature("dense group storage is not supported yet"),
+  )
+  for path in ["/dense", "/dense_ordered"] {
+    let node = file.resolve(path)
+    assert_eq(node.kind, Group)
+    let error = try {
+      file.links(file.object_header_at(node.address)) |> ignore
+      None
+    } catch {
+      error => Some(error)
+    }
+    assert_eq(error, expected)
+    let lookup_error = try {
+      file.open_dataset(path + "/value_00") |> ignore
+      None
+    } catch {
+      error => Some(error)
+    }
+    assert_eq(lookup_error, expected)
+  }
+  let walk_error = try {
+    file.walk() |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(walk_error, expected)
+}
+
+///|
+test "link info uses address-width-specific undefined addresses" {
+  for width in [1, 2, 4, 8] {
+    for flags in [0, 1, 3] {
+      for allocated in [false, true] {
+        let buffer = @buffer.Buffer::Buffer(size_hint=40)
+        buffer.write_byte(b'\x00')
+        buffer.write_byte(flags.to_byte())
+        if (flags & 1) != 0 {
+          buffer.write_uint64_le(42UL)
+        }
+        let addresses = if flags == 3 { 3 } else { 2 }
+        for address_index in 0..<addresses {
+          for _ in 0..<width {
+            buffer.write_byte(
+              if allocated && address_index == 0 {
+                b'\x00'
+              } else {
+                b'\xff'
+              },
+            )
+          }
+        }
+        let header : ObjectHeader = {
+          version: 2,
+          messages: [
+            {
+              msg_type: msg_link_info,
+              flags: b'\x00',
+              data_offset: 0,
+              data: buffer.to_bytes(),
+            },
+          ],
+        }
+        let error = try {
+          read_group_links_v2(header, width) |> ignore
+          None
+        } catch {
+          error => Some(error)
+        }
+        if allocated {
+          assert_eq(
+            error,
+            Some(UnsupportedFeature("dense group storage is not supported yet")),
+          )
+        } else {
+          assert_eq(error, None)
+          assert_eq(read_group_links_v2(header, width).length(), 0)
+        }
+      }
+    }
+  }
+}
+
+///|
+test "invalid link info is not treated as an empty group" {
+  for
+    data in [
+      b"\x00", b"\x00\x00\xff", b"\x00\x01", b"\x00\x02", b"\x00\x04", b"\x01\x00",
+    ] {
+    let header : ObjectHeader = {
+      version: 2,
+      messages: [
+        { msg_type: msg_link_info, flags: b'\x00', data_offset: 0, data, },
+      ],
+    }
+    let error = try {
+      read_group_links_v2(header, 8) |> ignore
+      None
+    } catch {
+      error => Some(error)
+    }
+    assert_true(error is Some(_))
+  }
+}
+
+///|
 test "read latest-format attributes" {
   let file = Hdf5File::parse(@fs.read_file_to_bytes("testdata/attrs_v3.h5"))
   let attributes = file.attributes("/")

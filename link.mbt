@@ -81,6 +81,36 @@ pub fn read_group_links_v2(
 ) -> Array[GroupLink] raise Hdf5Error {
   let links : Array[GroupLink] = []
   for message in header.messages {
+    if message.msg_type == msg_link_info {
+      let reader = Reader::new(message.data)
+      guard reader.read_u8() == b'\x00' else {
+        raise UnsupportedFeature("unsupported link info message version")
+      }
+      let flags = reader.read_u8().to_int()
+      guard (flags & 0xFC) == 0 && (flags & 0x03) != 2 else {
+        raise InvalidField("invalid link info flags")
+      }
+      if (flags & 0x01) != 0 {
+        reader.skip(8)
+      }
+      let heap_address = reader.read_uint_le(offset_size)
+      let name_index_address = reader.read_uint_le(offset_size)
+      let undefined = if offset_size == 8 {
+        0xFFFFFFFFFFFFFFFFUL
+      } else {
+        (1UL << (offset_size * 8)) - 1UL
+      }
+      let order_index_address = if (flags & 0x02) != 0 {
+        reader.read_uint_le(offset_size)
+      } else {
+        undefined
+      }
+      if heap_address != undefined ||
+        name_index_address != undefined ||
+        order_index_address != undefined {
+        raise UnsupportedFeature("dense group storage is not supported yet")
+      }
+    }
     if message.msg_type == msg_link {
       links.push(parse_link_message(message, offset_size))
     }
