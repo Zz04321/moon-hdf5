@@ -110,24 +110,34 @@ fn decode_filters(
         }
       }
       2 => {
-        guard filter.parameters.length() == 1 &&
-          filter.parameters[0] == element_size.reinterpret_as_uint() &&
-          element_size > 0 else {
+        guard filter.parameters.length() == 1 else {
+          raise InvalidField("invalid shuffle element size")
+        }
+        let shuffle_size = if element_size > 0 {
+          element_size
+        } else {
+          let parameter = filter.parameters[0]
+          guard parameter > 0U && parameter <= 0x7FFFFFFFU else {
+            raise InvalidField("invalid shuffle element size")
+          }
+          parameter.reinterpret_as_int()
+        }
+        guard filter.parameters[0] == shuffle_size.reinterpret_as_uint() else {
           raise InvalidField("invalid shuffle element size")
         }
         guard output.length() <= limit else {
           raise InvalidField("oversized shuffle chunk")
         }
-        let elements = output.length() / element_size
+        let elements = output.length() / shuffle_size
         let restored = FixedArray::make(output.length(), b'\x00')
-        for byte_index in 0..<element_size {
+        for byte_index in 0..<shuffle_size {
           for element in 0..<elements {
-            restored[element * element_size + byte_index] = output[byte_index *
+            restored[element * shuffle_size + byte_index] = output[byte_index *
               elements +
               element]
           }
         }
-        for tail in (elements * element_size)..<output.length() {
+        for tail in (elements * shuffle_size)..<output.length() {
           restored[tail] = output[tail]
         }
         restored.unsafe_reinterpret_as_bytes()

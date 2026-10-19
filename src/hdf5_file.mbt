@@ -98,7 +98,14 @@ pub fn Hdf5File::links(
         self.superblock.base_address,
       )
     }
-    None => read_group_links_v2(header, self.superblock.offset_size)
+    None =>
+      read_group_links_v2(
+        self.bytes,
+        header,
+        self.superblock.offset_size,
+        self.superblock.length_size,
+        self.superblock.base_address,
+      )
   }
 }
 

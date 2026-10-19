@@ -132,6 +132,12 @@ fn parse_superblock_v2(
   let end_of_file_address = reader.read_uint_le(offset_size)
   let root_group_address = reader.read_uint_le(offset_size)
   let superblock_checksum = reader.read_u32_le()
+  verify_metadata_checksum(
+    reader.bytes,
+    offset,
+    reader.position() - metadata_checksum_size,
+    "superblock",
+  )
   {
     superblock_offset: offset,
     superblock_end: reader.position(),

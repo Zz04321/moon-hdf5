@@ -74,10 +74,27 @@ pub fn parse_link_message(
 }
 
 ///|
-/// Reads all hard, soft and external links stored directly in a v2 group.
+/// Reads a link message stored in a dense group's fractal heap.
+fn parse_dense_link(
+  data : Bytes,
+  flags : Byte,
+  offset_size : Int32,
+) -> GroupLink raise Hdf5Error {
+  parse_link_message(
+    { msg_type: msg_link, flags, data_offset: 0, data, },
+    offset_size,
+  )
+}
+
+///|
+/// Reads all hard, soft and external links stored in a v2 group, including
+/// compact links and links indexed by a fractal heap and v2 B-tree.
 pub fn read_group_links_v2(
+  bytes : Bytes,
   header : ObjectHeader,
   offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
 ) -> Array[GroupLink] raise Hdf5Error {
   let links : Array[GroupLink] = []
   for message in header.messages {
@@ -105,12 +122,57 @@ pub fn read_group_links_v2(
       } else {
         undefined
       }
-      if heap_address != undefined ||
-        name_index_address != undefined ||
-        order_index_address != undefined {
-        raise UnsupportedFeature("dense group storage is not supported yet")
+      if heap_address != undefined {
+        let ordered = (flags & 0x02) != 0 && order_index_address != undefined
+        let index_address = if ordered {
+          order_index_address
+        } else if name_index_address != undefined {
+          name_index_address
+        } else {
+          raise InvalidField("dense group has no name or order index")
+        }
+        let heap = parse_fractal_heap(
+          bytes, heap_address, offset_size, length_size, base_address,
+        )
+        let records = read_metadata_btree_records(
+          bytes,
+          index_address,
+          offset_size,
+          length_size,
+          base_address,
+          [5, 6],
+        )
+        let dense : Array[GroupLink] = []
+        for record in records {
+          dense.push(
+            parse_dense_link(
+              heap.get_data(record.heap_id),
+              record.flags,
+              offset_size,
+            ),
+          )
+        }
+        if !ordered {
+          dense.sort_by((left, right) => {
+            if left.name < right.name {
+              -1
+            } else if left.name > right.name {
+              1
+            } else {
+              0
+            }
+          })
+        }
+        links.append(dense)
+      } else {
+        guard name_index_address == undefined &&
+          order_index_address == undefined else {
+          raise InvalidField("group index is present without a fractal heap")
+        }
       }
     }
+  }
+  for message in header.messages {
     if message.msg_type == msg_link {
       links.push(parse_link_message(message, offset_size))
     }

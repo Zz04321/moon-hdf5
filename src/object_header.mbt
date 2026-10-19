@@ -232,6 +232,12 @@ fn parse_v2_message_block(
         guard signature == b"OCHK" else {
           raise InvalidField("object header continuation is missing OCHK")
         }
+        verify_metadata_checksum(
+          bytes,
+          continuation_offset,
+          continuation_offset + length.to_int() - metadata_checksum_size,
+          "object header continuation",
+        )
         parse_v2_message_block(
           bytes,
           complete.sub(continuation_offset + 4, length.to_int() - 8),
@@ -278,8 +284,13 @@ fn parse_object_header_v2(
   }
   let chunk_size = raw_chunk_size.to_int()
   let payload_start = reader.position()
+  verify_metadata_checksum(
+    bytes,
+    address,
+    payload_start + chunk_size,
+    "object header",
+  )
   let block = reader.sub(payload_start, chunk_size)
-  let _checksum = reader.sub(payload_start + chunk_size, 4)
   let messages : Array[HeaderMessage] = []
   let visited : Array[Int32] = [address]
   parse_v2_message_block(

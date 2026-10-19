@@ -154,18 +154,38 @@ fn ExtensibleReader::data_block(
     return
   }
   let reader = self.block(address, b"EADB")
+  let absolute = address_to_offset(address, self.base_address)
   guard reader.read_var_uint_le((self.config.max_bits + 7) / 8) ==
     block_offset.reinterpret_as_uint64() else {
     raise InvalidField("invalid extensible array data block offset")
   }
   let page_size = 1L << self.config.page_bits
   if count <= page_size {
+    verify_metadata_checksum(
+      self.bytes,
+      absolute,
+      (reader.position().to_int64() + count * self.entry_size.to_int64()).to_int(),
+      "extensible array data block",
+    )
     self.entries(reader, count, start)
   } else {
+    verify_metadata_checksum(
+      self.bytes,
+      absolute,
+      reader.position(),
+      "extensible array data block",
+    )
     reader.skip(4)
-    let pages = count / page_size
+    let pages = (count + page_size - 1) / page_size
     let page_bytes = page_size * self.entry_size.to_int64() + 4
-    guard pages * page_bytes <= reader.remaining().to_int64() else {
+    let last_page_elements = count % page_size
+    let pages_size = (pages - 1) * page_bytes +
+      (if last_page_elements > 0 {
+        last_page_elements * self.entry_size.to_int64() + 4
+      } else {
+        page_bytes
+      })
+    guard pages_size <= reader.remaining().to_int64() else {
       raise InvalidField("extensible array pages extend beyond input")
     }
     let page_start = reader.position().to_int64()
@@ -180,12 +200,22 @@ fn ExtensibleReader::data_block(
       }
       if (bitmap[(bit / 8).to_int()].to_int() & (0x80 >> (bit % 8).to_int())) !=
         0 {
+        let page_elements = if page + 1 == pages.to_int() &&
+          last_page_elements > 0 {
+          last_page_elements
+        } else {
+          page_size
+        }
+        let page_offset = page_start + page.to_int64() * page_bytes
+        verify_metadata_checksum(
+          self.bytes,
+          page_offset.to_int(),
+          (page_offset + page_elements * self.entry_size.to_int64()).to_int(),
+          "extensible array data block page",
+        )
         self.entries(
-          Reader::at(
-            self.bytes,
-            (page_start + page.to_int64() * page_bytes).to_int(),
-          ),
-          page_size,
+          Reader::at(self.bytes, page_offset.to_int()),
+          page_elements,
           first,
         )
       }
@@ -249,10 +279,8 @@ fn read_extensible_array_chunks(
       order.push(dimension)
     }
   }
-  let header = Reader::at(
-    bytes,
-    address_to_offset(layout.data_address, base_address),
-  )
+  let header_offset = address_to_offset(layout.data_address, base_address)
+  let header = Reader::at(bytes, header_offset)
   guard header.read_bytes(4) == b"EAHD" && header.read_u8() == b'\x00' else {
     raise InvalidField("invalid extensible array header")
   }
@@ -284,6 +312,12 @@ fn read_extensible_array_chunks(
   let maximum_set = header.read_uint_le(length_size)
   header.read_uint_le(length_size) |> ignore
   let index_address = header.read_uint_le(offset_size)
+  verify_metadata_checksum(
+    bytes,
+    header_offset,
+    header.position(),
+    "extensible array header",
+  )
   header.skip(4)
   guard config.max_bits == 64 || maximum_set <= 1UL << config.max_bits else {
     raise InvalidField("extensible array index exceeds capacity")
@@ -329,6 +363,12 @@ fn read_extensible_array_chunks(
   for _ in first_super..<levels {
     supers.push(index.read_uint_le(offset_size))
   }
+  verify_metadata_checksum(
+    bytes,
+    address_to_offset(index_address, base_address),
+    index.position(),
+    "extensible array index block",
+  )
   index.skip(4)
   context.entries(
     Reader::at(bytes, entry_start),
@@ -384,6 +424,12 @@ fn read_extensible_array_chunks(
           block_index.to_int64() * pages,
         )
       }
+      verify_metadata_checksum(
+        bytes,
+        address_to_offset(supers[level - first_super], base_address),
+        super_block.position(),
+        "extensible array super block",
+      )
       super_block.skip(4)
     }
     start = start + blocks * count

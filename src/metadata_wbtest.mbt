@@ -79,11 +79,16 @@ test "attribute info validates address widths and index flags" {
         } catch {
           error => Some(error)
         }
-        if allocated_index >= 0 && allocated_index < count {
+        if allocated_index == 0 {
+          assert_eq(
+            error,
+            Some(InvalidField("dense attributes have no name or order index")),
+          )
+        } else if allocated_index > 0 && allocated_index < count {
           assert_eq(
             error,
             Some(
-              UnsupportedFeature("dense attribute storage is not supported yet"),
+              InvalidField("attribute index is present without a fractal heap"),
             ),
           )
         } else {
@@ -161,16 +166,20 @@ test "attribute storage is independent of creation order tracking" {
       [1L],
     )
   }
+  let names = [
+    "attr_00", "attr_01", "attr_02", "attr_03", "attr_04", "attr_05", "attr_06",
+    "attr_07", "attr_08", "attr_09", "attr_10", "attr_11",
+  ]
   for path in ["/dense", "/dense_ordered"] {
-    let error = try {
-      file.attributes(path) |> ignore
-      None
-    } catch {
-      error => Some(error)
+    let attributes = file.attributes(path)
+    assert_eq(attributes.map(attribute => attribute.name), names)
+    for index in 0..<names.length() {
+      assert_eq(
+        values_integers(
+          find_attribute(attributes, names[index]).values.unwrap(),
+        ),
+        [index.to_int64()],
+      )
     }
-    assert_eq(
-      error,
-      Some(UnsupportedFeature("dense attribute storage is not supported yet")),
-    )
   }
 }

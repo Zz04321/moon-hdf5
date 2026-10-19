@@ -111,3 +111,11 @@ test "filter pipeline framing and masks reject invalid input" {
     Some(InvalidField("decoded chunk size does not match declared shape")),
   )
 }
+
+///|
+test "shuffle can derive its element size from the filter pipeline" {
+  let filters : Array[Filter] = [{ id: 2, parameters: [4U], }]
+  let shuffled = b"aebfcgdh"
+  assert_eq(decode_filters(shuffled, filters, 0U, 0, 8), b"abcdefgh")
+  assert_eq(decode_filters(shuffled, filters, 0U, 4, 8), b"abcdefgh")
+}

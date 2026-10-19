@@ -23,17 +23,18 @@ fn decode_c_string(bytes : Bytes) -> String raise Hdf5Error {
 }
 
 ///|
-fn parse_attribute_message(
-  message : HeaderMessage,
+fn parse_attribute_data(
+  data : Bytes,
+  message_flags : Byte,
   bytes : Bytes,
   offset_size : Int32,
   length_size : Int32,
   base_address : UInt64,
 ) -> Attribute raise Hdf5Error {
-  guard message.msg_type == msg_attribute else {
-    raise InvalidField("message is not an attribute message")
+  guard (message_flags.to_int() & 0x02) == 0 else {
+    raise UnsupportedFeature("shared attribute messages are not supported yet")
   }
-  let reader = Reader::new(message.data)
+  let reader = Reader::new(data)
   let version = reader.read_u8().to_int()
   let flags = if version == 1 {
     let _reserved = reader.read_u8()
@@ -59,7 +60,7 @@ fn parse_attribute_message(
     reader.skip(round_up_to_eight(datatype_size) - datatype_size)
   }
   let dataspace_data = reader.read_bytes(dataspace_size)
-  let data = reader.read_bytes(reader.remaining())
+  let value_data = reader.read_bytes(reader.remaining())
   guard (flags & 0x03) == 0 else {
     raise UnsupportedFeature("shared attribute datatype or dataspace")
   }
@@ -68,13 +69,34 @@ fn parse_attribute_message(
   let count = dataspace.element_count()
   let values = Some(
     decode_values(
-      bytes, data, count, datatype, offset_size, length_size, base_address,
+      bytes, value_data, count, datatype, offset_size, length_size, base_address,
     ),
   ) catch {
     UnsupportedFeature(_) => None
     error => raise error
   }
   { name: decode_c_string(name_bytes), dataspace, datatype, values, }
+}
+
+///|
+fn parse_attribute_message(
+  message : HeaderMessage,
+  bytes : Bytes,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> Attribute raise Hdf5Error {
+  guard message.msg_type == msg_attribute else {
+    raise InvalidField("message is not an attribute message")
+  }
+  parse_attribute_data(
+    message.data,
+    message.flags,
+    bytes,
+    offset_size,
+    length_size,
+    base_address,
+  )
 }
 
 ///|
@@ -86,6 +108,7 @@ pub fn read_attributes(
   length_size : Int32,
   base_address : UInt64,
 ) -> Array[Attribute] raise Hdf5Error {
+  let attributes : Array[Attribute] = []
   for message in header.find(msg_attribute_info) {
     let reader = Reader::new(message.data)
     guard reader.read_u8() == b'\x00' else {
@@ -110,13 +133,57 @@ pub fn read_attributes(
     } else {
       undefined
     }
-    if heap_address != undefined ||
-      name_index_address != undefined ||
-      order_index_address != undefined {
-      raise UnsupportedFeature("dense attribute storage is not supported yet")
+    if heap_address != undefined {
+      let ordered = (flags & 2) != 0 && order_index_address != undefined
+      let index_address = if ordered {
+        order_index_address
+      } else if name_index_address != undefined {
+        name_index_address
+      } else {
+        raise InvalidField("dense attributes have no name or order index")
+      }
+      let heap = parse_fractal_heap(
+        bytes, heap_address, offset_size, length_size, base_address,
+      )
+      let records = read_metadata_btree_records(
+        bytes,
+        index_address,
+        offset_size,
+        length_size,
+        base_address,
+        [8, 9],
+      )
+      let dense : Array[Attribute] = []
+      for record in records {
+        dense.push(
+          parse_attribute_data(
+            heap.get_data(record.heap_id),
+            record.flags,
+            bytes,
+            offset_size,
+            length_size,
+            base_address,
+          ),
+        )
+      }
+      if !ordered {
+        dense.sort_by((left, right) => {
+          if left.name < right.name {
+            -1
+          } else if left.name > right.name {
+            1
+          } else {
+            0
+          }
+        })
+      }
+      attributes.append(dense)
+    } else {
+      guard name_index_address == undefined && order_index_address == undefined else {
+        raise InvalidField("attribute index is present without a fractal heap")
+      }
     }
   }
-  let attributes : Array[Attribute] = []
   for message in header.messages {
     if message.msg_type == msg_attribute {
       attributes.push(

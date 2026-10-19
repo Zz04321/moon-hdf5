@@ -59,13 +59,37 @@ test "parse v3 superblock" {
   buf.write_uint64_le(0UL)
   buf.write_uint64_le(512UL)
   buf.write_uint64_le(0x30UL)
-  buf.write_uint_le(0xDEADBEEFU)
+  let checksum = metadata_checksum(buf.to_bytes(), 0, buf.length())
+  buf.write_uint_le(checksum)
   let superblock = parse_superblock(buf.to_bytes())
   assert_eq(superblock.version, 3)
   assert_eq(superblock.end_of_file_address, 512UL)
   assert_eq(superblock.root_group_object_header, 0x30UL)
-  assert_eq(superblock.superblock_checksum, 0xDEADBEEFU)
+  assert_eq(superblock.superblock_checksum, checksum)
   assert_eq(superblock.superblock_end, 48)
+}
+
+///|
+test "reject a corrupt v3 superblock checksum" {
+  let buf = @buffer.Buffer::Buffer(size_hint=64)
+  write_signature(buf)
+  buf.write_byte(b'\x03')
+  buf.write_byte(b'\x08')
+  buf.write_byte(b'\x08')
+  buf.write_byte(b'\x00')
+  buf.write_uint64_le(0UL)
+  buf.write_uint64_le(0UL)
+  buf.write_uint64_le(512UL)
+  buf.write_uint64_le(0x30UL)
+  let checksum = metadata_checksum(buf.to_bytes(), 0, buf.length()) + 1U
+  buf.write_uint_le(checksum)
+  let error = try {
+    parse_superblock(buf.to_bytes()) |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(error, Some(InvalidField("superblock checksum mismatch")))
 }
 
 ///|
@@ -154,7 +178,7 @@ test "parse v2 object header link message" {
   buf.write_uint16_le(8)
   buf.write_byte(b'\x00')
   buf.write_uint64_le(0x30UL)
-  buf.write_uint_le(0U)
+  buf.write_uint_le(metadata_checksum(buf.to_bytes(), 0, buf.length()))
   let header = parse_object_header(buf.to_bytes(), 0UL, 8, 8, 0UL)
   assert_eq(header.version, 2)
   assert_eq(header.messages.length(), 1)
@@ -311,7 +335,13 @@ test "read real v2 link messages" {
     superblock.length_size,
     superblock.base_address,
   )
-  let links = read_group_links_v2(root, superblock.offset_size)
+  let links = read_group_links_v2(
+    bytes,
+    root,
+    superblock.offset_size,
+    superblock.length_size,
+    superblock.base_address,
+  )
   let names = links.map(link => link.name)
   assert_true(names.contains("group"))
   let group_index = names.search("group").unwrap()
@@ -322,7 +352,13 @@ test "read real v2 link messages" {
     superblock.length_size,
     superblock.base_address,
   )
-  let group_links = read_group_links_v2(group, superblock.offset_size)
+  let group_links = read_group_links_v2(
+    bytes,
+    group,
+    superblock.offset_size,
+    superblock.length_size,
+    superblock.base_address,
+  )
   assert_true(group_links.map(link => link.name).contains("values"))
 }
 
@@ -393,7 +429,13 @@ fn open_root_link(bytes : Bytes, name : String) -> GroupLink raise Hdf5Error {
       superblock.base_address,
     )
   } else {
-    read_group_links_v2(root, superblock.offset_size)
+    read_group_links_v2(
+      bytes,
+      root,
+      superblock.offset_size,
+      superblock.length_size,
+      superblock.base_address,
+    )
   }
   match links.search_by(link => link.name == name) {
     Some(index) => links[index]
@@ -423,7 +465,13 @@ fn open_link(
       superblock.base_address,
     )
   } else {
-    read_group_links_v2(header, superblock.offset_size)
+    read_group_links_v2(
+      bytes,
+      header,
+      superblock.offset_size,
+      superblock.length_size,
+      superblock.base_address,
+    )
   }
   match links.search_by(link => link.name == name) {
     Some(index) => links[index]
@@ -748,56 +796,51 @@ test "compact and empty groups remain readable" {
 }
 
 ///|
-test "dense groups report unsupported storage instead of missing links" {
+test "read dense groups through fractal heaps and v2 B-trees" {
   let file = Hdf5File::parse(
     @fs.read_file_to_bytes("testdata/group_storage.h5"),
   )
-  let expected = Some(
-    UnsupportedFeature("dense group storage is not supported yet"),
-  )
+  let names = [
+    "value_00", "value_01", "value_02", "value_03", "value_04", "value_05", "value_06",
+    "value_07", "value_08", "value_09", "value_10", "value_11",
+  ]
   for path in ["/dense", "/dense_ordered"] {
     let node = file.resolve(path)
     assert_eq(node.kind, Group)
-    let error = try {
-      file.links(file.object_header_at(node.address)) |> ignore
-      None
-    } catch {
-      error => Some(error)
+    let links = file.links(file.object_header_at(node.address))
+    assert_eq(links.map(link => link.name), names)
+    for index in 0..<names.length() {
+      assert_eq(integer_values(file.open_dataset(path + "/" + names[index])), [
+        index.to_int64(),
+        (100 + index).to_int64(),
+      ])
     }
-    assert_eq(error, expected)
-    let lookup_error = try {
-      file.open_dataset(path + "/value_00") |> ignore
-      None
-    } catch {
-      error => Some(error)
-    }
-    assert_eq(lookup_error, expected)
   }
-  let walk_error = try {
-    file.walk() |> ignore
-    None
-  } catch {
-    error => Some(error)
-  }
-  assert_eq(walk_error, expected)
+  let nodes = file.walk()
+  assert_true(
+    nodes.search_by(node => node.path == "/dense/value_11") is Some(_),
+  )
+  assert_true(
+    nodes.search_by(node => node.path == "/dense_ordered/value_11") is Some(_),
+  )
 }
 
 ///|
 test "link info uses address-width-specific undefined addresses" {
   for width in [1, 2, 4, 8] {
     for flags in [0, 1, 3] {
-      for allocated in [false, true] {
+      for allocated_index in [-1, 0, 1, 2] {
+        let count = if flags == 3 { 3 } else { 2 }
         let buffer = @buffer.Buffer::Buffer(size_hint=40)
         buffer.write_byte(b'\x00')
         buffer.write_byte(flags.to_byte())
         if (flags & 1) != 0 {
           buffer.write_uint64_le(42UL)
         }
-        let addresses = if flags == 3 { 3 } else { 2 }
-        for address_index in 0..<addresses {
+        for address_index in 0..<count {
           for _ in 0..<width {
             buffer.write_byte(
-              if allocated && address_index == 0 {
+              if address_index == allocated_index {
                 b'\x00'
               } else {
                 b'\xff'
@@ -817,19 +860,24 @@ test "link info uses address-width-specific undefined addresses" {
           ],
         }
         let error = try {
-          read_group_links_v2(header, width) |> ignore
+          read_group_links_v2(b"", header, width, 8, 0UL) |> ignore
           None
         } catch {
           error => Some(error)
         }
-        if allocated {
+        if allocated_index == 0 {
           assert_eq(
             error,
-            Some(UnsupportedFeature("dense group storage is not supported yet")),
+            Some(InvalidField("dense group has no name or order index")),
+          )
+        } else if allocated_index > 0 && allocated_index < count {
+          assert_eq(
+            error,
+            Some(InvalidField("group index is present without a fractal heap")),
           )
         } else {
           assert_eq(error, None)
-          assert_eq(read_group_links_v2(header, width).length(), 0)
+          assert_eq(read_group_links_v2(b"", header, width, 8, 0UL).length(), 0)
         }
       }
     }
@@ -849,7 +897,7 @@ test "invalid link info is not treated as an empty group" {
       ],
     }
     let error = try {
-      read_group_links_v2(header, 8) |> ignore
+      read_group_links_v2(b"", header, 8, 8, 0UL) |> ignore
       None
     } catch {
       error => Some(error)

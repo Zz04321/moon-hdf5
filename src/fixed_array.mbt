@@ -33,10 +33,8 @@ fn read_fixed_array_chunks(
   }
   let maximum_total = product(maximum_grid)
   let chunk_size = chunk_byte_size(layout.chunk_dimensions, datatype.size)
-  let header = Reader::at(
-    bytes,
-    address_to_offset(layout.data_address, base_address),
-  )
+  let header_offset = address_to_offset(layout.data_address, base_address)
+  let header = Reader::at(bytes, header_offset)
   guard header.read_bytes(4) == b"FAHD" && header.read_u8() == b'\x00' else {
     raise InvalidField("invalid fixed array header")
   }
@@ -62,11 +60,18 @@ fn read_fixed_array_chunks(
     )
   }
   let block_address = header.read_uint_le(offset_size)
+  verify_metadata_checksum(
+    bytes,
+    header_offset,
+    header.position(),
+    "fixed array header",
+  )
   header.skip(4)
   if block_address == undefined {
     return
   }
-  let block = Reader::at(bytes, address_to_offset(block_address, base_address))
+  let block_offset = address_to_offset(block_address, base_address)
+  let block = Reader::at(bytes, block_offset)
   guard block.read_bytes(4) == b"FADB" &&
     block.read_u8() == b'\x00' &&
     block.read_u8().to_int() == client &&
@@ -78,12 +83,26 @@ fn read_fixed_array_chunks(
   let page_count = (maximum_total + page_entries - 1) / page_entries
   let bitmap = if paged {
     let bitmap = block.read_bytes(((page_count + 7) / 8).to_int())
+    verify_metadata_checksum(
+      bytes,
+      block_offset,
+      block.position(),
+      "fixed array data block",
+    )
     block.skip(4)
     bitmap
   } else {
     b""
   }
   let entries_start = block.position().to_int64()
+  if !paged {
+    verify_metadata_checksum(
+      bytes,
+      block_offset,
+      (entries_start + maximum_total * entry_size.to_int64()).to_int(),
+      "fixed array data block",
+    )
+  }
   let storage_size = maximum_total * entry_size.to_int64() +
     (if paged { page_count } else { 1L }) * 4
   guard storage_size <= bytes.length().to_int64() - entries_start else {
@@ -114,6 +133,22 @@ fn read_fixed_array_chunks(
     if paged &&
       (bitmap[page.to_int() / 8].to_int() & (0x80 >> (page.to_int() % 8))) == 0 {
       continue
+    }
+    if paged {
+      let page_elements = if page + 1 == page_count {
+        maximum_total - page * page_entries
+      } else {
+        page_entries
+      }
+      let page_offset = entries_start +
+        page * page_entries * entry_size.to_int64() +
+        page * 4L
+      verify_metadata_checksum(
+        bytes,
+        page_offset.to_int(),
+        (page_offset + page_elements * entry_size.to_int64()).to_int(),
+        "fixed array data block page",
+      )
     }
     let position = entries_start +
       stored_index * entry_size.to_int64() +

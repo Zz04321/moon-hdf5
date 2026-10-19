@@ -19,6 +19,8 @@ python3 -m venv /tmp/moon-hdf5-fixtures
 /tmp/moon-hdf5-fixtures/bin/python scripts/generate_fixed_array_fixtures.py
 /tmp/moon-hdf5-fixtures/bin/python scripts/generate_extensible_array_fixtures.py
 /tmp/moon-hdf5-fixtures/bin/python scripts/generate_btree_v2_fixtures.py
+/tmp/moon-hdf5-fixtures/bin/python scripts/generate_interop_matrix.py
+/tmp/moon-hdf5-fixtures/bin/python scripts/generate_fractal_heap_fixtures.py
 ```
 
 Run from the repository root. Scripts reopen files and verify values with h5py.
@@ -39,10 +41,13 @@ Timestamps can vary; tests compare semantics, not binary hashes.
 | btree_v2.h5 | Raw/filtered v2 B-tree chunks, multiple unlimited dimensions, depth-2 trees, edge/sparse chunks, skipped filters, unallocated fills and shrink-to-empty |
 | filters_v1.h5, filters_v2.h5 | Deflate/shuffle/Fletcher32 alone and combined, big-endian edge chunks, odd Fletcher32 byte counts, missing chunks, skipped filters and corrupt checksum; pipeline v1/v2 |
 | header_continuations.h5 | Seven root datasets containing `[42]`, v108 bounds, chained object-header continuations with trailing gaps |
+| interop_earliest.h5, interop_v108.h5, interop_v110.h5 | Matching object matrix across earliest/v108/v110 bounds: compact and dense groups, compact and dense attributes, compact/contiguous/chunked storage, fixed/unlimited dimensions, single chunks, filters, sparse chunks and skipped filter masks |
+| interop_32.h5 | Raw and filtered fixed-array chunks with 4-byte addresses and 8-byte lengths |
+| fractal_heap_advanced.h5 | Filtered dense group with 1200 links plus filtered/raw long-name huge objects; indirect heap blocks and huge v2 B-trees |
 
 Group datasets `value_NN` contain `[NN, NN + 100]`. Compact groups must read
-normally; listing or looking up children of dense groups must raise
-`UnsupportedFeature`.
+normally. Dense groups are indexed by fractal heaps and metadata v2 B-trees;
+listing and looking up their children must return all 12 links in order.
 
 Fill datasets `/numbers/{signed,big_endian,floating}` and `/other/text` have
 shape `(3, 5)`, chunks `(2, 3)`, and two allocated chunks. Fills are -7, -1234,
@@ -52,3 +57,13 @@ shape `(3, 5)`, chunks `(2, 3)`, and two allocated chunks. Fills are -7, -1234,
 
 Small groups isolate fill behavior; header continuation regressions use their
 own fixture. See [the audit](../docs/audit.md) for resolved and remaining issues.
+
+The interop matrix files contain identical object names and values, so the
+same expectations run against superblock v0, v2 and v3. The v110 file covers
+single-chunk, fixed-array, extensible-array and v2 B-tree chunk indexes; the
+earliest and v108 files use v1 B-trees.
+
+`fractal_heap_advanced.h5` stores `/filtered` with deflate and Fletcher32 heap
+filters, enough links to allocate indirect blocks, and a 5005-byte link name
+whose link message is a filtered huge object. `/raw` repeats the long link
+without heap filters so both huge v2 B-tree record types are exercised.

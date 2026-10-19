@@ -67,20 +67,23 @@ Values are `Integers`, `UnsignedIntegers`, `Floats` or `Strings`.
 | Area | Implemented subset |
 | --- | --- |
 | Framing | Superblocks v0–v3, user blocks, object headers v1/v2 |
-| Groups | Symbol tables, compact link messages, hard/soft links |
+| Groups | Symbol tables, compact link messages, dense groups via fractal heaps and metadata v2 B-trees; hard/soft links |
 | Layout | Compact, contiguous, v1 B-tree chunks; v4 single-chunk, implicit, fixed-array, extensible-array and v2 B-tree indexes |
 | Filters | Deflate (HDF5 gzip), shuffle, Fletcher32 and combinations; per-chunk skip masks |
 | Values | Standard int/uint8–64, IEEE float32/64, fixed/vlen strings |
-| Attributes | Inline messages v1–v3 |
+| Attributes | Inline messages v1–v3, dense attributes via fractal heaps and metadata v2 B-trees |
 | Fills | Default zeros and fixed-size numeric/string fills for missing chunks and unallocated contiguous data |
 
-Writing, other filters, dense storage, external
-links and compound/enum/reference types are outside the current scope.
+Writing, other filters, external links and compound/enum/reference types are
+outside the current scope.
 Undefined/disabled fill policies and custom vlen fills are rejected when fill decoding is needed. External dataset storage is unsupported.
 Version support does not imply support for every structure in that version.
-Nonstandard numeric layouts and dense attributes are explicitly rejected.
+Nonstandard numeric layouts are explicitly rejected. Fractal heaps support
+I/O filter pipelines and managed, tiny, direct-huge and indirect-huge objects.
 Empty/null contiguous datasets return empty values. Object-header checksums
-are bounded but not verified.
+and other supported metadata checksums are verified with HDF5's lookup3
+algorithm, covering superblocks, object-header chunks and continuations,
+v2 B-trees, fractal heaps, fixed arrays and extensible arrays.
 Inputs and decoded datasets reside in memory; this is not a streaming reader.
 
 ## Development

@@ -74,7 +74,7 @@ pub fn read_global_heap_object(Bytes, UInt64, Int32, Int32, Int32, UInt64) -> By
 
 pub fn read_group_links_v1(Bytes, UInt64, UInt64, Int32, Int32, UInt64) -> Array[GroupLink] raise Hdf5Error
 
-pub fn read_group_links_v2(ObjectHeader, Int32) -> Array[GroupLink] raise Hdf5Error
+pub fn read_group_links_v2(Bytes, ObjectHeader, Int32, Int32, UInt64) -> Array[GroupLink] raise Hdf5Error
 
 // Errors
 pub(all) suberror Hdf5Error {
