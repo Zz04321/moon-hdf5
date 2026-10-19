@@ -66,7 +66,7 @@ pub fn parse_symbol_table_message(HeaderMessage, Int32, Int32) -> SymbolTableInf
 
 pub fn read_attributes(Bytes, ObjectHeader, Int32, Int32, UInt64) -> Array[Attribute] raise Hdf5Error
 
-pub fn read_chunked_payload(Bytes, DataLayout, Dataspace, Datatype, Int32, UInt64) -> Bytes raise Hdf5Error
+pub fn read_chunked_payload(Bytes, DataLayout, Dataspace, Datatype, Int32, UInt64, fill_value? : Bytes) -> Bytes raise Hdf5Error
 
 pub fn read_dataset(Bytes, ObjectHeader, Int32, Int32, UInt64) -> Dataset raise Hdf5Error
 

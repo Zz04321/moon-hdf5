@@ -19,6 +19,15 @@ split into framing, metadata parsing, data decoding and a small high-level API.
 6. `hdf5_file.mbt` provides path lookup, soft-link following, tree walking and
    convenience methods for datasets and attributes.
 
+Chunked reads initialize the output with the dataset's fill value before
+copying allocated chunks. Fill messages v1/v2/v3 and the legacy message are
+decoded; missing/default fill values use zero bytes. Custom integer, float and
+fixed-string fills repeat the on-disk element bytes, preserving byte order.
+An undefined chunk-index address returns the initialized buffer. Undefined or
+disabled fills and custom variable-length fills are explicitly unsupported.
+The low-level `read_chunked_payload` accepts an optional `fill_value` byte
+sequence; callers omitting it retain the default zero-fill behavior.
+
 ## Error policy
 
 Unsupported structures raise `UnsupportedFeature` rather than returning

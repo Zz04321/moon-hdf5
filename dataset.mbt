@@ -262,10 +262,8 @@ fn message_first(
 }
 
 ///|
-/// Parses a dataset object header and decodes its compact or contiguous data.
-///
-/// Chunked and filtered datasets are reported as `UnsupportedFeature` instead
-/// of being decoded incorrectly.
+/// Parses a dataset object header and decodes compact, contiguous or
+/// unfiltered v1 B-tree chunked data.
 pub fn read_dataset(
   bytes : Bytes,
   header : ObjectHeader,
@@ -303,13 +301,15 @@ pub fn read_dataset(
       reader.read_bytes(stored_size.to_int())
     }
     2 => {
-      if header.first(msg_filter_pipeline) is Some(_) {
-        raise UnsupportedFeature(
-          "filtered chunked datasets are not supported yet",
-        )
-      }
+      let fill_value = dataset_fill_value(header, datatype)
       read_chunked_payload(
-        bytes, layout, dataspace, datatype, offset_size, base_address,
+        bytes,
+        layout,
+        dataspace,
+        datatype,
+        offset_size,
+        base_address,
+        fill_value~,
       )
     }
     _ => raise UnsupportedFeature("unknown data layout class")

@@ -13,6 +13,8 @@ to inspect `.h5` files without a native HDF5 dependency.
 - Hard links and soft links; external links are detected and reported.
 - Datasets with compact, contiguous and unfiltered chunked layout, including
   edge chunks in version 1 chunk B-trees.
+- Default and custom fixed-size chunk fill values, including unallocated
+  chunk indexes (integers, floats and fixed-length strings).
 - Fixed-point integers (8/16/32/64-bit, signed and unsigned, both byte orders),
   IEEE float32/float64, fixed-length strings and variable-length strings stored
   in the global heap.
@@ -100,6 +102,7 @@ Not supported yet (reported as `UnsupportedFeature`, never silently decoded):
 - Compound, enum, array, bitfield, opaque and reference datatypes.
 - Dense group and attribute storage, and modern chunk indexes.
 - External links and writing HDF5 files.
+- Undefined/disabled chunk fill policies and custom variable-length fill values.
 
 ## Project layout
 

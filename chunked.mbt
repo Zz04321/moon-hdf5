@@ -147,6 +147,7 @@ pub fn read_chunked_payload(
   datatype : Datatype,
   offset_size : Int32,
   base_address : UInt64,
+  fill_value~ : Bytes = b"",
 ) -> Bytes raise Hdf5Error {
   guard dataspace.kind == Simple && dataspace.dimensions.length() > 0 else {
     raise InvalidField("chunked datasets require a simple dataspace")
@@ -158,11 +159,38 @@ pub fn read_chunked_payload(
   guard count >= 0 && count <= 0x7FFFFFFFL else {
     raise InvalidField("chunked dataset is too large")
   }
-  let total_size = count.to_int() * datatype.size
-  guard total_size >= 0 else {
+  guard datatype.size > 0 && count <= 0x7FFFFFFFL / datatype.size.to_int64() else {
     raise InvalidField("chunked dataset size overflow")
   }
+  let total_size = count.to_int() * datatype.size
+  guard fill_value.length() == 0 || fill_value.length() == datatype.size else {
+    raise InvalidField("fill value size does not match datatype")
+  }
   let output = FixedArray::make(total_size, b'\x00')
+  if fill_value.length() != 0 {
+    for element in 0..<count.to_int() {
+      output.blit_from_bytes(
+        element * datatype.size,
+        fill_value,
+        0,
+        datatype.size,
+      )
+    }
+  }
+  guard offset_size == 1 ||
+    offset_size == 2 ||
+    offset_size == 4 ||
+    offset_size == 8 else {
+    raise UnsupportedAddressSize(offset_size)
+  }
+  let undefined = if offset_size == 8 {
+    0xFFFFFFFFFFFFFFFFUL
+  } else {
+    (1UL << (offset_size * 8)) - 1UL
+  }
+  if layout.data_address == undefined {
+    return output.unsafe_reinterpret_as_bytes()
+  }
   read_chunk_btree(
     bytes,
     layout.data_address,
