@@ -86,10 +86,35 @@ pub fn read_attributes(
   length_size : Int32,
   base_address : UInt64,
 ) -> Array[Attribute] raise Hdf5Error {
-  if header.first(msg_attribute_info) is Some(message) &&
-    message.data.length() >= 2 &&
-    (message.data.unsafe_get(1).to_int() & 0x01) != 0 {
-    raise UnsupportedFeature("dense attribute storage is not supported yet")
+  for message in header.find(msg_attribute_info) {
+    let reader = Reader::new(message.data)
+    guard reader.read_u8() == b'\x00' else {
+      raise UnsupportedFeature("unsupported attribute info message version")
+    }
+    let flags = reader.read_u8().to_int()
+    guard (flags & 0xFC) == 0 && (flags & 3) != 2 else {
+      raise InvalidField("invalid attribute info flags")
+    }
+    if (flags & 1) != 0 {
+      reader.skip(2)
+    }
+    let heap_address = reader.read_uint_le(offset_size)
+    let name_index_address = reader.read_uint_le(offset_size)
+    let undefined = if offset_size == 8 {
+      0xFFFFFFFFFFFFFFFFUL
+    } else {
+      (1UL << (offset_size * 8)) - 1UL
+    }
+    let order_index_address = if (flags & 2) != 0 {
+      reader.read_uint_le(offset_size)
+    } else {
+      undefined
+    }
+    if heap_address != undefined ||
+      name_index_address != undefined ||
+      order_index_address != undefined {
+      raise UnsupportedFeature("dense attribute storage is not supported yet")
+    }
   }
   let attributes : Array[Attribute] = []
   for message in header.messages {

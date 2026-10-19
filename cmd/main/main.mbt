@@ -35,7 +35,12 @@ fn kind_name(kind : @lib.Hdf5ObjectKind) -> String {
 
 ///|
 fn print_attributes(file : @lib.Hdf5File, path : String) -> Unit {
-  let attributes = file.attributes(path) catch { _ => [] }
+  let attributes = file.attributes(path) catch {
+    error => {
+      println("  attributes " + path + ": " + error.message())
+      return
+    }
+  }
   for attribute in attributes {
     let value = match attribute.values {
       Some(values) => describe_values(values)
