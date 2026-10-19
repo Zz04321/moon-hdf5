@@ -1,0 +1,270 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "Zz04321/moon-hdf5"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn find_superblock_offset(Bytes) -> Int32 raise Hdf5Error
+
+pub let msg_attribute : Int32
+
+pub let msg_attribute_info : Int32
+
+pub let msg_bogus : Int32
+
+pub let msg_data_layout : Int32
+
+pub let msg_dataspace : Int32
+
+pub let msg_datatype : Int32
+
+pub let msg_external_data_files : Int32
+
+pub let msg_fill_value : Int32
+
+pub let msg_fill_value_old : Int32
+
+pub let msg_filter_pipeline : Int32
+
+pub let msg_group_info : Int32
+
+pub let msg_link : Int32
+
+pub let msg_link_info : Int32
+
+pub let msg_modification_time : Int32
+
+pub let msg_nil : Int32
+
+pub let msg_object_comment : Int32
+
+pub let msg_object_continuation : Int32
+
+pub let msg_object_reference_count : Int32
+
+pub let msg_shared_message_table : Int32
+
+pub let msg_symbol_table : Int32
+
+pub fn parse_data_layout(HeaderMessage, Int32, Int32) -> DataLayout raise Hdf5Error
+
+pub fn parse_dataspace(HeaderMessage, Int32) -> Dataspace raise Hdf5Error
+
+pub fn parse_datatype(HeaderMessage) -> Datatype raise Hdf5Error
+
+pub fn parse_link_message(HeaderMessage, Int32) -> GroupLink raise Hdf5Error
+
+pub fn parse_local_heap(Bytes, UInt64, Int32, Int32, UInt64) -> LocalHeap raise Hdf5Error
+
+pub fn parse_object_header(Bytes, UInt64, Int32, Int32, UInt64) -> ObjectHeader raise Hdf5Error
+
+pub fn parse_superblock(Bytes) -> Superblock raise Hdf5Error
+
+pub fn parse_symbol_table_message(HeaderMessage, Int32, Int32) -> SymbolTableInfo raise Hdf5Error
+
+pub fn read_attributes(Bytes, ObjectHeader, Int32, Int32, UInt64) -> Array[Attribute] raise Hdf5Error
+
+pub fn read_chunked_payload(Bytes, DataLayout, Dataspace, Datatype, Int32, UInt64) -> Bytes raise Hdf5Error
+
+pub fn read_dataset(Bytes, ObjectHeader, Int32, Int32, UInt64) -> Dataset raise Hdf5Error
+
+pub fn read_global_heap_object(Bytes, UInt64, Int32, Int32, Int32, UInt64) -> Bytes raise Hdf5Error
+
+pub fn read_group_links_v1(Bytes, UInt64, UInt64, Int32, Int32, UInt64) -> Array[GroupLink] raise Hdf5Error
+
+pub fn read_group_links_v2(ObjectHeader, Int32) -> Array[GroupLink] raise Hdf5Error
+
+// Errors
+pub(all) suberror Hdf5Error {
+  UnexpectedEof(Int64)
+  InvalidSignature
+  UnsupportedSuperblockVersion(Int32)
+  UnsupportedAddressSize(Int32)
+  UnsupportedFeature(String)
+  InvalidField(String)
+} derive(Eq, @debug.Debug)
+pub fn Hdf5Error::equal(Self, Self) -> Bool
+pub fn Hdf5Error::message(Self) -> String
+pub fn Hdf5Error::not_equal(Self, Self) -> Bool
+pub fn Hdf5Error::to_repr(Self) -> @debug.Repr
+
+// Types and methods
+pub(all) struct Attribute {
+  name : String
+  dataspace : Dataspace
+  datatype : Datatype
+  values : DatasetValues?
+} derive(@debug.Debug)
+pub fn Attribute::to_repr(Self) -> @debug.Repr
+
+pub(all) struct DataLayout {
+  version : Int32
+  layout_class : Int32
+  data_address : UInt64
+  data_size : UInt64
+  chunk_dimensions : Array[UInt32]
+  element_size : Int32
+  compact_data : Bytes
+} derive(@debug.Debug)
+pub fn DataLayout::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Dataset {
+  dataspace : Dataspace
+  datatype : Datatype
+  layout : DataLayout
+  values : DatasetValues
+} derive(@debug.Debug)
+pub fn Dataset::to_repr(Self) -> @debug.Repr
+
+pub(all) enum DatasetValues {
+  Integers(Array[Int64])
+  UnsignedIntegers(Array[UInt64])
+  Floats(Array[Double])
+  Strings(Array[String])
+} derive(@debug.Debug)
+pub fn DatasetValues::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Dataspace {
+  kind : DataspaceKind
+  dimensions : Array[UInt64]
+  maximum_dimensions : Array[UInt64]
+} derive(@debug.Debug)
+pub fn Dataspace::element_count(Self) -> Int64 raise Hdf5Error
+pub fn Dataspace::to_repr(Self) -> @debug.Repr
+
+pub(all) enum DataspaceKind {
+  Scalar
+  Simple
+  Null
+} derive(Eq, @debug.Debug)
+pub fn DataspaceKind::equal(Self, Self) -> Bool
+pub fn DataspaceKind::not_equal(Self, Self) -> Bool
+pub fn DataspaceKind::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Datatype {
+  class : Int32
+  version : Int32
+  size : Int32
+  signed : Bool
+  little_endian : Bool
+  vlen_is_string : Bool
+} derive(@debug.Debug)
+pub fn Datatype::to_repr(Self) -> @debug.Repr
+
+pub(all) struct GroupLink {
+  name : String
+  object_header_address : UInt64
+  cache_type : UInt32
+  link_target : String?
+} derive(@debug.Debug)
+pub fn GroupLink::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Hdf5File {
+  bytes : Bytes
+  superblock : Superblock
+} derive(@debug.Debug)
+pub fn Hdf5File::attributes(Self, String) -> Array[Attribute] raise Hdf5Error
+pub fn Hdf5File::links(Self, ObjectHeader) -> Array[GroupLink] raise Hdf5Error
+pub fn Hdf5File::object_header_at(Self, UInt64) -> ObjectHeader raise Hdf5Error
+pub fn Hdf5File::open_dataset(Self, String) -> Dataset raise Hdf5Error
+pub fn Hdf5File::parse(Bytes) -> Self raise Hdf5Error
+pub fn Hdf5File::resolve(Self, String) -> Hdf5Node raise Hdf5Error
+pub fn Hdf5File::root_address(Self) -> UInt64
+pub fn Hdf5File::to_repr(Self) -> @debug.Repr
+pub fn Hdf5File::walk(Self) -> Array[Hdf5Node] raise Hdf5Error
+
+pub(all) struct Hdf5Node {
+  path : String
+  address : UInt64
+  kind : Hdf5ObjectKind
+} derive(Eq, @debug.Debug)
+pub fn Hdf5Node::equal(Self, Self) -> Bool
+pub fn Hdf5Node::not_equal(Self, Self) -> Bool
+pub fn Hdf5Node::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Hdf5ObjectKind {
+  Group
+  Dataset
+  Unknown
+} derive(Eq, @debug.Debug)
+pub fn Hdf5ObjectKind::equal(Self, Self) -> Bool
+pub fn Hdf5ObjectKind::not_equal(Self, Self) -> Bool
+pub fn Hdf5ObjectKind::to_repr(Self) -> @debug.Repr
+
+pub(all) struct HeaderMessage {
+  msg_type : Int32
+  flags : Byte
+  data_offset : Int32
+  data : Bytes
+} derive(@debug.Debug)
+pub fn HeaderMessage::to_repr(Self) -> @debug.Repr
+
+pub(all) struct LocalHeap {
+  bytes : Bytes
+  data_address : Int32
+  data_size : Int32
+  offset_to_free_list : UInt64
+} derive(@debug.Debug)
+pub fn LocalHeap::get_string(Self, UInt64) -> String raise Hdf5Error
+pub fn LocalHeap::to_repr(Self) -> @debug.Repr
+
+pub(all) struct ObjectHeader {
+  version : Int32
+  messages : Array[HeaderMessage]
+} derive(@debug.Debug)
+pub fn ObjectHeader::find(Self, Int32) -> Array[HeaderMessage]
+pub fn ObjectHeader::first(Self, Int32) -> HeaderMessage?
+pub fn ObjectHeader::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Reader {
+  bytes : Bytes
+  mut pos : Int32
+  limit : Int32
+}
+pub fn Reader::at(Bytes, Int32) -> Self raise Hdf5Error
+pub fn Reader::new(Bytes) -> Self
+pub fn Reader::position(Self) -> Int32
+pub fn Reader::read_bytes(Self, Int32) -> Bytes raise Hdf5Error
+pub fn Reader::read_fixed_string(Self, Int32) -> String raise Hdf5Error
+pub fn Reader::read_u16_le(Self) -> UInt16 raise Hdf5Error
+pub fn Reader::read_u32_le(Self) -> UInt32 raise Hdf5Error
+pub fn Reader::read_u64_le(Self) -> UInt64 raise Hdf5Error
+pub fn Reader::read_u8(Self) -> Byte raise Hdf5Error
+pub fn Reader::read_uint_le(Self, Int32) -> UInt64 raise Hdf5Error
+pub fn Reader::remaining(Self) -> Int32
+pub fn Reader::skip(Self, Int32) -> Unit raise Hdf5Error
+pub fn Reader::sub(Self, Int32, Int32) -> Self raise Hdf5Error
+
+pub(all) struct Superblock {
+  superblock_offset : Int32
+  superblock_end : Int32
+  version : Int32
+  offset_size : Int32
+  length_size : Int32
+  file_consistency_flags : UInt32
+  base_address : UInt64
+  free_space_address : UInt64
+  end_of_file_address : UInt64
+  driver_info_address : UInt64
+  superblock_extension_address : UInt64
+  root_group_address : UInt64
+  root_group_object_header : UInt64
+  group_leaf_node_k : UInt16
+  group_internal_node_k : UInt16
+  superblock_checksum : UInt32
+} derive(Eq, @debug.Debug)
+pub fn Superblock::equal(Self, Self) -> Bool
+pub fn Superblock::not_equal(Self, Self) -> Bool
+pub fn Superblock::to_repr(Self) -> @debug.Repr
+
+pub(all) struct SymbolTableInfo {
+  btree_address : UInt64
+  heap_address : UInt64
+} derive(@debug.Debug)
+pub fn SymbolTableInfo::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits

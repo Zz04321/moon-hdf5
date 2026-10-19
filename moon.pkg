@@ -1,0 +1,13 @@
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/utf8",
+}
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/x/fs",
+} for "wbtest"
+
+import {
+  "moonbitlang/x/fs",
+} for "test"

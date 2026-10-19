@@ -1,0 +1,89 @@
+///|
+fn read_link_name(reader : Reader, length : Int32) -> String raise Hdf5Error {
+  let bytes = reader.read_bytes(length)
+  let view = bytes.get_view().unwrap()
+  @utf8.decode(view) catch {
+    _ => raise InvalidField("invalid UTF-8 link name")
+  }
+}
+
+///|
+/// Parses a version 1 link message.
+pub fn parse_link_message(
+  message : HeaderMessage,
+  offset_size : Int32,
+) -> GroupLink raise Hdf5Error {
+  guard message.msg_type == msg_link else {
+    raise InvalidField("message is not a link message")
+  }
+  let reader = Reader::new(message.data)
+  let version = reader.read_u8().to_int()
+  guard version == 1 else {
+    raise InvalidField("unsupported link message version")
+  }
+  let flags = reader.read_u8().to_int()
+  let link_type = if (flags & 0x08) != 0 {
+    reader.read_u8().to_int()
+  } else {
+    0
+  }
+  if (flags & 0x04) != 0 {
+    reader.skip(8)
+  }
+  if (flags & 0x10) != 0 {
+    let _character_set = reader.read_u8()
+  }
+  let length_size = 1 << (flags & 0x03)
+  let name_length = reader.read_uint_le(length_size).to_int()
+  guard name_length >= 0 else {
+    raise InvalidField("negative link name length")
+  }
+  let name = read_link_name(reader, name_length)
+  match link_type {
+    0 => {
+      let address = reader.read_uint_le(offset_size)
+      {
+        name,
+        object_header_address: address,
+        cache_type: 0U,
+        link_target: None,
+      }
+    }
+    1 => {
+      let target_length = reader.read_u16_le().to_int()
+      let target = read_link_name(reader, target_length)
+      {
+        name,
+        object_header_address: 0UL,
+        cache_type: 2U,
+        link_target: Some(target),
+      }
+    }
+    64 => {
+      let target_length = reader.read_u16_le().to_int()
+      let target = read_link_name(reader, target_length)
+      {
+        name,
+        object_header_address: 0UL,
+        cache_type: 64U,
+        link_target: Some(target),
+      }
+    }
+    _ => raise InvalidField("unsupported link type")
+  }
+}
+
+///|
+/// Reads all hard, soft and external links stored directly in a v2 group.
+pub fn read_group_links_v2(
+  header : ObjectHeader,
+  offset_size : Int32,
+) -> Array[GroupLink] raise Hdf5Error {
+  let links : Array[GroupLink] = []
+  for message in header.messages {
+    if message.msg_type == msg_link {
+      links.push(parse_link_message(message, offset_size))
+    }
+  }
+  links
+}
