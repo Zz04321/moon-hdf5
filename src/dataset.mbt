@@ -209,9 +209,11 @@ fn decode_values(
       let values : Array[String] = []
       for i in 0..<n {
         let element_offset = i * datatype.size
-        let length = read_uint_at(payload, element_offset, 4, true)
-          .reinterpret_as_int64()
-          .to_int()
+        let declared_length = read_uint_at(payload, element_offset, 4, true)
+        guard declared_length <= 0x7FFFFFFFUL else {
+          raise InvalidField("variable-length string is too large")
+        }
+        let length = declared_length.to_int()
         if length == 0 {
           values.push("")
         } else {
@@ -264,7 +266,7 @@ fn message_first(
 
 ///|
 /// Parses a dataset object header and decodes compact, contiguous or
-/// unfiltered v1 B-tree chunked data.
+/// chunked data with supported indexes and filters.
 pub fn read_dataset(
   bytes : Bytes,
   header : ObjectHeader,
@@ -282,8 +284,15 @@ pub fn read_dataset(
     offset_size,
     length_size,
   )
-  if header.first(msg_filter_pipeline) is Some(_) {
-    raise UnsupportedFeature("filtered datasets are not supported yet")
+  let filters = match header.first(msg_filter_pipeline) {
+    Some(message) => parse_filters(message)
+    None => []
+  }
+  guard filters.length() == 0 || layout.layout_class == 2 else {
+    raise UnsupportedFeature("filters require chunked storage")
+  }
+  if header.first(msg_external_data_files) is Some(_) {
+    raise UnsupportedFeature("external dataset storage is not supported yet")
   }
   let count = dataspace.element_count()
   guard datatype.size > 0 &&
@@ -294,28 +303,38 @@ pub fn read_dataset(
   let payload = match layout.layout_class {
     0 => layout.compact_data
     1 => {
-      let stored_size = if layout.data_size > 0UL {
-        layout.data_size
+      let undefined = if offset_size == 8 {
+        0xFFFFFFFFFFFFFFFFUL
       } else {
-        count.reinterpret_as_uint64() * datatype.size.to_uint64()
+        (1UL << (offset_size * 8)) - 1UL
       }
-      guard stored_size <= 0x7FFFFFFFUL else {
-        raise InvalidField("contiguous dataset is too large")
+      if count == 0 {
+        b""
+      } else if layout.data_address == undefined {
+        filled_payload(
+          count,
+          datatype.size,
+          dataset_fill_value(header, datatype),
+        ).unsafe_reinterpret_as_bytes()
+      } else {
+        let stored_size = if layout.data_size > 0UL {
+          layout.data_size
+        } else {
+          count.reinterpret_as_uint64() * datatype.size.to_uint64()
+        }
+        guard stored_size <= 0x7FFFFFFFUL else {
+          raise InvalidField("contiguous dataset is too large")
+        }
+        let offset = address_to_offset(layout.data_address, base_address)
+        let reader = Reader::at(bytes, offset)
+        reader.read_bytes(stored_size.to_int())
       }
-      let offset = address_to_offset(layout.data_address, base_address)
-      let reader = Reader::at(bytes, offset)
-      reader.read_bytes(stored_size.to_int())
     }
     2 => {
       let fill_value = dataset_fill_value(header, datatype)
-      read_chunked_payload(
-        bytes,
-        layout,
-        dataspace,
-        datatype,
-        offset_size,
-        base_address,
-        fill_value~,
+      read_chunked_with_filters(
+        bytes, layout, dataspace, datatype, offset_size, base_address, fill_value,
+        filters, length_size,
       )
     }
     _ => raise UnsupportedFeature("unknown data layout class")

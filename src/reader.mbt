@@ -137,6 +137,19 @@ pub fn Reader::read_uint_le(
 }
 
 ///|
+fn Reader::read_var_uint_le(
+  self : Reader,
+  width : Int32,
+) -> UInt64 raise Hdf5Error {
+  guard width >= 1 && width <= 8 else { raise UnsupportedAddressSize(width) }
+  let mut value = 0UL
+  for byte_index in 0..<width {
+    value = value | (self.read_u8().to_uint64() << (8 * byte_index))
+  }
+  value
+}
+
+///|
 pub fn Reader::read_bytes(self : Reader, n : Int32) -> Bytes raise Hdf5Error {
   self.require(n)
   let view = self.bytes.get_view(start=self.pos, end=self.pos + n)

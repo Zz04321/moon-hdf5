@@ -24,7 +24,8 @@ pub fn read_global_heap_object(
   }
   reader.skip(3)
   let collection_size = reader.read_uint_le(length_size)
-  guard collection_size >= 16UL && collection_size <= 0x7FFFFFFFUL else {
+  guard collection_size >= 16UL &&
+    collection_size <= (bytes.length() - offset).to_uint64() else {
     raise InvalidField("invalid global heap collection size")
   }
   let end = offset.to_int64() + collection_size.reinterpret_as_int64()
@@ -44,14 +45,14 @@ pub fn read_global_heap_object(
       raise InvalidField("global heap object extends past its collection")
     }
     let data = reader.read_bytes(size.to_int())
-    let padding = round_up_to_eight(size.to_int()) - size.to_int()
-    if index == object_index {
-      return data
-    }
+    let padding = (8 - size.to_int() % 8) % 8
     guard reader.position().to_int64() + padding.to_int64() <= end else {
       raise InvalidField("global heap padding extends past its collection")
     }
     reader.skip(padding)
+    if index == object_index {
+      return data
+    }
   }
   raise InvalidField("global heap object not found")
 }

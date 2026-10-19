@@ -14,6 +14,38 @@ fn product(values : Array[Int64]) -> Int64 raise Hdf5Error {
 }
 
 ///|
+fn chunk_byte_size(
+  dimensions : Array[UInt32],
+  element_size : Int32,
+) -> Int32 raise Hdf5Error {
+  let count = product(dimensions.map(size => size.to_int64()))
+  guard element_size > 0 && count <= 0x7FFFFFFFL / element_size.to_int64() else {
+    raise InvalidField("chunk byte size is too large")
+  }
+  count.to_int() * element_size
+}
+
+///|
+fn read_filtered_chunk(
+  bytes : Bytes,
+  address : UInt64,
+  base_address : UInt64,
+  stored_size : UInt64,
+  filters : Array[Filter],
+  mask : UInt32,
+  element_size : Int32,
+  expected_size : Int32,
+) -> Bytes raise Hdf5Error {
+  guard stored_size > 0UL && stored_size <= 0x7FFFFFFFUL else {
+    raise InvalidField("invalid stored chunk size")
+  }
+  let data = Reader::at(bytes, address_to_offset(address, base_address)).read_bytes(
+    stored_size.to_int(),
+  )
+  decode_filters(data, filters, mask, element_size, expected_size)
+}
+
+///|
 fn copy_chunk(
   chunk_data : Bytes,
   chunk_size : Int32,
@@ -91,6 +123,7 @@ fn read_chunk_btree(
   offset_size : Int32,
   base_address : UInt64,
   output : FixedArray[Byte],
+  filters : Array[Filter],
 ) -> Unit raise Hdf5Error {
   let offset = address_to_offset(node_address, base_address)
   let reader = Reader::at(bytes, offset)
@@ -122,9 +155,6 @@ fn read_chunk_btree(
       }
     }
     let child = reader.read_uint_le(offset_size)
-    guard filter_mask == 0U else {
-      raise UnsupportedFeature("chunk filters are not supported yet")
-    }
     if node_level > 0 {
       read_chunk_btree(
         bytes,
@@ -136,15 +166,28 @@ fn read_chunk_btree(
         offset_size,
         base_address,
         output,
+        filters,
       )
     } else {
       guard chunk_size >= 0 else { raise InvalidField("negative chunk size") }
-      let chunk_data = Reader::at(bytes, address_to_offset(child, base_address)).read_bytes(
-        chunk_size,
+      let decoded = read_filtered_chunk(
+        bytes,
+        child,
+        base_address,
+        chunk_size.to_uint64(),
+        filters,
+        filter_mask,
+        element_size,
+        chunk_byte_size(chunk_dimensions, element_size),
       )
       copy_chunk(
-        chunk_data, chunk_size, offsets, chunk_dimensions, dataspace_dimensions,
-        element_size, output,
+        decoded,
+        decoded.length(),
+        offsets,
+        chunk_dimensions,
+        dataspace_dimensions,
+        element_size,
+        output,
       )
     }
   }
@@ -165,12 +208,59 @@ pub fn read_chunked_payload(
   offset_size : Int32,
   base_address : UInt64,
   fill_value~ : Bytes = b"",
+  length_size~ : Int32 = 8,
+) -> Bytes raise Hdf5Error {
+  read_chunked_with_filters(
+    bytes,
+    layout,
+    dataspace,
+    datatype,
+    offset_size,
+    base_address,
+    fill_value,
+    [],
+    length_size,
+  )
+}
+
+///|
+fn read_chunked_with_filters(
+  bytes : Bytes,
+  layout : DataLayout,
+  dataspace : Dataspace,
+  datatype : Datatype,
+  offset_size : Int32,
+  base_address : UInt64,
+  fill_value : Bytes,
+  filters : Array[Filter],
+  length_size : Int32,
 ) -> Bytes raise Hdf5Error {
   guard dataspace.kind == Simple && dataspace.dimensions.length() > 0 else {
     raise InvalidField("chunked datasets require a simple dataspace")
   }
   guard layout.chunk_dimensions.length() == dataspace.dimensions.length() else {
     raise InvalidField("chunk rank does not match the dataspace rank")
+  }
+  if layout.version == 4 {
+    guard layout.element_size == datatype.size else {
+      raise InvalidField("chunk element size does not match datatype")
+    }
+    match layout.chunk_index {
+      Single(_, _) => {
+        guard dataspace.maximum_dimensions == dataspace.dimensions &&
+          dataspace.dimensions ==
+          layout.chunk_dimensions.map(size => size.to_uint64()) else {
+          raise InvalidField("single chunk dimensions must match dataspace")
+        }
+      }
+      Implicit => {
+        guard filters.length() == 0 else {
+          raise InvalidField("implicit chunks cannot have filters")
+        }
+      }
+      BTreeV1 => raise InvalidField("v4 layout cannot use a v1 B-tree index")
+      FixedArray(_) | ExtensibleArray(_) | BTreeV2(_) => ()
+    }
   }
   let count = dataspace.element_count()
   guard count >= 0 && count <= 0x7FFFFFFFL else {
@@ -179,21 +269,7 @@ pub fn read_chunked_payload(
   guard datatype.size > 0 && count <= 0x7FFFFFFFL / datatype.size.to_int64() else {
     raise InvalidField("chunked dataset size overflow")
   }
-  let total_size = count.to_int() * datatype.size
-  guard fill_value.length() == 0 || fill_value.length() == datatype.size else {
-    raise InvalidField("fill value size does not match datatype")
-  }
-  let output = FixedArray::make(total_size, b'\x00')
-  if fill_value.length() != 0 {
-    for element in 0..<count.to_int() {
-      output.blit_from_bytes(
-        element * datatype.size,
-        fill_value,
-        0,
-        datatype.size,
-      )
-    }
-  }
+  let output = filled_payload(count, datatype.size, fill_value)
   guard offset_size == 1 ||
     offset_size == 2 ||
     offset_size == 4 ||
@@ -208,16 +284,39 @@ pub fn read_chunked_payload(
   if layout.data_address == undefined {
     return output.unsafe_reinterpret_as_bytes()
   }
-  read_chunk_btree(
-    bytes,
-    layout.data_address,
-    -1,
-    layout.chunk_dimensions,
-    dataspace.dimensions,
-    datatype.size,
-    offset_size,
-    base_address,
-    output,
-  )
+  match layout.chunk_index {
+    BTreeV1 =>
+      read_chunk_btree(
+        bytes,
+        layout.data_address,
+        -1,
+        layout.chunk_dimensions,
+        dataspace.dimensions,
+        datatype.size,
+        offset_size,
+        base_address,
+        output,
+        filters,
+      )
+    FixedArray(page_bits) =>
+      read_fixed_array_chunks(
+        bytes, layout, dataspace, datatype, offset_size, length_size, base_address,
+        filters, output, undefined, page_bits,
+      )
+    ExtensibleArray(config) =>
+      read_extensible_array_chunks(
+        bytes, layout, dataspace, datatype, offset_size, length_size, base_address,
+        filters, output, undefined, config,
+      )
+    BTreeV2(config) =>
+      read_btree_v2_chunks(
+        bytes, layout, dataspace, datatype, offset_size, length_size, base_address,
+        filters, output, undefined, config,
+      )
+    _ =>
+      read_direct_chunks(
+        bytes, layout, dataspace, datatype, base_address, filters, output,
+      )
+  }
   output.unsafe_reinterpret_as_bytes()
 }

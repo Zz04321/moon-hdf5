@@ -205,7 +205,8 @@ fn parse_v2_message_block(
   visited : Array[Int32],
   messages : Array[HeaderMessage],
 ) -> Unit raise Hdf5Error {
-  while block.remaining() > 4 {
+  let prefix_size = 4 + creation_order_size
+  while block.remaining() >= prefix_size {
     let msg_type = block.read_u8().to_int()
     let size = block.read_u16_le().to_int()
     let flags = block.read_u8()
@@ -222,17 +223,18 @@ fn parse_v2_message_block(
       let continuation_offset = address_to_offset(address, base_address)
       if !visited.contains(continuation_offset) {
         visited.push(continuation_offset)
-        guard length >= 4UL && length <= 0x7FFFFFFFUL else {
+        guard length >= 8UL && length <= 0x7FFFFFFFUL else {
           raise InvalidField("invalid object header continuation length")
         }
         let next = Reader::at(bytes, continuation_offset)
-        let signature = next.read_bytes(4)
+        let complete = next.sub(continuation_offset, length.to_int())
+        let signature = complete.read_bytes(4)
         guard signature == b"OCHK" else {
           raise InvalidField("object header continuation is missing OCHK")
         }
         parse_v2_message_block(
           bytes,
-          next.sub(continuation_offset + 4, length.to_int() - 4),
+          complete.sub(continuation_offset + 4, length.to_int() - 8),
           offset_size,
           length_size,
           base_address,
@@ -270,17 +272,14 @@ fn parse_object_header_v2(
   if (flags & 0x10) != 0 {
     reader.skip(4)
   }
-  let chunk_size = match flags & 0x03 {
-    0 => reader.read_u8().to_int()
-    1 => reader.read_u16_le().to_int()
-    2 => reader.read_u32_le().reinterpret_as_int()
-    _ => reader.read_u64_le().to_int()
+  let raw_chunk_size = reader.read_uint_le(1 << (flags & 0x03))
+  guard raw_chunk_size <= 0x7FFFFFFFUL else {
+    raise InvalidField("object header chunk size is too large")
   }
-  guard chunk_size >= 0 else {
-    raise InvalidField("negative object header chunk size")
-  }
+  let chunk_size = raw_chunk_size.to_int()
   let payload_start = reader.position()
   let block = reader.sub(payload_start, chunk_size)
+  let _checksum = reader.sub(payload_start + chunk_size, 4)
   let messages : Array[HeaderMessage] = []
   let visited : Array[Int32] = [address]
   parse_v2_message_block(

@@ -29,13 +29,17 @@ pub fn parse_local_heap(
     raise InvalidField("unsupported local heap version")
   }
   reader.skip(3)
-  let data_size = reader.read_uint_le(length_size).to_int()
+  let stored_size = reader.read_uint_le(length_size)
+  guard stored_size <= 0x7FFFFFFFUL else {
+    raise InvalidField("local heap size is too large")
+  }
+  let data_size = stored_size.to_int()
   let offset_to_free_list = reader.read_uint_le(length_size)
   let data_address = address_to_offset(
     reader.read_uint_le(offset_size),
     base_address,
   )
-  guard data_size >= 0 else { raise InvalidField("negative local heap size") }
+  Reader::new(bytes).sub(data_address, data_size) |> ignore
   { bytes, data_address, data_size, offset_to_free_list, }
 }
 
@@ -45,14 +49,17 @@ pub fn LocalHeap::get_string(
   self : LocalHeap,
   offset : UInt64,
 ) -> String raise Hdf5Error {
-  guard offset <= 0x7FFFFFFFUL else {
-    raise InvalidField("local heap offset out of range")
+  guard self.data_address >= 0 &&
+    self.data_address <= self.bytes.length() &&
+    self.data_size >= 0 &&
+    self.data_size <= self.bytes.length() - self.data_address else {
+    raise InvalidField("local heap data segment outside input")
+  }
+  guard offset < self.data_size.to_uint64() else {
+    raise InvalidField("local heap string offset outside data segment")
   }
   let start = self.data_address + offset.to_int()
   let end = self.data_address + self.data_size
-  guard start >= self.data_address && start < end else {
-    raise InvalidField("local heap string offset outside data segment")
-  }
   let mut cursor = start
   while cursor < end && self.bytes.unsafe_get(cursor) != b'\x00' {
     cursor = cursor + 1

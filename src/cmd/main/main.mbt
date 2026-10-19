@@ -34,48 +34,55 @@ fn kind_name(kind : @lib.Hdf5ObjectKind) -> String {
 }
 
 ///|
-fn print_attributes(file : @lib.Hdf5File, path : String) -> Unit {
+fn print_attributes(file : @lib.Hdf5File, path : String) -> Bool {
   let attributes = file.attributes(path) catch {
     error => {
-      println("  attributes " + path + ": " + error.message())
-      return
+      eprintln("attributes " + path + ": " + error.message())
+      return false
     }
   }
+  let mut success = true
   for attribute in attributes {
     let value = match attribute.values {
       Some(values) => describe_values(values)
-      None => "<unsupported datatype>"
+      None => {
+        success = false
+        eprintln(
+          "attribute " + path + ": " + attribute.name + ": unsupported datatype",
+        )
+        "<unsupported datatype>"
+      }
     }
     println("  attr " + attribute.name + " = " + value)
   }
+  success
 }
 
 ///|
-fn main {
-  let args = @env.args()
-  if args.length() < 2 {
-    println("usage: moon run cmd/main -- <file.h5>")
-    return
+fn run(args : Array[String]) -> Int32 {
+  if args.length() != 2 {
+    eprintln("usage: moon run cmd/main -- <file.h5>")
+    return 2
   }
   let path = args[1]
   let bytes = @fs.read_file_to_bytes(path) catch {
     _ => {
-      println("cannot read file: " + path)
-      return
+      eprintln("cannot read file: " + path)
+      return 1
     }
   }
   let file = @lib.Hdf5File::parse(bytes) catch {
     error => {
-      println("parse error: " + error.message())
-      return
+      eprintln("parse error: " + error.message())
+      return 1
     }
   }
   println(path + " (superblock v" + file.superblock.version.to_string() + ")")
-  print_attributes(file, "/")
+  let mut success = print_attributes(file, "/")
   let nodes = file.walk() catch {
     error => {
-      println("parse error: " + error.message())
-      return
+      eprintln("parse error: " + error.message())
+      return 1
     }
   }
   for node in nodes {
@@ -85,9 +92,24 @@ fn main {
         let dataset = file.open_dataset(node.path)
         println("  " + describe_values(dataset.values))
       } catch {
-        error => println("  " + error.message())
+        error => {
+          eprintln("dataset " + node.path + ": " + error.message())
+          success = false
+        }
       }
     }
-    print_attributes(file, node.path)
+    if !print_attributes(file, node.path) {
+      success = false
+    }
   }
+  if success {
+    0
+  } else {
+    1
+  }
+}
+
+///|
+fn main {
+  @sys.exit(run(@env.args()))
 }

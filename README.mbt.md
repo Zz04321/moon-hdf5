@@ -14,19 +14,21 @@ the native backend also needs a C compiler.
 git clone https://github.com/Zz04321/moon-hdf5.git
 cd moon-hdf5
 moon update
-moon run cmd/main --target native -- testdata/basic_v0.h5
+moon run src/cmd/main --target native -- testdata/basic_v0.h5
 ```
 
 Replace the final argument with your file path. Output `int[10] 0` means ten
-integers with first value zero. The inspector loads complete datasets and reports
-attribute-read errors, but does not return failure exit codes for handled errors.
+integers with first value zero. The inspector loads complete datasets. Diagnostics
+go to stderr; exit status is 0 for success, 1 for read/parse/unsupported-data
+errors (including attributes), and 2 for invalid arguments. Other readable
+datasets are still inspected after a dataset-level error.
 
 As checked on 2026-10-19, Mooncakes search does not find this module; use the
 checkout until a registry release is verified.
 
 ## Library API
 
-Within this checkout, use imports as in [cmd/main/moon.pkg](cmd/main/moon.pkg):
+Within this checkout, use imports as in [src/cmd/main/moon.pkg](src/cmd/main/moon.pkg):
 
 ```moonbit nocheck
 ///|
@@ -57,8 +59,8 @@ let nodes = file.walk()
 
 Values are `Integers`, `UnsignedIntegers`, `Floats` or `Strings`.
 `resolve(path)` locates objects without decoding values. See the
-[inspector](cmd/main/main.mbt) for error handling and the
-[generated interface](pkg.generated.mbti) for all public functions.
+[inspector](src/cmd/main/main.mbt) for error handling and the
+[generated interface](src/pkg.generated.mbti) for all public functions.
 
 ## Scope
 
@@ -66,21 +68,27 @@ Values are `Integers`, `UnsignedIntegers`, `Floats` or `Strings`.
 | --- | --- |
 | Framing | Superblocks v0–v3, user blocks, object headers v1/v2 |
 | Groups | Symbol tables, compact link messages, hard/soft links |
-| Layout | Compact, contiguous, unfiltered v1 B-tree chunked data |
+| Layout | Compact, contiguous, v1 B-tree chunks; v4 single-chunk, implicit, fixed-array, extensible-array and v2 B-tree indexes |
+| Filters | Deflate (HDF5 gzip), shuffle, Fletcher32 and combinations; per-chunk skip masks |
 | Values | Standard int/uint8–64, IEEE float32/64, fixed/vlen strings |
 | Attributes | Inline messages v1–v3 |
-| Chunk fills | Default zeros and fixed-size numeric/string fills, including unallocated indexes |
+| Fills | Default zeros and fixed-size numeric/string fills for missing chunks and unallocated contiguous data |
 
-Writing, filters (gzip/shuffle), modern chunk indexes, dense storage, external
+Writing, other filters, dense storage, external
 links and compound/enum/reference types are outside the current scope.
-Undefined/disabled chunk fill policies and custom vlen fills are rejected.
+Undefined/disabled fill policies and custom vlen fills are rejected when fill decoding is needed. External dataset storage is unsupported.
 Version support does not imply support for every structure in that version.
 Nonstandard numeric layouts and dense attributes are explicitly rejected.
-Some v2 object headers have known parsing defects; unallocated contiguous
-storage is also incomplete.
+Empty/null contiguous datasets return empty values. Object-header checksums
+are bounded but not verified.
 Inputs and decoded datasets reside in memory; this is not a streaming reader.
 
 ## Development
+
+`src/` contains the library and its tests; `src/cmd/main/` contains the CLI.
+`moon.mod` sets the source root, preserving the library import path
+`Zz04321/moon-hdf5`. Documentation, fixture generators and test data live in
+`docs/`, `scripts/` and `testdata/`. Run the following commands from the repository root.
 
 ```sh
 moon check
@@ -95,4 +103,5 @@ CI is **manual only** through GitHub Actions → CI → Run workflow; it runs
 and do not need Python. See [fixture generation](testdata/README.md),
 [design](docs/design.md) and [ecosystem comparison and sources](docs/prior-art.md).
 
-Apache-2.0; see [LICENSE](LICENSE).
+Apache-2.0; see [LICENSE](LICENSE). Zlib decompression uses the pure MoonBit
+[MoonZip](https://github.com/moonbitstack/moonzip) library (Apache-2.0).

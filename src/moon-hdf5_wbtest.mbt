@@ -154,6 +154,7 @@ test "parse v2 object header link message" {
   buf.write_uint16_le(8)
   buf.write_byte(b'\x00')
   buf.write_uint64_le(0x30UL)
+  buf.write_uint_le(0U)
   let header = parse_object_header(buf.to_bytes(), 0UL, 8, 8, 0UL)
   assert_eq(header.version, 2)
   assert_eq(header.messages.length(), 1)
@@ -604,16 +605,14 @@ test "chunked edge chunks are decoded correctly" {
 }
 
 ///|
-test "filtered chunked datasets are reported as unsupported" {
+test "deflate chunked datasets are decoded" {
   let bytes = @fs.read_file_to_bytes("testdata/compressed.h5")
   let file = Hdf5File::parse(bytes)
-  let error = try {
-    file.open_dataset("/gzip") |> ignore
-    None
-  } catch {
-    error => Some(error)
+  let values = integer_values(file.open_dataset("/gzip"))
+  assert_eq(values.length(), 256)
+  for index in 0..<256 {
+    assert_eq(values[index], index.to_int64())
   }
-  assert_true(error is Some(UnsupportedFeature(_)))
 }
 
 ///|

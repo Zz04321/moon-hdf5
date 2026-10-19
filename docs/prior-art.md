@@ -30,6 +30,18 @@ This project's contribution is parsing HDF5 container bytes in MoonBit.
 - [pyfive](https://github.com/NCAS-CMS/pyfive), BSD-3-Clause: layout cross-checks.
 - [hdf5-rust](https://github.com/aldanor/hdf5-rust), MIT/Apache-2.0: API and scope reference.
 - [HDF5 fill decoder](https://github.com/HDFGroup/hdf5/blob/develop/src/H5Ofill.c): fill-message flags and versions.
+- [HDF5 fixed arrays](https://github.com/HDFGroup/hdf5/blob/develop/src/H5FAcache.c): page layout; `H5FA.c` and `H5VMprivate.h` were consulted for page offsets and bitmap bit order.
+- [HDF5 extensible arrays](https://github.com/HDFGroup/hdf5/blob/develop/src/H5EAcache.c): block layout; `H5EAhdr.c`, `H5EA.c`, `H5EApkg.h`, `H5Dearray.c` and `H5Olayout.c` were consulted for block sizing, offsets, dimension ordering and creation parameters.
+- [HDF5 v2 B-trees](https://github.com/HDFGroup/hdf5/blob/develop/src/H5B2cache.c): node layout; `H5B2hdr.c`, `H5B2pkg.h` and `H5Dbtree2.c` were consulted for pointer widths, capacities and chunk record encoding.
 
 MoonBit code is original, with AI assistance; reference source code was not copied.
 Fixtures are generated h5py data; see [provenance and regeneration](../testdata/README.md).
+
+## Runtime compression dependency
+
+`moonbitstack/moonzip@0.3.0` provides zlib/DEFLATE decoding with checksum and
+output-limit options; its transitive dependency is `moonbitstack/moonbase@0.4.0`.
+Both use Apache-2.0. They are package dependencies, not copied source.
+Fletcher32 layout and checksum byte order were cross-checked against HDF5's
+`H5Zfletcher32.c` and `H5checksum.c`; our implementation is verified with h5py
+fixtures, including odd byte counts and deliberately corrupted chunks.

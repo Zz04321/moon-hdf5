@@ -11,6 +11,8 @@
 
 name = "Zz04321/moon-hdf5"
 
+source = "src"
+
 version = "0.1.0"
 
 readme = "README.mbt.md"
@@ -27,4 +29,5 @@ description = "A pure MoonBit, read-only HDF5 file reader"
 
 import {
   "moonbitlang/x@0.5.5",
+  "moonbitstack/moonzip@0.3.0",
 }

@@ -41,7 +41,7 @@ fn dataset_fill_value(
     }
     guard defined && writing != 1 else {
       raise UnsupportedFeature(
-        "undefined or disabled chunk fill values are not supported yet",
+        "undefined or disabled fill values are not supported yet",
       )
     }
     if !has_value {
@@ -62,4 +62,25 @@ fn dataset_fill_value(
     )
   }
   reader.read_bytes(size)
+}
+
+///|
+fn filled_payload(
+  count : Int64,
+  size : Int32,
+  fill : Bytes,
+) -> FixedArray[Byte] raise Hdf5Error {
+  guard count >= 0 && size > 0 && count <= 0x7FFFFFFFL / size.to_int64() else {
+    raise InvalidField("dataset byte size is too large")
+  }
+  guard fill.length() == 0 || fill.length() == size else {
+    raise InvalidField("fill value size does not match datatype")
+  }
+  let output = FixedArray::make(count.to_int() * size, b'\x00')
+  if fill.length() > 0 {
+    for element in 0..<count.to_int() {
+      output.blit_from_bytes(element * size, fill, 0, size)
+    }
+  }
+  output
 }

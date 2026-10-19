@@ -66,7 +66,7 @@ pub fn parse_symbol_table_message(HeaderMessage, Int32, Int32) -> SymbolTableInf
 
 pub fn read_attributes(Bytes, ObjectHeader, Int32, Int32, UInt64) -> Array[Attribute] raise Hdf5Error
 
-pub fn read_chunked_payload(Bytes, DataLayout, Dataspace, Datatype, Int32, UInt64, fill_value? : Bytes) -> Bytes raise Hdf5Error
+pub fn read_chunked_payload(Bytes, DataLayout, Dataspace, Datatype, Int32, UInt64, fill_value? : Bytes, length_size? : Int32) -> Bytes raise Hdf5Error
 
 pub fn read_dataset(Bytes, ObjectHeader, Int32, Int32, UInt64) -> Dataset raise Hdf5Error
 
@@ -99,6 +99,23 @@ pub(all) struct Attribute {
 } derive(@debug.Debug)
 pub fn Attribute::to_repr(Self) -> @debug.Repr
 
+pub(all) struct BTreeV2Config {
+  node_size : Int32
+  split_percent : Int32
+  merge_percent : Int32
+} derive(@debug.Debug)
+pub fn BTreeV2Config::to_repr(Self) -> @debug.Repr
+
+pub(all) enum ChunkIndex {
+  BTreeV1
+  Single(UInt64?, UInt32)
+  Implicit
+  FixedArray(Int32)
+  ExtensibleArray(ExtensibleArrayConfig)
+  BTreeV2(BTreeV2Config)
+} derive(@debug.Debug)
+pub fn ChunkIndex::to_repr(Self) -> @debug.Repr
+
 pub(all) struct DataLayout {
   version : Int32
   layout_class : Int32
@@ -107,6 +124,7 @@ pub(all) struct DataLayout {
   chunk_dimensions : Array[UInt32]
   element_size : Int32
   compact_data : Bytes
+  chunk_index : ChunkIndex
 } derive(@debug.Debug)
 pub fn DataLayout::to_repr(Self) -> @debug.Repr
 
@@ -152,6 +170,17 @@ pub(all) struct Datatype {
   vlen_is_string : Bool
 } derive(@debug.Debug)
 pub fn Datatype::to_repr(Self) -> @debug.Repr
+
+pub(all) struct ExtensibleArrayConfig {
+  max_bits : Int32
+  index_elements : Int32
+  min_pointers : Int32
+  min_elements : Int32
+  page_bits : Int32
+} derive(Eq, @debug.Debug)
+pub fn ExtensibleArrayConfig::equal(Self, Self) -> Bool
+pub fn ExtensibleArrayConfig::not_equal(Self, Self) -> Bool
+pub fn ExtensibleArrayConfig::to_repr(Self) -> @debug.Repr
 
 pub(all) struct GroupLink {
   name : String
