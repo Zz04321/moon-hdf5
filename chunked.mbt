@@ -5,6 +5,9 @@ fn product(values : Array[Int64]) -> Int64 raise Hdf5Error {
     guard value > 0L && value <= 0x7FFFFFFFL else {
       raise InvalidField("invalid chunk dimension")
     }
+    guard result <= 0x7FFFFFFFL / value else {
+      raise InvalidField("chunk element count is too large")
+    }
     result = result * value
   }
   result
@@ -23,7 +26,10 @@ fn copy_chunk(
   let ndims = chunk_dimensions.length()
   let chunk_dimensions_i64 = chunk_dimensions.map(value => value.to_int64())
   let chunk_count = product(chunk_dimensions_i64)
-  guard chunk_count * element_size.to_int64() <= chunk_size.to_int64() else {
+  guard element_size > 0 &&
+    chunk_size >= 0 &&
+    chunk_size <= chunk_data.length() &&
+    chunk_count <= chunk_size.to_int64() / element_size.to_int64() else {
     raise InvalidField("chunk is smaller than its declared shape")
   }
   let coordinates : Array[Int64] = Array::make(ndims, 0L)
@@ -45,6 +51,12 @@ fn copy_chunk(
       let target = offsets[i].reinterpret_as_int64() + coordinates[i]
       if target >= dataspace_dimensions[i].reinterpret_as_int64() {
         outside = true
+        break
+      }
+      guard dataspace_dimensions[i] <= 0x7FFFFFFFUL &&
+        destination <=
+        (0x7FFFFFFFL - target) / dataspace_dimensions[i].reinterpret_as_int64() else {
+        raise InvalidField("chunk destination index is out of range")
       }
       destination = destination * dataspace_dimensions[i].reinterpret_as_int64() +
         target
@@ -56,6 +68,11 @@ fn copy_chunk(
       raise InvalidField("chunk destination index is out of range")
     }
     let source_start = linear * element_size
+    guard element_size <= output.length() &&
+      destination <=
+      (output.length() - element_size).to_int64() / element_size.to_int64() else {
+      raise InvalidField("chunk destination exceeds output buffer")
+    }
     let destination_start = destination.to_int() * element_size
     output.blit_from_bytes(
       destination_start, chunk_data, source_start, element_size,

@@ -145,6 +145,7 @@ fn decode_values(
     raise InvalidField("dataset has too many elements")
   }
   let n = count.to_int()
+  guard datatype.size > 0 else { raise InvalidField("invalid datatype size") }
   guard payload.length().to_int64() >= count * datatype.size.to_int64() else {
     raise InvalidField("dataset storage is smaller than its declared shape")
   }
@@ -285,6 +286,11 @@ pub fn read_dataset(
     raise UnsupportedFeature("filtered datasets are not supported yet")
   }
   let count = dataspace.element_count()
+  guard datatype.size > 0 &&
+    count >= 0 &&
+    count <= 0x7FFFFFFFL / datatype.size.to_int64() else {
+    raise InvalidField("dataset byte size is too large")
+  }
   let payload = match layout.layout_class {
     0 => layout.compact_data
     1 => {

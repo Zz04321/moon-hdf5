@@ -96,7 +96,16 @@ pub fn Dataspace::element_count(self : Dataspace) -> Int64 raise Hdf5Error {
         guard dimension <= 0x7FFFFFFFUL else {
           raise InvalidField("dataspace dimension is too large")
         }
-        count = count * dimension.reinterpret_as_int64()
+      }
+      if self.dimensions.contains(0UL) {
+        return 0L
+      }
+      for dimension in self.dimensions {
+        let size = dimension.reinterpret_as_int64()
+        guard count <= 0x7FFFFFFFFFFFFFFFL / size else {
+          raise InvalidField("dataspace element count overflow")
+        }
+        count = count * size
       }
       count
     }
