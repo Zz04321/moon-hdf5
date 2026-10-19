@@ -1,62 +1,32 @@
-# Design notes
+# Design
 
-`moon-hdf5` is a read-only, dependency-light HDF5 reader. The implementation is
-split into framing, metadata parsing, data decoding and a small high-level API.
+The library operates on in-memory `Bytes`; filesystem access belongs to the caller.
 
-## Reading pipeline
+| Layer | Files | Responsibility |
+| --- | --- | --- |
+| Framing | reader, superblock, object_header | Byte reads, addresses, messages |
+| Navigation | heap, symbol_table, link, hdf5_file | Groups, links and paths |
+| Metadata | dataspace, datatype, data_layout | Shapes, types and storage |
+| Values | dataset, chunked, fill_value, global_heap, attribute | Value decoding |
 
-1. `superblock.mbt` locates the signature (including user blocks) and parses the
-   address and length sizes.
-2. `object_header.mbt` reads v1/v2 object headers and follows continuations.
-3. Group metadata is decoded from symbol-table B-trees (`heap.mbt`,
-   `symbol_table.mbt`) or from link messages (`link.mbt`).
-4. Dataset metadata is decoded from dataspace, datatype and data-layout
-   messages. `dataset.mbt` handles compact and contiguous storage;
-   `chunked.mbt` reconstructs unfiltered chunked storage from the v1 chunk
-   B-tree.
-5. `global_heap.mbt` resolves variable-length strings, and `attribute.mbt`
-   decodes attribute messages v1/v2/v3.
-6. `hdf5_file.mbt` provides path lookup, soft-link following, tree walking and
-   convenience methods for datasets and attributes.
+Addresses are resolved relative to the superblock base. Modern group link-info
+messages are checked for allocated heap/index addresses before returning compact
+links. Chunked reads initialize the output with fill bytes before copying allocated
+chunks. The low-level `read_chunked_payload` defaults to zeros; the high-level
+reader supplies parsed fill values.
 
-Chunked reads initialize the output with the dataset's fill value before
-copying allocated chunks. Fill messages v1/v2/v3 and the legacy message are
-decoded; missing/default fill values use zero bytes. Custom integer, float and
-fixed-string fills repeat the on-disk element bytes, preserving byte order.
-An undefined chunk-index address returns the initialized buffer. Undefined or
-disabled fills and custom variable-length fills are explicitly unsupported.
-The low-level `read_chunked_payload` accepts an optional `fill_value` byte
-sequence; callers omitting it retain the default zero-fill behavior.
+Recognized unsupported features raise `UnsupportedFeature`; malformed fields
+normally raise `InvalidField` or `UnexpectedEof`. Unsupported attribute values
+can be represented as `None`. Detection is incomplete: not all unsupported
+inputs are rejected, and metadata checksums are not verified. See [audit.md](audit.md).
 
-## Error policy
+Numeric metadata is checked before decoding: integers require full-width bits
+with zero offset; floats require standard IEEE binary32/binary64 fields.
+Attribute-info heap/index addresses determine dense storage independently of
+creation-order tracking. Unsupported numeric layouts raise an error, including
+when used in attributes; the inspector prints attribute errors with their path.
 
-Unsupported structures raise `UnsupportedFeature` rather than returning
-plausible-looking but incorrect data. This applies to filtered chunks, layout
-message v4, dense group/attribute storage, external links, unsupported datatype
-classes and v2/fractal-heap chunk indexes.
-
-For modern groups, link-info messages are checked before returning links.
-Allocated fractal-heap or index addresses indicate unsupported dense storage;
-undefined addresses are interpreted using the file's address width. Creation
-order tracking alone does not imply dense storage, so compact ordered groups
-and empty groups remain readable. Invalid or truncated link-info messages
-raise errors rather than being mistaken for an empty group.
-
-All byte reads go through `reader.mbt`, which checks bounds before every access.
-HDF5 addresses are converted to file offsets with the superblock base address,
-so files with a user block work without special cases in the decoders.
-
-## Testing strategy
-
-The committed fixtures cover:
-
-- legacy and latest superblocks, including a 512-byte user block;
-- object header v1 and v2 with continuation blocks;
-- symbol-table groups and link-message groups;
-- hard links, soft links and external-link detection;
-- signed/unsigned integers, floats, fixed and variable-length strings;
-- scalar datasets, contiguous datasets and chunked datasets with edge chunks;
-- attributes in legacy and latest formats.
-
-Tests run on both `wasm` and `native` targets. CI executes `moon check` and
-`moon test` on every push and pull request.
+Public interfaces are generated in `pkg.generated.mbti`. Tests use committed
+h5py fixtures and synthetic messages. Local validation covers wasm and native;
+manual CI currently runs only default-target checks/tests. Regeneration
+instructions are in [testdata/README.md](../testdata/README.md).

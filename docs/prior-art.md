@@ -1,54 +1,35 @@
-# Prior-art and duplicate check
+# Ecosystem check and references
 
-Check date: 2026-10-19.
+Checked 2026-10-19. No published, mature MoonBit HDF5 file parser with highly
+overlapping scope was found. This does not prove that no related work exists.
 
-## Mooncakes.io
-
-The official registry search API and the MoonBit CLI were both queried:
-
-```bash
-moon search hdf5 --limit 50   # No modules found.
-moon search hdf --limit 50    # No modules found.
-curl 'https://mooncakes.io/api-new/v0/search?kw=hdf5'  # []
-curl 'https://mooncakes.io/api-new/v0/search?kw=hdf'   # []
+```sh
+moon search hdf5 --limit 50
+moon search hdf --limit 50
+curl 'https://mooncakes.io/api-new/v0/search?kw=hdf5'
 ```
 
-`moon search h5` returns only a WeChat/Alipay payment SDK, which is unrelated.
-There is currently no MoonBit package whose name, description or keywords
-advertise an HDF5 reader or writer.
+CLI queries returned no modules; the registry returned `[]`. GitHub repository
+queries `hdf5 moonbit` and `hdf5 language:moonbit` found only this repository
+after publication. Authenticated code search also found related implementations:
 
-GitHub repository search on the same date also returned zero results for:
+| Project | Relationship |
+| --- | --- |
+| [cf_ocean](https://github.com/hrwqe/moonbit-cf-ocean) | NetCDF Classic/CDF-2; excludes NetCDF-4/HDF5 |
+| [zarr](https://github.com/zlhahaha/zarr) | Zarr v2/v3, a different storage format |
+| [MoonMatBridge](https://github.com/WeiR-h/moonmatbridge) | MAT Level 5; excludes HDF5 MAT v7.3 |
+| [BioSeqs rhdf5](https://github.com/paipai-Studio/BioSeqs/blob/main/src/rhdf5.mbt) | Inspected module models data in memory, without HDF5 binary parsing |
 
-- `hdf5 moonbit`
-- `hdf5 language:moonbit`
-- `moonbit hdf5`
-- `hdf5 moon`
+Research followed the package-lookup workflow in
+[osc2026-guide](https://github.com/Milky2018/osc2026-guide/blob/main/SKILL.md).
+This project's contribution is parsing HDF5 container bytes in MoonBit.
 
-GitHub's code search is not available without an authenticated session, so the
-repository-level search cannot prove the absence of an HDF5 implementation
-hidden inside an unrelated monorepo. The Mooncakes registry remains the primary
-evidence because accepted contest projects are expected to be published there.
+## Implementation sources
 
-## Related MoonBit packages
+- [HDF5 specification](https://support.hdfgroup.org/documentation/hdf5/latest/_f_m_t3.html): on-disk format.
+- [pyfive](https://github.com/NCAS-CMS/pyfive), BSD-3-Clause: layout cross-checks.
+- [hdf5-rust](https://github.com/aldanor/hdf5-rust), MIT/Apache-2.0: API and scope reference.
+- [HDF5 fill decoder](https://github.com/HDFGroup/hdf5/blob/develop/src/H5Ofill.c): fill-message flags and versions.
 
-Two packages are adjacent but do not overlap:
-
-- `hrwqe/cf_ocean` implements NetCDF Classic (CDF-1) and 64-bit Offset (CDF-2).
-  Its README explicitly states: "NetCDF-4/HDF5 containers are not implemented".
-- `zlhahaha/zarr` implements Zarr v2 arrays and chunk metadata, not the HDF5
-  container format, object headers, symbol tables or HDF5 chunk B-trees.
-
-`moon-hdf5` therefore fills a separate gap: the HDF5 container format itself.
-It can serve as the metadata layer for future NetCDF-4 and HDF5-backed Zarr
-work, while remaining independent of either project.
-
-## References used for format verification
-
-- HDF5 File Format Specification:
-  <https://docs.hdfgroup.org/hdf5/develop/_f_m_t3.html>
-- `pyfive` (BSD-3-Clause): used only to cross-check on-disk layout details.
-- `hdf5-rust`: used only to assess layout complexity and feature boundaries.
-
-No source code was copied from these projects. Fixtures were generated with
-h5py 3.16.0 and are committed under `testdata/` so CI does not depend on Python
-or a native HDF5 installation.
+MoonBit code is original, with AI assistance; reference source code was not copied.
+Fixtures are generated h5py data; see [provenance and regeneration](../testdata/README.md).

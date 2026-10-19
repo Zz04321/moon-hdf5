@@ -1,21 +1,9 @@
-# Git Hooks
+# Optional pre-commit check
 
-## Pre-commit Hook
+The hook runs `moon check`, independently of GitHub Actions.
+Enable it from the repository root with MoonBit on `PATH`:
 
-This pre-commit hook performs automatic checks before finalizing your commit.
-
-### Usage Instructions
-
-To use this pre-commit hook:
-
-1. Make the hook executable if it isn't already:
-   ```bash
-   chmod +x .githooks/pre-commit
-   ```
-
-2. Configure Git to use the hooks in the .githooks directory:
-   ```bash
-   git config core.hooksPath .githooks
-   ```
-
-3. The hook will automatically run when you execute `git commit`
+```sh
+chmod +x .githooks/pre-commit
+git config core.hooksPath .githooks
+```
