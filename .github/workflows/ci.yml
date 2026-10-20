@@ -1,11 +1,15 @@
 name: CI
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  test:
+  check-build-test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,5 +28,14 @@ jobs:
       - name: Check
         run: moon check
 
-      - name: Test
-        run: moon test
+      - name: Build (wasm)
+        run: moon build --target wasm
+
+      - name: Build (native)
+        run: moon build --target native
+
+      - name: Test (wasm)
+        run: moon test --target wasm
+
+      - name: Test (native)
+        run: moon test --target native

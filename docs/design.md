@@ -90,8 +90,9 @@ errors with their path.
 
 Public interfaces are generated in `src/pkg.generated.mbti`. Tests use committed
 h5py fixtures and synthetic messages. Local validation covers wasm and native;
-manual CI currently runs only default-target checks/tests. Regeneration
-instructions are in [testdata/README.md](../testdata/README.md).
+CI runs on pushes, pull requests and manual dispatch; it checks, builds and
+tests both wasm and native targets. Regeneration instructions are in
+[testdata/README.md](../testdata/README.md).
 
 The inspector writes diagnostics to stderr and returns 0/1/2 for success,
 data errors and usage errors respectively. Per-dataset failures do not prevent

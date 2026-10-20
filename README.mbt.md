@@ -103,9 +103,10 @@ moon info
 moon fmt
 ```
 
-CI is **manual only** through GitHub Actions → CI → Run workflow; it runs
-`moon check` and default-target tests. Ordinary tests use committed fixtures
-and do not need Python. See [fixture generation](testdata/README.md),
+CI runs on pushes, pull requests, and manually through GitHub Actions → CI → Run
+workflow; it runs `moon check`, builds both wasm and native targets, and runs
+the tests for both. Ordinary tests use committed fixtures and do not need
+Python. See [fixture generation](testdata/README.md),
 [design](docs/design.md) and [ecosystem comparison and sources](docs/prior-art.md).
 
 Apache-2.0; see [LICENSE](LICENSE). Zlib decompression uses the pure MoonBit
