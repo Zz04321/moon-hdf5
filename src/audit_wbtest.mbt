@@ -19,6 +19,7 @@ test "oversized vlen string descriptors raise an error before narrowing" {
     signed: false,
     little_endian: true,
     vlen_is_string: true,
+    enum_members: [],
   }
   for length in [1U, 0x80000000U, 0xFFFFFFFFU] {
     let descriptor = @buffer.Buffer::Buffer(size_hint=16)

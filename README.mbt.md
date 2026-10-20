@@ -57,7 +57,9 @@ let attributes = file.attributes("/group/values")
 let nodes = file.walk()
 ```
 
-Values are `Integers`, `UnsignedIntegers`, `Floats` or `Strings`.
+Values are `Integers`, `UnsignedIntegers`, `Floats`, `Strings` or `Enums`.
+Enum datasets decode to member names; `Datatype.enum_members` exposes each
+name and its signed or unsigned base value.
 `resolve(path)` locates objects without decoding values. See the
 [inspector](src/cmd/main/main.mbt) for error handling and the
 [generated interface](src/pkg.generated.mbti) for all public functions.
@@ -70,11 +72,11 @@ Values are `Integers`, `UnsignedIntegers`, `Floats` or `Strings`.
 | Groups | Symbol tables, compact link messages, dense groups via fractal heaps and metadata v2 B-trees; hard/soft links |
 | Layout | Compact, contiguous, v1 B-tree chunks; v4 single-chunk, implicit, fixed-array, extensible-array and v2 B-tree indexes |
 | Filters | Deflate (HDF5 gzip), shuffle, Fletcher32 and combinations; per-chunk skip masks |
-| Values | Standard int/uint8–64, IEEE float32/64, fixed/vlen strings |
+| Values | Standard int/uint8–64, IEEE float32/64, fixed/vlen strings, enum datatypes over integer bases |
 | Attributes | Inline messages v1–v3, dense attributes via fractal heaps and metadata v2 B-trees |
 | Fills | Default zeros and fixed-size numeric/string fills for missing chunks and unallocated contiguous data |
 
-Writing, other filters, external links and compound/enum/reference types are
+Writing, other filters, external links and compound/reference types are
 outside the current scope.
 Undefined/disabled fill policies and custom vlen fills are rejected when fill decoding is needed. External dataset storage is unsupported.
 Version support does not imply support for every structure in that version.

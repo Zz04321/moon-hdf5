@@ -63,6 +63,7 @@ test "fill message versions and default values" {
     signed: true,
     little_endian: true,
     vlen_is_string: false,
+    enum_members: [],
   }
   for
     data in [
@@ -100,6 +101,7 @@ test "undefined disabled and malformed fill messages are rejected" {
     signed: true,
     little_endian: true,
     vlen_is_string: false,
+    enum_members: [],
   }
   for data in [b"\x03\x1b", b"\x03\x07", b"\x02\x03\x02\x00", b"\x04\x00"] {
     let error = try {

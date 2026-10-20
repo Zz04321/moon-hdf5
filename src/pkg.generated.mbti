@@ -141,6 +141,7 @@ pub(all) enum DatasetValues {
   UnsignedIntegers(Array[UInt64])
   Floats(Array[Double])
   Strings(Array[String])
+  Enums(Array[String])
 } derive(@debug.Debug)
 pub fn DatasetValues::to_repr(Self) -> @debug.Repr
 
@@ -168,8 +169,23 @@ pub(all) struct Datatype {
   signed : Bool
   little_endian : Bool
   vlen_is_string : Bool
+  enum_members : Array[EnumMember]
 } derive(@debug.Debug)
 pub fn Datatype::to_repr(Self) -> @debug.Repr
+
+pub(all) struct EnumMember {
+  name : String
+  value : EnumValue
+} derive(@debug.Debug)
+pub fn EnumMember::to_repr(Self) -> @debug.Repr
+
+pub(all) enum EnumValue {
+  Signed(Int64)
+  Unsigned(UInt64)
+} derive(Eq, @debug.Debug)
+pub fn EnumValue::equal(Self, Self) -> Bool
+pub fn EnumValue::not_equal(Self, Self) -> Bool
+pub fn EnumValue::to_repr(Self) -> @debug.Repr
 
 pub(all) struct ExtensibleArrayConfig {
   max_bits : Int32

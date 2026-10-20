@@ -21,6 +21,7 @@ python3 -m venv /tmp/moon-hdf5-fixtures
 /tmp/moon-hdf5-fixtures/bin/python scripts/generate_btree_v2_fixtures.py
 /tmp/moon-hdf5-fixtures/bin/python scripts/generate_interop_matrix.py
 /tmp/moon-hdf5-fixtures/bin/python scripts/generate_fractal_heap_fixtures.py
+/tmp/moon-hdf5-fixtures/bin/python scripts/generate_enum_fixtures.py
 ```
 
 Run from the repository root. Scripts reopen files and verify values with h5py.
@@ -44,6 +45,7 @@ Timestamps can vary; tests compare semantics, not binary hashes.
 | interop_earliest.h5, interop_v108.h5, interop_v110.h5 | Matching object matrix across earliest/v108/v110 bounds: compact and dense groups, compact and dense attributes, compact/contiguous/chunked storage, fixed/unlimited dimensions, single chunks, filters, sparse chunks and skipped filter masks |
 | interop_32.h5 | Raw and filtered fixed-array chunks with 4-byte addresses and 8-byte lengths |
 | fractal_heap_advanced.h5 | Filtered dense group with 1200 links plus filtered/raw long-name huge objects; indirect heap blocks and huge v2 B-trees |
+| enums_v108.h5, enums_v110.h5 | Signed/unsigned/big-endian enum datasets and enum attributes; v1/v2 padded names under v108 bounds and v3 unpadded names under v110 bounds |
 
 Group datasets `value_NN` contain `[NN, NN + 100]`. Compact groups must read
 normally. Dense groups are indexed by fractal heaps and metadata v2 B-trees;
@@ -67,3 +69,8 @@ earliest and v108 files use v1 B-trees.
 filters, enough links to allocate indirect blocks, and a 5005-byte link name
 whose link message is a filtered huge object. `/raw` repeats the long link
 without heap filters so both huge v2 B-tree record types are exercised.
+
+`enums_v108.h5` and `enums_v110.h5` store `/colors` (`<i4`), `/unsigned`
+(`<u1`) and `/big_endian` (`>i2`) enum datasets, plus scalar and array enum
+attributes on `/colors`. `EIGHTCHR` exercises the eight-byte name boundary;
+`LONG_NAME_XYZ` exercises names longer than one padding block.

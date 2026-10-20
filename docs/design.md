@@ -76,6 +76,12 @@ inputs are rejected. See [audit.md](audit.md).
 
 Numeric metadata is checked before decoding: integers require full-width bits
 with zero offset; floats require standard IEEE binary32/binary64 fields.
+Enum datatypes recursively parse an integer base type and require the enum and
+base sizes to agree. Member names use the version 1/2 8-byte padding rule or
+the version 3 single-NUL encoding; values follow the base type's signedness,
+width and byte order. Datasets and attributes decode enum payloads to member
+names and reject values with no matching member. Empty member lists, empty or
+unterminated names and non-integer bases are rejected.
 Attribute-info heap/index addresses determine dense storage independently of
 creation-order tracking, and dense records are read through the same fractal
 heap and metadata v2 B-tree helpers as groups. Unsupported numeric layouts raise

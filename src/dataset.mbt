@@ -5,6 +5,7 @@ pub(all) enum DatasetValues {
   UnsignedIntegers(Array[UInt64])
   Floats(Array[Double])
   Strings(Array[String])
+  Enums(Array[String])
 } derive(@debug.Debug)
 
 ///|
@@ -199,6 +200,34 @@ fn decode_values(
         )
       }
       Strings(values)
+    }
+    8 => {
+      let values : Array[String] = []
+      for i in 0..<n {
+        let raw = read_uint_at(
+          payload,
+          i * datatype.size,
+          datatype.size,
+          datatype.little_endian,
+        )
+        let value = if datatype.signed {
+          EnumValue::Signed(decode_signed(raw, datatype.size))
+        } else {
+          EnumValue::Unsigned(raw)
+        }
+        let mut name : String? = None
+        for enum_member in datatype.enum_members {
+          if enum_member.value == value {
+            name = Some(enum_member.name)
+            break
+          }
+        }
+        match name {
+          Some(member_name) => values.push(member_name)
+          None => raise InvalidField("enum value does not match any member")
+        }
+      }
+      Enums(values)
     }
     9 => {
       guard datatype.vlen_is_string else {

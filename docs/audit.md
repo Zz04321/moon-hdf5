@@ -2,7 +2,7 @@
 
 Static review covered framing, navigation, metadata and decoding. Counterexamples
 were generated with h5py 3.16.0/NumPy 2.5.4 and run through the native inspector.
-This is not an exhaustive conformance or fuzzing audit. All eight listed findings
+This is not an exhaustive conformance or fuzzing audit. All nine listed findings
 were subsequently fixed and covered by regression tests.
 
 | Priority | Evidence | Finding and next action |
@@ -15,6 +15,7 @@ were subsequently fixed and covered by regression tests.
 | Fixed | Regression tested / process verified | CLI errors now go to stderr and return 1; usage errors return 2, successful reads return 0. Dataset and attribute failures affect the overall exit status without suppressing other dataset output. |
 | Fixed | Regression tested | Supported metadata checksums are now verified with HDF5 lookup3: superblocks v2/v3, object-header chunks and continuations, v2 B-tree headers/nodes, fractal-heap headers/direct/indirect blocks, fixed arrays and extensible arrays. Corruption tests assert `InvalidField`. |
 | Fixed | Regression tested / h5py verified | Filtered fractal heaps now decode deflate, shuffle and Fletcher32 pipelines for direct blocks, including filtered indirect-block entries and direct-block checksums. Indirectly accessed huge objects are resolved through v2 B-tree record types 1 and 2, with direct huge IDs also supported. |
+| Fixed | Regression tested / h5py verified | Enum datatypes now parse integer base types, signed and unsigned values, both byte orders, and version 1/2 8-byte versus version 3 unpadded member names. Enum datasets and attributes decode to member names; malformed member tables and unknown payload values are rejected. |
 
 P1 denotes incorrect or potentially unchecked results; P2 denotes compatibility
 or error-reporting defects. Closing these findings does not establish full

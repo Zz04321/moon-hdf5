@@ -21,6 +21,11 @@ fn describe_values(values : @lib.DatasetValues) -> String {
       items.length().to_string() +
       "] " +
       (if items.length() > 0 { items[0] } else { "" })
+    Enums(items) =>
+      "enum[" +
+      items.length().to_string() +
+      "] " +
+      (if items.length() > 0 { items[0] } else { "" })
   }
 }
 
