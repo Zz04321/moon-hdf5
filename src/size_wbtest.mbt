@@ -57,6 +57,23 @@ test "chunk products reject overflow before narrowing to Int32" {
 }
 
 ///|
+test "selection products are bounded before generating indices" {
+  let error = try {
+    hyperslab_indices(
+      [2147483647UL, 2147483647UL],
+      [0UL, 0UL],
+      [2147483647UL, 2147483647UL],
+      [1UL, 1UL],
+    )
+    |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(error, Some(InvalidField("selection contains too many elements")))
+}
+
+///|
 test "chunk byte products cannot wrap to bypass the payload check" {
   let error = try {
     copy_chunk(
@@ -67,6 +84,7 @@ test "chunk byte products cannot wrap to bypass the payload check" {
       [1UL, 1UL],
       1073741824,
       FixedArray::make(0, b'\x00'),
+      None,
     )
     None
   } catch {
@@ -126,6 +144,7 @@ test "chunk destination bounds are checked before byte offset multiplication" {
       [2147483647UL],
       4,
       FixedArray::make(4, b'\x00'),
+      None,
     )
     None
   } catch {

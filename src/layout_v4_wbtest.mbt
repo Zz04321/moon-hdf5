@@ -53,6 +53,7 @@ test "v4 fixed array and direct chunk payload bounds" {
         file.superblock.base_address,
         [],
         FixedArray::make(140, b'\x00'),
+        None,
       )
       None
     } catch {

@@ -64,6 +64,15 @@ test "fill message versions and default values" {
     little_endian: true,
     vlen_is_string: false,
     enum_members: [],
+    compound_members: [],
+    base_types: [],
+    array_dimensions: [],
+    bit_offset: 0,
+    bit_precision: 0,
+    string_padding: 0,
+    string_charset: 0,
+    opaque_tag: "",
+    reference_kind: 0,
   }
   for
     data in [
@@ -102,6 +111,15 @@ test "undefined disabled and malformed fill messages are rejected" {
     little_endian: true,
     vlen_is_string: false,
     enum_members: [],
+    compound_members: [],
+    base_types: [],
+    array_dimensions: [],
+    bit_offset: 0,
+    bit_precision: 0,
+    string_padding: 0,
+    string_charset: 0,
+    opaque_tag: "",
+    reference_kind: 0,
   }
   for data in [b"\x03\x1b", b"\x03\x07", b"\x02\x03\x02\x00", b"\x04\x00"] {
     let error = try {

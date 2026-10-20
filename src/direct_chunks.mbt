@@ -7,6 +7,7 @@ fn read_direct_chunks(
   base_address : UInt64,
   filters : Array[Filter],
   output : FixedArray[Byte],
+  selection : Array[UInt64]?,
 ) -> Unit raise Hdf5Error {
   guard layout.element_size == datatype.size else {
     raise InvalidField("chunk element size does not match datatype")
@@ -24,6 +25,15 @@ fn read_direct_chunks(
       guard stored_size is Some(_) || filters.length() == 0 else {
         raise InvalidField("filtered single chunk is missing its stored size")
       }
+      let offsets = Array::make(rank, 0UL)
+      if !chunk_contains_selection(
+          offsets,
+          layout.chunk_dimensions,
+          dataspace.dimensions,
+          selection,
+        ) {
+        return
+      }
       let decoded = read_filtered_chunk(
         bytes,
         layout.data_address,
@@ -37,11 +47,12 @@ fn read_direct_chunks(
       copy_chunk(
         decoded,
         decoded.length(),
-        Array::make(rank, 0UL),
+        offsets,
         layout.chunk_dimensions,
         dataspace.dimensions,
         datatype.size,
         output,
+        selection,
       )
     }
     Implicit => {
@@ -92,6 +103,14 @@ fn read_direct_chunks(
             coordinates[dimension]
         }
         let position = start + stored_index.to_int() * chunk_size
+        if !chunk_contains_selection(
+            offsets,
+            layout.chunk_dimensions,
+            dataspace.dimensions,
+            selection,
+          ) {
+          continue
+        }
         let data = Reader::at(bytes, position).read_bytes(chunk_size)
         copy_chunk(
           data,
@@ -101,6 +120,7 @@ fn read_direct_chunks(
           dataspace.dimensions,
           datatype.size,
           output,
+          selection,
         )
       }
     }

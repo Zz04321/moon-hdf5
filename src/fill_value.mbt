@@ -1,4 +1,22 @@
 ///|
+fn datatype_contains_vlen(datatype : Datatype) -> Bool {
+  if datatype.class == 9 {
+    return true
+  }
+  for field in datatype.compound_members {
+    if datatype_contains_vlen(field.datatype) {
+      return true
+    }
+  }
+  for base in datatype.base_types {
+    if datatype_contains_vlen(base) {
+      return true
+    }
+  }
+  false
+}
+
+///|
 fn dataset_fill_value(
   header : ObjectHeader,
   datatype : Datatype,
@@ -56,9 +74,9 @@ fn dataset_fill_value(
   guard size == datatype.size else {
     raise InvalidField("fill value size does not match datatype")
   }
-  guard datatype.class == 0 || datatype.class == 1 || datatype.class == 3 else {
+  guard !datatype_contains_vlen(datatype) else {
     raise UnsupportedFeature(
-      "custom fill values require a fixed-size integer, float or string datatype",
+      "custom variable-length fill values are not supported yet",
     )
   }
   reader.read_bytes(size)

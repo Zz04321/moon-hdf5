@@ -128,7 +128,7 @@ test "malformed enum datatypes are rejected" {
     ),
     (
       b"\x38\x01\x00\x00\x04\x00\x00\x00\x14\x00\x00\x00\x04\x00\x00\x00",
-      UnsupportedFeature("enum base type is not an integer"),
+      UnexpectedEof(16L),
     ),
     (
       b"\x48\x01\x00\x00\x04\x00\x00\x00\x10\x08\x00\x00\x04\x00\x00\x00\x00\x00\x20\x00",
@@ -150,6 +150,15 @@ test "unknown enum payload values are rejected" {
     little_endian: true,
     vlen_is_string: false,
     enum_members: [{ name: "ONE", value: EnumValue::Signed(1L), }],
+    compound_members: [],
+    base_types: [],
+    array_dimensions: [],
+    bit_offset: 0,
+    bit_precision: 0,
+    string_padding: 0,
+    string_charset: 0,
+    opaque_tag: "",
+    reference_kind: 0,
   }
   let error = try {
     decode_values(b"", b"\x02\x00\x00\x00", 1, datatype, 8, 8, 0UL) |> ignore

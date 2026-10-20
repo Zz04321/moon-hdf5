@@ -26,6 +26,7 @@ fn describe_values(values : @lib.DatasetValues) -> String {
       items.length().to_string() +
       "] " +
       (if items.length() > 0 { items[0] } else { "" })
+    Structured(items) => "structured[" + items.length().to_string() + "]"
   }
 }
 

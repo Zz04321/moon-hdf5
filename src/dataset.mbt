@@ -6,10 +6,48 @@ pub(all) enum DatasetValues {
   Floats(Array[Double])
   Strings(Array[String])
   Enums(Array[String])
+  Structured(Array[DatasetValue])
 } derive(@debug.Debug)
 
 ///|
 pub extend DatasetValues with @debug.Debug::{to_repr}
+
+///|
+/// One recursively decoded value for structured HDF5 datatypes.
+pub(all) enum DatasetValue {
+  SignedInteger(Int64)
+  UnsignedInteger(UInt64)
+  FloatingPoint(Double)
+  Text(String)
+  Enumeration(String)
+  Bitfield(UInt64)
+  Opaque(Bytes)
+  Compound(Array[CompoundFieldValue])
+  Elements(Array[DatasetValue])
+  Reference(Bytes)
+  Sequence(Array[DatasetValue])
+  Time(UInt64)
+  Complex(Double, Double)
+} derive(Eq, @debug.Debug)
+
+///|
+pub extend DatasetValue with Eq::{not_equal, equal}
+
+///|
+pub extend DatasetValue with @debug.Debug::{to_repr}
+
+///|
+/// A named value decoded from a compound datatype member.
+pub(all) struct CompoundFieldValue {
+  name : String
+  value : DatasetValue
+} derive(Eq, @debug.Debug)
+
+///|
+pub extend CompoundFieldValue with Eq::{not_equal, equal}
+
+///|
+pub extend CompoundFieldValue with @debug.Debug::{to_repr}
 
 ///|
 /// Dataset metadata that can be inspected without reading its stored values.
@@ -127,6 +165,8 @@ fn read_fixed_string_at(
   bytes : Bytes,
   offset : Int32,
   length : Int32,
+  padding : Int32,
+  charset : Int32,
 ) -> String raise Hdf5Error {
   guard offset >= 0 &&
     length >= 0 &&
@@ -134,12 +174,271 @@ fn read_fixed_string_at(
     raise UnexpectedEof(offset.to_int64())
   }
   let mut end = offset + length
-  while end > offset && bytes.unsafe_get(end - 1) == b'\x00' {
-    end = end - 1
+  if padding == 0 {
+    let mut cursor = offset
+    while cursor < end && bytes.unsafe_get(cursor) != b'\x00' {
+      cursor = cursor + 1
+    }
+    end = cursor
+  } else {
+    let pad = if padding == 1 { b'\x00' } else { b' ' }
+    while end > offset && bytes.unsafe_get(end - 1) == pad {
+      end = end - 1
+    }
+  }
+  if charset == 0 {
+    for index in offset..<end {
+      guard bytes.unsafe_get(index).to_int() < 128 else {
+        raise InvalidField("non-ASCII byte in ASCII string data")
+      }
+    }
   }
   let view = bytes.get_view(start=offset, end~).unwrap()
   @utf8.decode(view) catch {
     _ => raise InvalidField("invalid UTF-8 string data")
+  }
+}
+
+///|
+fn enum_value_name(raw : UInt64, datatype : Datatype) -> String raise Hdf5Error {
+  let value = if datatype.signed {
+    EnumValue::Signed(decode_signed(raw, datatype.size))
+  } else {
+    EnumValue::Unsigned(raw)
+  }
+  for enum_member in datatype.enum_members {
+    if enum_member.value == value {
+      return enum_member.name
+    }
+  }
+  raise InvalidField("enum value does not match any member")
+}
+
+///|
+fn copied_value_bytes(
+  payload : Bytes,
+  offset : Int32,
+  size : Int32,
+) -> Bytes raise Hdf5Error {
+  guard offset >= 0 &&
+    size >= 0 &&
+    offset.to_int64() + size.to_int64() <= payload.length().to_int64() else {
+    raise UnexpectedEof(offset.to_int64())
+  }
+  payload.get_view(start=offset, end=offset + size).unwrap().to_owned()
+}
+
+///|
+fn masked_value(raw : UInt64, offset : Int32, precision : Int32) -> UInt64 {
+  let shifted = raw >> offset
+  if precision == 64 {
+    shifted
+  } else {
+    shifted & ((1UL << precision) - 1UL)
+  }
+}
+
+///|
+fn decode_dataset_value(
+  bytes : Bytes,
+  payload : Bytes,
+  offset : Int32,
+  datatype : Datatype,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> DatasetValue raise Hdf5Error {
+  match datatype.class {
+    0 => {
+      let raw = read_uint_at(
+        payload,
+        offset,
+        datatype.size,
+        datatype.little_endian,
+      )
+      if datatype.signed {
+        SignedInteger(decode_signed(raw, datatype.size))
+      } else {
+        UnsignedInteger(raw)
+      }
+    }
+    1 =>
+      FloatingPoint(
+        read_float_at(payload, offset, datatype.size, datatype.little_endian),
+      )
+    2 => {
+      let raw = read_uint_at(
+        payload,
+        offset,
+        datatype.size,
+        datatype.little_endian,
+      )
+      Time(masked_value(raw, 0, datatype.bit_precision))
+    }
+    3 =>
+      Text(
+        read_fixed_string_at(
+          payload,
+          offset,
+          datatype.size,
+          datatype.string_padding,
+          datatype.string_charset,
+        ),
+      )
+    4 => {
+      let raw = read_uint_at(
+        payload,
+        offset,
+        datatype.size,
+        datatype.little_endian,
+      )
+      Bitfield(masked_value(raw, datatype.bit_offset, datatype.bit_precision))
+    }
+    5 => Opaque(copied_value_bytes(payload, offset, datatype.size))
+    6 => {
+      let fields : Array[CompoundFieldValue] = []
+      for compound_member in datatype.compound_members {
+        fields.push({
+          name: compound_member.name,
+          value: decode_dataset_value(
+            bytes,
+            payload,
+            offset + compound_member.offset,
+            compound_member.datatype,
+            offset_size,
+            length_size,
+            base_address,
+          ),
+        })
+      }
+      Compound(fields)
+    }
+    7 => Reference(copied_value_bytes(payload, offset, datatype.size))
+    8 => {
+      let raw = read_uint_at(
+        payload,
+        offset,
+        datatype.size,
+        datatype.little_endian,
+      )
+      Enumeration(enum_value_name(raw, datatype))
+    }
+    9 => {
+      let declared = read_uint_at(payload, offset, 4, true)
+      guard declared <= 0x7FFFFFFFUL else {
+        let description = if datatype.vlen_is_string {
+          "variable-length string is too large"
+        } else {
+          "variable-length sequence is too large"
+        }
+        raise InvalidField(description)
+      }
+      let count = declared.to_int()
+      if count == 0 {
+        if datatype.vlen_is_string {
+          Text("")
+        } else {
+          Sequence([])
+        }
+      } else {
+        let heap_address = read_uint_at(payload, offset + 4, offset_size, true)
+        let object_index = read_uint_at(
+          payload,
+          offset + 4 + offset_size,
+          4,
+          true,
+        )
+        guard object_index <= 0x7FFFFFFFUL else {
+          raise InvalidField("global heap object index is too large")
+        }
+        let data = read_global_heap_object(
+          bytes,
+          heap_address,
+          object_index.to_int(),
+          offset_size,
+          length_size,
+          base_address,
+        )
+        if datatype.vlen_is_string {
+          guard data.length() >= count else {
+            raise InvalidField(
+              "global heap string is shorter than declared length",
+            )
+          }
+          Text(read_fixed_string_at(data, 0, count, 1, datatype.string_charset))
+        } else {
+          guard datatype.base_types.length() == 1 else {
+            raise InvalidField(
+              "variable-length datatype is missing its base type",
+            )
+          }
+          let base = datatype.base_types[0]
+          guard count.to_int64() <= 0x7FFFFFFFL / base.size.to_int64() &&
+            data.length().to_int64() >= count.to_int64() * base.size.to_int64() else {
+            raise InvalidField(
+              "global heap sequence is shorter than declared length",
+            )
+          }
+          let values : Array[DatasetValue] = []
+          for index in 0..<count {
+            values.push(
+              decode_dataset_value(
+                bytes,
+                data,
+                index * base.size,
+                base,
+                offset_size,
+                length_size,
+                base_address,
+              ),
+            )
+          }
+          Sequence(values)
+        }
+      }
+    }
+    10 => {
+      guard datatype.base_types.length() == 1 else {
+        raise InvalidField("array datatype is missing its base type")
+      }
+      let base = datatype.base_types[0]
+      guard datatype.size % base.size == 0 else {
+        raise InvalidField(
+          "array datatype size is not divisible by its base type",
+        )
+      }
+      let values : Array[DatasetValue] = []
+      for index in 0..<(datatype.size / base.size) {
+        values.push(
+          decode_dataset_value(
+            bytes,
+            payload,
+            offset + index * base.size,
+            base,
+            offset_size,
+            length_size,
+            base_address,
+          ),
+        )
+      }
+      Elements(values)
+    }
+    11 => {
+      guard datatype.base_types.length() == 1 else {
+        raise InvalidField("complex datatype is missing its base type")
+      }
+      let base = datatype.base_types[0]
+      Complex(
+        read_float_at(payload, offset, base.size, base.little_endian),
+        read_float_at(
+          payload,
+          offset + base.size,
+          base.size,
+          base.little_endian,
+        ),
+      )
+    }
+    _ => raise UnsupportedFeature("datatype class is not supported yet")
   }
 }
 
@@ -207,7 +506,13 @@ fn decode_values(
       let values : Array[String] = []
       for i in 0..<n {
         values.push(
-          read_fixed_string_at(payload, i * datatype.size, datatype.size),
+          read_fixed_string_at(
+            payload,
+            i * datatype.size,
+            datatype.size,
+            datatype.string_padding,
+            datatype.string_charset,
+          ),
         )
       }
       Strings(values)
@@ -221,74 +526,46 @@ fn decode_values(
           datatype.size,
           datatype.little_endian,
         )
-        let value = if datatype.signed {
-          EnumValue::Signed(decode_signed(raw, datatype.size))
-        } else {
-          EnumValue::Unsigned(raw)
-        }
-        let mut name : String? = None
-        for enum_member in datatype.enum_members {
-          if enum_member.value == value {
-            name = Some(enum_member.name)
-            break
-          }
-        }
-        match name {
-          Some(member_name) => values.push(member_name)
-          None => raise InvalidField("enum value does not match any member")
-        }
+        values.push(enum_value_name(raw, datatype))
       }
       Enums(values)
     }
-    9 => {
-      guard datatype.vlen_is_string else {
-        raise UnsupportedFeature(
-          "variable-length sequences are not supported yet",
-        )
-      }
+    9 if datatype.vlen_is_string => {
       let values : Array[String] = []
       for i in 0..<n {
-        let element_offset = i * datatype.size
-        let declared_length = read_uint_at(payload, element_offset, 4, true)
-        guard declared_length <= 0x7FFFFFFFUL else {
-          raise InvalidField("variable-length string is too large")
-        }
-        let length = declared_length.to_int()
-        if length == 0 {
-          values.push("")
-        } else {
-          let heap_address = read_uint_at(
+        match
+          decode_dataset_value(
+            bytes,
             payload,
-            element_offset + 4,
+            i * datatype.size,
+            datatype,
             offset_size,
-            true,
-          )
-          let object_index = read_uint_at(
-              payload,
-              element_offset + 4 + offset_size,
-              4,
-              true,
-            )
-            .reinterpret_as_int64()
-            .to_int()
-          let data = read_global_heap_object(
-            bytes, heap_address, object_index, offset_size, length_size, base_address,
-          )
-          guard data.length() >= length else {
-            raise InvalidField(
-              "global heap string is shorter than declared length",
-            )
-          }
-          let view = data.get_view(start=0, end=length).unwrap()
-          let text = @utf8.decode(view) catch {
-            _ => raise InvalidField("invalid UTF-8 variable-length string")
-          }
-          values.push(text)
+            length_size,
+            base_address,
+          ) {
+          Text(value) => values.push(value)
+          _ => raise InvalidField("invalid variable-length string value")
         }
       }
       Strings(values)
     }
-    _ => raise UnsupportedFeature("datatype class is not supported yet")
+    _ => {
+      let values : Array[DatasetValue] = []
+      for i in 0..<n {
+        values.push(
+          decode_dataset_value(
+            bytes,
+            payload,
+            i * datatype.size,
+            datatype,
+            offset_size,
+            length_size,
+            base_address,
+          ),
+        )
+      }
+      Structured(values)
+    }
   }
 }
 

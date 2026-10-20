@@ -80,3 +80,32 @@ exercise compact/dense groups and attributes, storage layouts, filters,
 single-chunk/fixed-array/extensible-array/v2 B-tree indexes and 4-byte
 addresses. `src/interop_wbtest.mbt` verifies object paths, attributes, decoded
 values and index selection against those files.
+
+## Selection-read review — 2026-10-20
+
+Selection reads now cover compact, contiguous and chunked storage. Rank, bounds,
+stride and size arithmetic are checked before byte offsets are narrowed. Point
+order and duplicates are preserved; scalar points and empty selections use the
+same coordinate validation. Chunk index metadata is fully traversed and its
+supported checksums are verified, while stored chunk bytes and filters are
+touched only for intersecting chunks.
+Missing chunks retain initialized fill values. Regression coverage includes v1
+B-trees, single chunks, fixed arrays, extensible arrays and v2 B-trees, with raw,
+filtered, sparse and duplicate-point cases on wasm and native targets.
+
+## Datatype-read review — 2026-10-20
+
+Datatype parsing and value decoding now cover the standard HDF5 classes through
+the HDF5 2.0 complex type. Recursive metadata is retained for compound members,
+array dimensions, enum bases, vlen sequence bases and complex component types.
+Regression fixtures generated with h5py 3.16.0 and HDF5 2.0.0 cover nested
+compounds, array members, vlen sequences and UTF-8 strings, bitfields, opaque
+values, time, object and region references, and both complex widths and byte
+orders. Structured attributes, custom fixed-size fills and point selections use
+the same decoder. References are intentionally returned as encoded bytes rather
+than resolved objects or selected regions.
+
+Parser regressions reject truncated properties, out-of-bounds compound members,
+inconsistent array/complex sizes and invalid tags. Numeric
+subtypes retain the existing restriction to standard full-width integer and IEEE
+float layouts.

@@ -23,9 +23,6 @@ go to stderr; exit status is 0 for success, 1 for read/parse/unsupported-data
 errors (including attributes), and 2 for invalid arguments. Other readable
 datasets are still inspected after a dataset-level error.
 
-As checked on 2026-10-19, Mooncakes search does not find this module; use the
-checkout until a registry release is verified.
-
 ## Library API
 
 Within this checkout, use imports as in [src/cmd/main/moon.pkg](src/cmd/main/moon.pkg):
@@ -54,19 +51,31 @@ let shape = dataset.dataspace.dimensions
 let metadata = file.open_dataset_metadata("/group/values")
 
 ///|
+let selected = file.read_dataset_selection(
+  "/matrix",
+  @lib.Hyperslab([0UL, 0UL], [2UL, 2UL], [1UL, 2UL]),
+)
+
+///|
 let attributes = file.attributes("/group/values")
 
 ///|
 let nodes = file.walk()
 ```
 
-Values are `Integers`, `UnsignedIntegers`, `Floats`, `Strings` or `Enums`.
-Enum datasets decode to member names; `Datatype.enum_members` exposes each
-name and its signed or unsigned base value.
+Simple values are returned as `Integers`, `UnsignedIntegers`, `Floats`,
+`Strings` or `Enums`. Other datatype classes use `Structured`, whose recursive
+`DatasetValue` entries represent time, bitfield, opaque, compound, reference,
+variable-length sequence, array and complex values. References expose their
+encoded bytes; the reader does not dereference the target object or region.
+Enum datasets decode to member names; `Datatype.enum_members` exposes each name
+and its signed or unsigned base value.
 `open_dataset_metadata(path)` reads shape, datatype and layout without loading
 dataset values, while `resolve(path)` locates objects without parsing dataset
-metadata. See the
-[inspector](src/cmd/main/main.mbt) for error handling and the
+metadata. `read_dataset_selection` supports strided hyperslabs and ordered point
+selections for compact, contiguous and chunked datasets. Chunked reads decode
+only intersecting allocated chunks and preserve fill values for missing chunks.
+See the [inspector](src/cmd/main/main.mbt) for error handling and the
 [generated interface](src/pkg.generated.mbti) for all public functions.
 
 ## Scope
@@ -77,13 +86,14 @@ metadata. See the
 | Groups | Symbol tables, compact link messages, dense groups via fractal heaps and metadata v2 B-trees; hard/soft links |
 | Layout | Compact, contiguous, v1 B-tree chunks; v4 single-chunk, implicit, fixed-array, extensible-array and v2 B-tree indexes |
 | Filters | Deflate (HDF5 gzip), shuffle, Fletcher32 and combinations; per-chunk skip masks |
-| Values | Standard int/uint8–64, IEEE float32/64, fixed/vlen strings, enum datatypes over integer bases |
+| Values | Standard int/uint8–64, IEEE float32/64, time, fixed/vlen strings, bitfield, opaque, compound, reference, enum, vlen sequence, array and complex datatypes |
 | Attributes | Inline messages v1–v3, dense attributes via fractal heaps and metadata v2 B-trees |
-| Fills | Default zeros and fixed-size numeric/string fills for missing chunks and unallocated contiguous data |
+| Fills | Default zeros and fixed-size fills for missing chunks and unallocated contiguous data |
+| Selections | Strided hyperslabs and ordered points, including duplicates, across supported layouts and chunk indexes |
 
-Writing, other filters, external links and compound/reference types are
-outside the current scope.
-Undefined/disabled fill policies and custom vlen fills are rejected when fill decoding is needed. External dataset storage is unsupported.
+Writing, other filters and external links are outside the current scope.
+Undefined/disabled fill policies and custom variable-length fills are rejected
+when fill decoding is needed. External dataset storage is unsupported.
 Version support does not imply support for every structure in that version.
 Nonstandard numeric layouts are explicitly rejected. Fractal heaps support
 I/O filter pipelines and managed, tiny, direct-huge and indirect-huge objects.

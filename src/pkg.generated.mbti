@@ -72,6 +72,8 @@ pub fn read_dataset(Bytes, ObjectHeader, Int32, Int32, UInt64) -> Dataset raise 
 
 pub fn read_dataset_metadata(ObjectHeader, Int32, Int32) -> DatasetMetadata raise Hdf5Error
 
+pub fn read_dataset_selection(Bytes, ObjectHeader, DatasetMetadata, DatasetSelection, Int32, Int32, UInt64) -> DatasetSelectionResult raise Hdf5Error
+
 pub fn read_global_heap_object(Bytes, UInt64, Int32, Int32, Int32, UInt64) -> Bytes raise Hdf5Error
 
 pub fn read_group_links_v1(Bytes, UInt64, UInt64, Int32, Int32, UInt64) -> Array[GroupLink] raise Hdf5Error
@@ -118,6 +120,21 @@ pub(all) enum ChunkIndex {
 } derive(@debug.Debug)
 pub fn ChunkIndex::to_repr(Self) -> @debug.Repr
 
+pub(all) struct CompoundFieldValue {
+  name : String
+  value : DatasetValue
+} derive(Eq, @debug.Debug)
+pub fn CompoundFieldValue::equal(Self, Self) -> Bool
+pub fn CompoundFieldValue::not_equal(Self, Self) -> Bool
+pub fn CompoundFieldValue::to_repr(Self) -> @debug.Repr
+
+pub(all) struct CompoundMember {
+  name : String
+  offset : Int32
+  datatype : Datatype
+} derive(@debug.Debug)
+pub fn CompoundMember::to_repr(Self) -> @debug.Repr
+
 pub(all) struct DataLayout {
   version : Int32
   layout_class : Int32
@@ -145,12 +162,45 @@ pub(all) struct DatasetMetadata {
 } derive(@debug.Debug)
 pub fn DatasetMetadata::to_repr(Self) -> @debug.Repr
 
+pub(all) enum DatasetSelection {
+  Hyperslab(Array[UInt64], Array[UInt64], Array[UInt64])
+  Points(Array[Array[UInt64]])
+} derive(@debug.Debug)
+pub fn DatasetSelection::to_repr(Self) -> @debug.Repr
+
+pub(all) struct DatasetSelectionResult {
+  dimensions : Array[UInt64]
+  datatype : Datatype
+  values : DatasetValues
+} derive(@debug.Debug)
+pub fn DatasetSelectionResult::to_repr(Self) -> @debug.Repr
+
+pub(all) enum DatasetValue {
+  SignedInteger(Int64)
+  UnsignedInteger(UInt64)
+  FloatingPoint(Double)
+  Text(String)
+  Enumeration(String)
+  Bitfield(UInt64)
+  Opaque(Bytes)
+  Compound(Array[CompoundFieldValue])
+  Elements(Array[DatasetValue])
+  Reference(Bytes)
+  Sequence(Array[DatasetValue])
+  Time(UInt64)
+  Complex(Double, Double)
+} derive(Eq, @debug.Debug)
+pub fn DatasetValue::equal(Self, Self) -> Bool
+pub fn DatasetValue::not_equal(Self, Self) -> Bool
+pub fn DatasetValue::to_repr(Self) -> @debug.Repr
+
 pub(all) enum DatasetValues {
   Integers(Array[Int64])
   UnsignedIntegers(Array[UInt64])
   Floats(Array[Double])
   Strings(Array[String])
   Enums(Array[String])
+  Structured(Array[DatasetValue])
 } derive(@debug.Debug)
 pub fn DatasetValues::to_repr(Self) -> @debug.Repr
 
@@ -179,6 +229,15 @@ pub(all) struct Datatype {
   little_endian : Bool
   vlen_is_string : Bool
   enum_members : Array[EnumMember]
+  compound_members : Array[CompoundMember]
+  base_types : Array[Datatype]
+  array_dimensions : Array[UInt64]
+  bit_offset : Int32
+  bit_precision : Int32
+  string_padding : Int32
+  string_charset : Int32
+  opaque_tag : String
+  reference_kind : Int32
 } derive(@debug.Debug)
 pub fn Datatype::to_repr(Self) -> @debug.Repr
 
@@ -225,6 +284,7 @@ pub fn Hdf5File::object_header_at(Self, UInt64) -> ObjectHeader raise Hdf5Error
 pub fn Hdf5File::open_dataset(Self, String) -> Dataset raise Hdf5Error
 pub fn Hdf5File::open_dataset_metadata(Self, String) -> DatasetMetadata raise Hdf5Error
 pub fn Hdf5File::parse(Bytes) -> Self raise Hdf5Error
+pub fn Hdf5File::read_dataset_selection(Self, String, DatasetSelection) -> DatasetSelectionResult raise Hdf5Error
 pub fn Hdf5File::resolve(Self, String) -> Hdf5Node raise Hdf5Error
 pub fn Hdf5File::root_address(Self) -> UInt64
 pub fn Hdf5File::to_repr(Self) -> @debug.Repr

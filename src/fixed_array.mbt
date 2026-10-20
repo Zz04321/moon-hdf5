@@ -11,6 +11,7 @@ fn read_fixed_array_chunks(
   output : FixedArray[Byte],
   undefined : UInt64,
   page_bits : Int32,
+  selection : Array[UInt64]?,
 ) -> Unit raise Hdf5Error {
   guard page_bits > 0 && page_bits <= 31 else {
     raise InvalidField("invalid fixed array page bits")
@@ -164,6 +165,14 @@ fn read_fixed_array_chunks(
       stored_size = entry.read_var_uint_le(size_width)
       mask = entry.read_u32_le()
     }
+    if !chunk_contains_selection(
+        offsets,
+        layout.chunk_dimensions,
+        dataspace.dimensions,
+        selection,
+      ) {
+      continue
+    }
     let decoded = read_filtered_chunk(
       bytes,
       address,
@@ -182,6 +191,7 @@ fn read_fixed_array_chunks(
       dataspace.dimensions,
       datatype.size,
       output,
+      selection,
     )
   }
 }

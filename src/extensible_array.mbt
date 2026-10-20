@@ -48,6 +48,7 @@ priv struct ExtensibleReader {
   undefined : UInt64
   filters : Array[Filter]
   output : FixedArray[Byte]
+  selection : Array[UInt64]?
   config : ExtensibleArrayConfig
   client : Int32
   entry_size : Int32
@@ -118,6 +119,14 @@ fn ExtensibleReader::entries(
     if outside {
       continue
     }
+    if !chunk_contains_selection(
+        offsets,
+        self.layout.chunk_dimensions,
+        self.dataspace.dimensions,
+        self.selection,
+      ) {
+      continue
+    }
     let decoded = read_filtered_chunk(
       self.bytes,
       address,
@@ -136,6 +145,7 @@ fn ExtensibleReader::entries(
       self.dataspace.dimensions,
       self.datatype.size,
       self.output,
+      self.selection,
     )
   }
 }
@@ -236,6 +246,7 @@ fn read_extensible_array_chunks(
   output : FixedArray[Byte],
   undefined : UInt64,
   config : ExtensibleArrayConfig,
+  selection : Array[UInt64]?,
 ) -> Unit raise Hdf5Error {
   validate_extensible_config(config)
   let unlimited_value = match length_size {
@@ -341,6 +352,7 @@ fn read_extensible_array_chunks(
     undefined,
     filters,
     output,
+    selection,
     config,
     client,
     entry_size,

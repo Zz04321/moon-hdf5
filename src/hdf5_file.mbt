@@ -242,6 +242,34 @@ pub fn Hdf5File::open_dataset_metadata(
 }
 
 ///|
+/// Reads a hyperslab or point selection from a dataset.
+pub fn Hdf5File::read_dataset_selection(
+  self : Hdf5File,
+  path : String,
+  selection : DatasetSelection,
+) -> DatasetSelectionResult raise Hdf5Error {
+  let node = self.resolve(path)
+  guard node.kind == Dataset else {
+    raise InvalidField("object is not a dataset: " + path)
+  }
+  let header = self.object_header_at(node.address)
+  let metadata = read_dataset_metadata(
+    header,
+    self.superblock.offset_size,
+    self.superblock.length_size,
+  )
+  read_dataset_selection(
+    self.bytes,
+    header,
+    metadata,
+    selection,
+    self.superblock.offset_size,
+    self.superblock.length_size,
+    self.superblock.base_address,
+  )
+}
+
+///|
 pub fn Hdf5File::attributes(
   self : Hdf5File,
   path : String,

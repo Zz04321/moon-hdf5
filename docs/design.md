@@ -13,7 +13,10 @@ The library operates on in-memory `Bytes`; filesystem access belongs to the call
 Dataset metadata parsing is separate from storage reads and value decoding.
 `open_dataset_metadata` returns the dataspace, datatype and layout without
 loading contiguous or chunked payloads; `open_dataset` reuses that metadata
-path before decoding all values.
+path before decoding all values. Dataset selections validate their rank and
+bounds, preserve point order and duplicates, and read only the selected elements
+from compact or contiguous storage. For chunked storage, every supported index
+is validated while only chunks intersecting the selection are read and decoded.
 
 Addresses are resolved relative to the superblock base. Modern group link-info
 messages select compact or dense storage from allocated heap/index addresses.
@@ -63,7 +66,7 @@ chunks retain fill values. Header and node checksums are verified.
 For array indexes, low-level `read_chunked_payload` accepts an optional
 `length_size` (default 8); pass the superblock's value for other length widths.
 
-`DataLayout` now exposes `chunk_index : ChunkIndex` (`BTreeV1`, `Single`,
+`DataLayout` exposes `chunk_index : ChunkIndex` (`BTreeV1`, `Single`,
 `Implicit`, `FixedArray`, `ExtensibleArray`, or `BTreeV2`). Array and B-tree
 configuration structs expose their layout creation parameters.
 Callers constructing this public struct directly must supply that
@@ -87,6 +90,17 @@ the version 3 single-NUL encoding; values follow the base type's signedness,
 width and byte order. Datasets and attributes decode enum payloads to member
 names and reject values with no matching member. Empty member lists, empty or
 unterminated names and non-integer bases are rejected.
+The remaining standard datatype classes use recursive `Datatype` metadata and
+`DatasetValue` values. Compound members retain names and byte offsets; array
+dimensions and vlen sequence bases retain their nested datatypes. Bitfields
+apply their declared offset and precision, opaque values preserve bytes and
+tags, and complex values decode their floating-point real and imaginary parts.
+References remain encoded bytes because resolving object and region references
+requires a separate navigation API. HDF5 2.0 datatype-message v5 encodings for
+compound, array and complex types are accepted alongside earlier encodings.
+Fixed strings honor null-terminated, null-padded and space-padded forms plus
+ASCII/UTF-8 character sets. Callers that construct the public `Datatype` record
+directly must initialize its recursive metadata fields.
 Attribute-info heap/index addresses determine dense storage independently of
 creation-order tracking, and dense records are read through the same fractal
 heap and metadata v2 B-tree helpers as groups. Unsupported numeric layouts raise
