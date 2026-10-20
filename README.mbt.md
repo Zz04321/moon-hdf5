@@ -51,6 +51,9 @@ let dataset = file.open_dataset("/group/values")
 let shape = dataset.dataspace.dimensions
 
 ///|
+let metadata = file.open_dataset_metadata("/group/values")
+
+///|
 let attributes = file.attributes("/group/values")
 
 ///|
@@ -60,7 +63,9 @@ let nodes = file.walk()
 Values are `Integers`, `UnsignedIntegers`, `Floats`, `Strings` or `Enums`.
 Enum datasets decode to member names; `Datatype.enum_members` exposes each
 name and its signed or unsigned base value.
-`resolve(path)` locates objects without decoding values. See the
+`open_dataset_metadata(path)` reads shape, datatype and layout without loading
+dataset values, while `resolve(path)` locates objects without parsing dataset
+metadata. See the
 [inspector](src/cmd/main/main.mbt) for error handling and the
 [generated interface](src/pkg.generated.mbti) for all public functions.
 

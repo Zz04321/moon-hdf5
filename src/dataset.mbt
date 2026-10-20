@@ -12,6 +12,17 @@ pub(all) enum DatasetValues {
 pub extend DatasetValues with @debug.Debug::{to_repr}
 
 ///|
+/// Dataset metadata that can be inspected without reading its stored values.
+pub(all) struct DatasetMetadata {
+  dataspace : Dataspace
+  datatype : Datatype
+  layout : DataLayout
+} derive(@debug.Debug)
+
+///|
+pub extend DatasetMetadata with @debug.Debug::{to_repr}
+
+///|
 /// A dataset together with its decoded values.
 pub(all) struct Dataset {
   dataspace : Dataspace
@@ -294,15 +305,13 @@ fn message_first(
 }
 
 ///|
-/// Parses a dataset object header and decodes compact, contiguous or
-/// chunked data with supported indexes and filters.
-pub fn read_dataset(
-  bytes : Bytes,
+/// Parses the dataspace, datatype and storage layout from a dataset object
+/// header without reading the stored values.
+pub fn read_dataset_metadata(
   header : ObjectHeader,
   offset_size : Int32,
   length_size : Int32,
-  base_address : UInt64,
-) -> Dataset raise Hdf5Error {
+) -> DatasetMetadata raise Hdf5Error {
   let dataspace = parse_dataspace(
     message_first(header, msg_dataspace),
     length_size,
@@ -313,6 +322,21 @@ pub fn read_dataset(
     offset_size,
     length_size,
   )
+  { dataspace, datatype, layout, }
+}
+
+///|
+fn read_dataset_values(
+  bytes : Bytes,
+  header : ObjectHeader,
+  metadata : DatasetMetadata,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> DatasetValues raise Hdf5Error {
+  let dataspace = metadata.dataspace
+  let datatype = metadata.datatype
+  let layout = metadata.layout
   let filters = match header.first(msg_filter_pipeline) {
     Some(message) => parse_filters(message)
     None => []
@@ -371,5 +395,27 @@ pub fn read_dataset(
   let values = decode_values(
     bytes, payload, count, datatype, offset_size, length_size, base_address,
   )
-  { dataspace, datatype, layout, values, }
+  values
+}
+
+///|
+/// Parses a dataset object header and decodes compact, contiguous or
+/// chunked data with supported indexes and filters.
+pub fn read_dataset(
+  bytes : Bytes,
+  header : ObjectHeader,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> Dataset raise Hdf5Error {
+  let metadata = read_dataset_metadata(header, offset_size, length_size)
+  let values = read_dataset_values(
+    bytes, header, metadata, offset_size, length_size, base_address,
+  )
+  {
+    dataspace: metadata.dataspace,
+    datatype: metadata.datatype,
+    layout: metadata.layout,
+    values,
+  }
 }

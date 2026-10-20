@@ -70,6 +70,8 @@ pub fn read_chunked_payload(Bytes, DataLayout, Dataspace, Datatype, Int32, UInt6
 
 pub fn read_dataset(Bytes, ObjectHeader, Int32, Int32, UInt64) -> Dataset raise Hdf5Error
 
+pub fn read_dataset_metadata(ObjectHeader, Int32, Int32) -> DatasetMetadata raise Hdf5Error
+
 pub fn read_global_heap_object(Bytes, UInt64, Int32, Int32, Int32, UInt64) -> Bytes raise Hdf5Error
 
 pub fn read_group_links_v1(Bytes, UInt64, UInt64, Int32, Int32, UInt64) -> Array[GroupLink] raise Hdf5Error
@@ -135,6 +137,13 @@ pub(all) struct Dataset {
   values : DatasetValues
 } derive(@debug.Debug)
 pub fn Dataset::to_repr(Self) -> @debug.Repr
+
+pub(all) struct DatasetMetadata {
+  dataspace : Dataspace
+  datatype : Datatype
+  layout : DataLayout
+} derive(@debug.Debug)
+pub fn DatasetMetadata::to_repr(Self) -> @debug.Repr
 
 pub(all) enum DatasetValues {
   Integers(Array[Int64])
@@ -214,6 +223,7 @@ pub fn Hdf5File::attributes(Self, String) -> Array[Attribute] raise Hdf5Error
 pub fn Hdf5File::links(Self, ObjectHeader) -> Array[GroupLink] raise Hdf5Error
 pub fn Hdf5File::object_header_at(Self, UInt64) -> ObjectHeader raise Hdf5Error
 pub fn Hdf5File::open_dataset(Self, String) -> Dataset raise Hdf5Error
+pub fn Hdf5File::open_dataset_metadata(Self, String) -> DatasetMetadata raise Hdf5Error
 pub fn Hdf5File::parse(Bytes) -> Self raise Hdf5Error
 pub fn Hdf5File::resolve(Self, String) -> Hdf5Node raise Hdf5Error
 pub fn Hdf5File::root_address(Self) -> UInt64

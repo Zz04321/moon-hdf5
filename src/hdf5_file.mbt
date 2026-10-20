@@ -223,6 +223,25 @@ pub fn Hdf5File::open_dataset(
 }
 
 ///|
+/// Reads a dataset's shape, datatype and storage layout without loading its
+/// values.
+pub fn Hdf5File::open_dataset_metadata(
+  self : Hdf5File,
+  path : String,
+) -> DatasetMetadata raise Hdf5Error {
+  let node = self.resolve(path)
+  guard node.kind == Dataset else {
+    raise InvalidField("object is not a dataset: " + path)
+  }
+  let header = self.object_header_at(node.address)
+  read_dataset_metadata(
+    header,
+    self.superblock.offset_size,
+    self.superblock.length_size,
+  )
+}
+
+///|
 pub fn Hdf5File::attributes(
   self : Hdf5File,
   path : String,

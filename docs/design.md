@@ -10,6 +10,11 @@ The library operates on in-memory `Bytes`; filesystem access belongs to the call
 | Metadata | dataspace, datatype, data_layout | Shapes, types and storage |
 | Values | dataset, chunked, direct_chunks, filter, fill_value, global_heap, attribute | Value decoding |
 
+Dataset metadata parsing is separate from storage reads and value decoding.
+`open_dataset_metadata` returns the dataspace, datatype and layout without
+loading contiguous or chunked payloads; `open_dataset` reuses that metadata
+path before decoding all values.
+
 Addresses are resolved relative to the superblock base. Modern group link-info
 messages select compact or dense storage from allocated heap/index addresses.
 Dense groups and attributes use a fractal heap for message bodies and a metadata
