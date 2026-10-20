@@ -23,7 +23,7 @@ fn btree_integer_width(value : UInt64) -> Int32 {
 
 ///|
 priv struct ChunkBTreeV2 {
-  bytes : Bytes
+  source : &Hdf5Source
   layout : DataLayout
   dataspace : Dataspace
   datatype : Datatype
@@ -97,8 +97,8 @@ fn ChunkBTreeV2::record(
     ) {
     return
   }
-  let decoded = read_filtered_chunk(
-    self.bytes,
+  let decoded = read_source_filtered_chunk(
+    self.source,
     address,
     self.base_address,
     stored_size,
@@ -135,7 +135,8 @@ fn ChunkBTreeV2::node(
     raise InvalidField("invalid v2 B-tree node record count")
   }
   let start = address_to_offset(address, self.base_address)
-  let reader = Reader::new(self.bytes).sub(start, self.config.node_size)
+  let node = self.source.read_at(start.to_uint64(), self.config.node_size)
+  let reader = Reader::new(node)
   guard reader.read_bytes(4) == (if depth == 0 { b"BTLF" } else { b"BTIN" }) &&
     reader.read_u8() == b'\x00' &&
     reader.read_u8().to_int() == self.client else {
@@ -164,12 +165,7 @@ fn ChunkBTreeV2::node(
       children.push((child_address, child_count.to_int(), child_total))
     }
   }
-  verify_metadata_checksum(
-    self.bytes,
-    start,
-    reader.position(),
-    "v2 B-tree node",
-  )
+  verify_metadata_checksum(node, 0, reader.position(), "v2 B-tree node")
   reader.skip(4)
   guard computed_total == total else {
     raise InvalidField("v2 B-tree subtree count mismatch")
@@ -180,7 +176,7 @@ fn ChunkBTreeV2::node(
       self.node(child_address, depth - 1, child_count, child_total)
     }
     self.record(
-      Reader::at(self.bytes, records_start + record_index * self.record_size),
+      Reader::at(node, records_start + record_index * self.record_size),
     )
   }
   if depth > 0 {
@@ -204,9 +200,49 @@ fn read_btree_v2_chunks(
   config : BTreeV2Config,
   selection : Array[UInt64]?,
 ) -> Unit raise Hdf5Error {
+  let sources : Array[&Hdf5Source] = [bytes]
+  read_source_btree_v2_chunks(
+    sources[0],
+    layout,
+    dataspace,
+    datatype,
+    offset_size,
+    length_size,
+    base_address,
+    filters,
+    output,
+    undefined,
+    config,
+    selection,
+  )
+}
+
+///|
+fn read_source_btree_v2_chunks(
+  source : &Hdf5Source,
+  layout : DataLayout,
+  dataspace : Dataspace,
+  datatype : Datatype,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+  filters : Array[Filter],
+  output : FixedArray[Byte],
+  undefined : UInt64,
+  config : BTreeV2Config,
+  selection : Array[UInt64]?,
+) -> Unit raise Hdf5Error {
   validate_btree_v2_config(config)
   let header_offset = address_to_offset(layout.data_address, base_address)
-  let header = Reader::at(bytes, header_offset)
+  let header_content = 18 + offset_size + length_size
+  let header = Reader::new(
+    source_read_checksummed(
+      source,
+      header_offset.to_uint64(),
+      header_content,
+      "v2 B-tree header",
+    ),
+  )
   guard header.read_bytes(4) == b"BTHD" && header.read_u8() == b'\x00' else {
     raise InvalidField("invalid v2 B-tree header")
   }
@@ -233,14 +269,11 @@ fn read_btree_v2_chunks(
   let root = header.read_uint_le(offset_size)
   let count = header.read_u16_le().to_int()
   let total = header.read_uint_le(length_size)
-  verify_metadata_checksum(
-    bytes,
-    header_offset,
-    header.position(),
-    "v2 B-tree header",
-  )
+  guard header.position() == header_content else {
+    raise InvalidField("v2 B-tree header size mismatch")
+  }
   header.skip(4)
-  guard total <= (bytes.length() / record_size).to_uint64() else {
+  guard total <= source.length() / record_size.to_uint64() else {
     raise InvalidField("v2 B-tree record count exceeds input")
   }
   if root == undefined {
@@ -271,7 +304,7 @@ fn read_btree_v2_chunks(
     total_widths.push(btree_integer_width(cumulative))
   }
   let context : ChunkBTreeV2 = {
-    bytes,
+    source,
     layout,
     dataspace,
     datatype,

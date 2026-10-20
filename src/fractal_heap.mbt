@@ -21,6 +21,7 @@ priv struct HugeObjectRecord {
 /// A parsed fractal heap used by dense groups and dense attributes.
 priv struct FractalHeap {
   bytes : Bytes
+  source : &Hdf5Source?
   header_address : UInt64
   offset_size : Int32
   length_size : Int32
@@ -41,6 +42,18 @@ priv struct FractalHeap {
   huge_id_size : Int32
   huge_ids_direct : Bool
   blocks : Array[FractalHeapBlock]
+}
+
+///|
+fn FractalHeap::read_at(
+  self : FractalHeap,
+  offset : UInt64,
+  length : Int32,
+) -> Bytes raise Hdf5Error {
+  match self.source {
+    Some(source) => source.read_at(offset, length)
+    None => Hdf5Source::read_at(self.bytes, offset, length)
+  }
 }
 
 ///|
@@ -93,11 +106,7 @@ fn FractalHeap::read_file_object(
     raise InvalidField("invalid " + label + " size")
   }
   let start = address_to_offset(address, self.base_address)
-  guard start.to_int64() + size.reinterpret_as_int64() <=
-    self.bytes.length().to_int64() else {
-    raise UnexpectedEof(start.to_int64())
-  }
-  self.bytes.get_view(start~, end=start + size.to_int()).unwrap().to_owned()
+  self.read_at(start.to_uint64(), size.to_int())
 }
 
 ///|
@@ -156,15 +165,28 @@ fn FractalHeap::huge_record(
     raise InvalidField("fractal heap has no huge object B-tree")
   }
   let expected_type = if self.filter_len > 0 { 2 } else { 1 }
-  let contents = read_v2_btree_records(
-    self.bytes,
-    self.huge_btree_address,
-    self.offset_size,
-    self.length_size,
-    self.base_address,
-    [expected_type],
-    "fractal heap huge object v2 B-tree",
-  )
+  let contents = match self.source {
+    Some(source) =>
+      read_source_v2_btree_records(
+        source,
+        self.huge_btree_address,
+        self.offset_size,
+        self.length_size,
+        self.base_address,
+        [expected_type],
+        "fractal heap huge object v2 B-tree",
+      )
+    None =>
+      read_v2_btree_records(
+        self.bytes,
+        self.huge_btree_address,
+        self.offset_size,
+        self.length_size,
+        self.base_address,
+        [expected_type],
+        "fractal heap huge object v2 B-tree",
+      )
+  }
   for raw in contents.records {
     let record = parse_huge_btree_record(
       raw,
@@ -220,16 +242,10 @@ fn FractalHeap::add_direct_block(
   }
   let offset = address_to_offset(address, self.base_address)
   let raw_size = if self.filter_len > 0 { stored_size } else { block_size }
-  guard raw_size > 0UL &&
-    raw_size <= 0x7FFFFFFFUL &&
-    offset.to_int64() + raw_size.reinterpret_as_int64() <=
-    self.bytes.length().to_int64() else {
+  guard raw_size > 0UL && raw_size <= 0x7FFFFFFFUL else {
     raise InvalidField("invalid fractal heap direct block size")
   }
-  let stored = self.bytes
-    .get_view(start=offset, end=offset + raw_size.to_int())
-    .unwrap()
-    .to_owned()
+  let stored = self.read_at(offset.to_uint64(), raw_size.to_int())
   let data = if self.filter_len > 0 {
     decode_filters(stored, self.filters, filter_mask, 0, block_size.to_int())
   } else {
@@ -281,7 +297,32 @@ fn FractalHeap::add_indirect_block(
   }
   visited.push(address)
   let offset = address_to_offset(address, self.base_address)
-  let reader = Reader::at(self.bytes, offset)
+  let header_size = 5 + self.offset_size + self.block_offset_size
+  guard nrows <= 0x10000 / self.table_width else {
+    raise InvalidField("fractal heap indirect block has too many rows")
+  }
+  let entries = nrows * self.table_width
+  let direct_limit = self.max_direct_rows * self.table_width
+  let direct_count = if entries < direct_limit { entries } else { direct_limit }
+  let indirect_count = entries - direct_count
+  let entry_size = self.offset_size +
+    (if self.filter_len > 0 { self.length_size + 4 } else { 0 })
+  let content_size = header_size +
+    direct_count * entry_size +
+    indirect_count * self.offset_size
+  let data = source_read_checksummed(
+    match self.source {
+      Some(source) => source
+      None => {
+        let sources : Array[&Hdf5Source] = [self.bytes]
+        sources[0]
+      }
+    },
+    offset.to_uint64(),
+    content_size,
+    "fractal heap indirect block",
+  )
+  let reader = Reader::new(data)
   guard reader.read_bytes(4) == b"FHIB" && reader.read_u8() == b'\x00' else {
     raise InvalidField("invalid fractal heap indirect block")
   }
@@ -291,13 +332,6 @@ fn FractalHeap::add_indirect_block(
     )
   }
   let _block_offset = reader.read_var_uint_le(self.block_offset_size)
-  guard nrows <= 0x10000 / self.table_width else {
-    raise InvalidField("fractal heap indirect block has too many rows")
-  }
-  let entries = nrows * self.table_width
-  let direct_limit = self.max_direct_rows * self.table_width
-  let direct_count = if entries < direct_limit { entries } else { direct_limit }
-  let indirect_count = entries - direct_count
   let direct_entries : Array[(UInt64, UInt64, UInt32)] = []
   for _ in 0..<direct_count {
     let address = reader.read_uint_le(self.offset_size)
@@ -317,12 +351,9 @@ fn FractalHeap::add_indirect_block(
   for _ in 0..<indirect_count {
     indirect_addresses.push(reader.read_uint_le(self.offset_size))
   }
-  verify_metadata_checksum(
-    self.bytes,
-    offset,
-    reader.position(),
-    "fractal heap indirect block",
-  )
+  guard reader.position() == content_size else {
+    raise InvalidField("fractal heap indirect block size mismatch")
+  }
   reader.skip(4)
   for index in 0..<direct_count {
     let block_size = self.block_size_at(index)
@@ -363,13 +394,50 @@ fn parse_fractal_heap(
   length_size : Int32,
   base_address : UInt64,
 ) -> FractalHeap raise Hdf5Error {
+  let sources : Array[&Hdf5Source] = [bytes]
+  parse_source_fractal_heap(
+    sources[0],
+    address,
+    offset_size,
+    length_size,
+    base_address,
+    bytes~,
+  )
+}
+
+///|
+fn parse_source_fractal_heap(
+  source : &Hdf5Source,
+  address : UInt64,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+  bytes~ : Bytes = b"",
+) -> FractalHeap raise Hdf5Error {
   let offset = address_to_offset(address, base_address)
-  let reader = Reader::at(bytes, offset)
+  let fixed_size = 22 + length_size * 12 + offset_size * 3
+  let fixed = source.read_at(offset.to_uint64(), fixed_size)
+  let filter_info_size = Reader::at(fixed, 7).read_u16_le().to_int()
+  let extra_size = if filter_info_size == 0 {
+    0
+  } else {
+    length_size + 4 + filter_info_size
+  }
+  let header_bytes = source_read_checksummed(
+    source,
+    offset.to_uint64(),
+    fixed_size + extra_size,
+    "fractal heap header",
+  )
+  let reader = Reader::new(header_bytes)
   guard reader.read_bytes(4) == b"FRHP" && reader.read_u8() == b'\x00' else {
     raise InvalidField("invalid fractal heap header")
   }
   let id_length = reader.read_u16_le().to_int()
-  let filter_info_size = reader.read_u16_le().to_int()
+  let parsed_filter_info_size = reader.read_u16_le().to_int()
+  guard parsed_filter_info_size == filter_info_size else {
+    raise InvalidField("fractal heap header changed during reading")
+  }
   let flags = reader.read_u8().to_int()
   let max_managed_size = reader.read_u32_le().to_uint64()
   let _next_huge_id = reader.read_uint_le(length_size)
@@ -399,12 +467,9 @@ fn parse_fractal_heap(
     filtered_root_mask = reader.read_u32_le()
     encoded_filters = reader.read_bytes(filter_info_size)
   }
-  verify_metadata_checksum(
-    bytes,
-    offset,
-    reader.position(),
-    "fractal heap header",
-  )
+  guard reader.position() == fixed_size + extra_size else {
+    raise InvalidField("fractal heap header size mismatch")
+  }
   reader.skip(4)
   guard id_length >= 1 && id_length <= 255 else {
     raise InvalidField("invalid fractal heap ID length")
@@ -467,6 +532,7 @@ fn parse_fractal_heap(
   )
   let heap : FractalHeap = {
     bytes,
+    source: Some(source),
     header_address: address,
     offset_size,
     length_size,

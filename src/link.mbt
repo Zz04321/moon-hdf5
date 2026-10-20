@@ -96,6 +96,24 @@ pub fn read_group_links_v2(
   length_size : Int32,
   base_address : UInt64,
 ) -> Array[GroupLink] raise Hdf5Error {
+  let sources : Array[&Hdf5Source] = [bytes]
+  read_source_group_links_v2(
+    sources[0],
+    header,
+    offset_size,
+    length_size,
+    base_address,
+  )
+}
+
+///|
+fn read_source_group_links_v2(
+  source : &Hdf5Source,
+  header : ObjectHeader,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> Array[GroupLink] raise Hdf5Error {
   let links : Array[GroupLink] = []
   for message in header.messages {
     if message.msg_type == msg_link_info {
@@ -131,11 +149,11 @@ pub fn read_group_links_v2(
         } else {
           raise InvalidField("dense group has no name or order index")
         }
-        let heap = parse_fractal_heap(
-          bytes, heap_address, offset_size, length_size, base_address,
+        let heap = parse_source_fractal_heap(
+          source, heap_address, offset_size, length_size, base_address,
         )
-        let records = read_metadata_btree_records(
-          bytes,
+        let records = read_source_metadata_btree_records(
+          source,
           index_address,
           offset_size,
           length_size,

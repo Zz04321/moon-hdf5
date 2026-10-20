@@ -27,10 +27,11 @@ pub extend Hdf5Node with Eq::{not_equal, equal}
 pub extend Hdf5Node with @debug.Debug::{to_repr}
 
 ///|
-/// A parsed HDF5 file backed by an immutable byte buffer.
+/// A parsed HDF5 file backed by bytes or a random-access source.
 pub(all) struct Hdf5File {
   bytes : Bytes
   superblock : Superblock
+  source : &Hdf5Source?
 } derive(@debug.Debug)
 
 ///|
@@ -38,7 +39,34 @@ pub extend Hdf5File with @debug.Debug::{to_repr}
 
 ///|
 pub fn Hdf5File::parse(bytes : Bytes) -> Hdf5File raise Hdf5Error {
-  { bytes, superblock: parse_superblock(bytes), }
+  { bytes, superblock: parse_superblock(bytes), source: None, }
+}
+
+///|
+/// Parses an HDF5 file from a random-access source.
+///
+pub fn Hdf5File::parse_source(source : &Hdf5Source) -> Hdf5File raise Hdf5Error {
+  {
+    bytes: b"",
+    superblock: parse_source_superblock(source),
+    source: Some(source),
+  }
+}
+
+///|
+fn Hdf5File::materialized_bytes(self : Hdf5File) -> Bytes raise Hdf5Error {
+  match self.source {
+    None => self.bytes
+    Some(source) => {
+      let length = source.length()
+      guard length <= 0x7FFFFFFFUL else {
+        raise UnsupportedFeature(
+          "materializing sources larger than 2 GiB is not supported",
+        )
+      }
+      source.read_at(0UL, length.to_int())
+    }
+  }
 }
 
 ///|
@@ -51,13 +79,24 @@ pub fn Hdf5File::object_header_at(
   self : Hdf5File,
   address : UInt64,
 ) -> ObjectHeader raise Hdf5Error {
-  parse_object_header(
-    self.bytes,
-    address,
-    self.superblock.offset_size,
-    self.superblock.length_size,
-    self.superblock.base_address,
-  )
+  match self.source {
+    None =>
+      parse_object_header(
+        self.bytes,
+        address,
+        self.superblock.offset_size,
+        self.superblock.length_size,
+        self.superblock.base_address,
+      )
+    Some(source) =>
+      parse_source_object_header(
+        source,
+        address,
+        self.superblock.offset_size,
+        self.superblock.length_size,
+        self.superblock.base_address,
+      )
+  }
 }
 
 ///|
@@ -89,23 +128,46 @@ pub fn Hdf5File::links(
         self.superblock.offset_size,
         self.superblock.length_size,
       )
-      read_group_links_v1(
-        self.bytes,
-        symbol_table.btree_address,
-        symbol_table.heap_address,
-        self.superblock.offset_size,
-        self.superblock.length_size,
-        self.superblock.base_address,
-      )
+      match self.source {
+        None =>
+          read_group_links_v1(
+            self.bytes,
+            symbol_table.btree_address,
+            symbol_table.heap_address,
+            self.superblock.offset_size,
+            self.superblock.length_size,
+            self.superblock.base_address,
+          )
+        Some(source) =>
+          read_source_group_links_v1(
+            source,
+            symbol_table.btree_address,
+            symbol_table.heap_address,
+            self.superblock.offset_size,
+            self.superblock.length_size,
+            self.superblock.base_address,
+          )
+      }
     }
     None =>
-      read_group_links_v2(
-        self.bytes,
-        header,
-        self.superblock.offset_size,
-        self.superblock.length_size,
-        self.superblock.base_address,
-      )
+      match self.source {
+        Some(source) =>
+          read_source_group_links_v2(
+            source,
+            header,
+            self.superblock.offset_size,
+            self.superblock.length_size,
+            self.superblock.base_address,
+          )
+        None =>
+          read_group_links_v2(
+            self.bytes,
+            header,
+            self.superblock.offset_size,
+            self.superblock.length_size,
+            self.superblock.base_address,
+          )
+      }
   }
 }
 
@@ -213,13 +275,41 @@ pub fn Hdf5File::open_dataset(
     raise InvalidField("object is not a dataset: " + path)
   }
   let header = self.object_header_at(node.address)
-  read_dataset(
-    self.bytes,
+  let metadata = read_dataset_metadata(
     header,
     self.superblock.offset_size,
     self.superblock.length_size,
-    self.superblock.base_address,
   )
+  match self.source {
+    Some(source) if source_selection_supported(metadata) => {
+      let rank = metadata.dataspace.dimensions.length()
+      let start = Array::make(rank, 0UL)
+      let stride = Array::make(rank, 1UL)
+      let selected = read_source_dataset_selection(
+        source,
+        header,
+        metadata,
+        Hyperslab(start, metadata.dataspace.dimensions.copy(), stride),
+        self.superblock.offset_size,
+        self.superblock.length_size,
+        self.superblock.base_address,
+      )
+      {
+        dataspace: metadata.dataspace,
+        datatype: metadata.datatype,
+        layout: metadata.layout,
+        values: selected.values,
+      }
+    }
+    _ =>
+      read_dataset(
+        self.materialized_bytes(),
+        header,
+        self.superblock.offset_size,
+        self.superblock.length_size,
+        self.superblock.base_address,
+      )
+  }
 }
 
 ///|
@@ -258,15 +348,28 @@ pub fn Hdf5File::read_dataset_selection(
     self.superblock.offset_size,
     self.superblock.length_size,
   )
-  read_dataset_selection(
-    self.bytes,
-    header,
-    metadata,
-    selection,
-    self.superblock.offset_size,
-    self.superblock.length_size,
-    self.superblock.base_address,
-  )
+  match self.source {
+    Some(source) if source_selection_supported(metadata) =>
+      read_source_dataset_selection(
+        source,
+        header,
+        metadata,
+        selection,
+        self.superblock.offset_size,
+        self.superblock.length_size,
+        self.superblock.base_address,
+      )
+    _ =>
+      read_dataset_selection(
+        self.materialized_bytes(),
+        header,
+        metadata,
+        selection,
+        self.superblock.offset_size,
+        self.superblock.length_size,
+        self.superblock.base_address,
+      )
+  }
 }
 
 ///|
@@ -276,13 +379,24 @@ pub fn Hdf5File::attributes(
 ) -> Array[Attribute] raise Hdf5Error {
   let node = self.resolve(path)
   let header = self.object_header_at(node.address)
-  read_attributes(
-    self.bytes,
-    header,
-    self.superblock.offset_size,
-    self.superblock.length_size,
-    self.superblock.base_address,
-  )
+  match self.source {
+    Some(source) =>
+      read_source_attributes(
+        source,
+        header,
+        self.superblock.offset_size,
+        self.superblock.length_size,
+        self.superblock.base_address,
+      )
+    None =>
+      read_attributes(
+        self.bytes,
+        header,
+        self.superblock.offset_size,
+        self.superblock.length_size,
+        self.superblock.base_address,
+      )
+  }
 }
 
 ///|

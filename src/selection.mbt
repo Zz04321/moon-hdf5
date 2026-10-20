@@ -235,6 +235,160 @@ fn selected_payload(
 }
 
 ///|
+fn datatype_needs_backing_bytes(datatype : Datatype) -> Bool {
+  if datatype.class == 9 {
+    return true
+  }
+  for base in datatype.base_types {
+    if datatype_needs_backing_bytes(base) {
+      return true
+    }
+  }
+  for compound_member in datatype.compound_members {
+    if datatype_needs_backing_bytes(compound_member.datatype) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn source_selection_supported(metadata : DatasetMetadata) -> Bool {
+  if datatype_needs_backing_bytes(metadata.datatype) {
+    return false
+  }
+  match metadata.layout.layout_class {
+    0 | 1 => true
+    2 => true
+    _ => false
+  }
+}
+
+///|
+fn source_contiguous_payload(
+  source : &Hdf5Source,
+  header : ObjectHeader,
+  metadata : DatasetMetadata,
+  indices : Array[UInt64],
+  offset_size : Int32,
+  base_address : UInt64,
+) -> Bytes raise Hdf5Error {
+  let datatype = metadata.datatype
+  guard datatype.size > 0 else { raise InvalidField("invalid datatype size") }
+  guard metadata.layout.layout_class == 1 else {
+    raise InvalidField("expected contiguous dataset storage")
+  }
+  if header.first(msg_external_data_files) is Some(_) {
+    raise UnsupportedFeature("external dataset storage is not supported yet")
+  }
+  if header.first(msg_filter_pipeline) is Some(_) {
+    raise UnsupportedFeature("filters require chunked storage")
+  }
+  let full_count = metadata.dataspace.element_count()
+  guard full_count >= 0 && full_count <= 0x7FFFFFFFL / datatype.size.to_int64() else {
+    raise InvalidField("dataset byte size is too large")
+  }
+  let full_size = full_count.to_int() * datatype.size
+  let layout = metadata.layout
+  let undefined = if offset_size == 8 {
+    0xFFFFFFFFFFFFFFFFUL
+  } else {
+    (1UL << (offset_size * 8)) - 1UL
+  }
+  let fill = if layout.data_address == undefined {
+    dataset_fill_value(header, datatype)
+  } else {
+    b""
+  }
+  let output = filled_payload(indices.length().to_int64(), datatype.size, fill)
+  if layout.data_address == undefined {
+    return output.unsafe_reinterpret_as_bytes()
+  }
+  let stored_size = if layout.data_size > 0UL {
+    layout.data_size
+  } else {
+    full_size.to_uint64()
+  }
+  guard stored_size >= full_size.to_uint64() else {
+    raise InvalidField("dataset storage is smaller than its declared shape")
+  }
+  let source_offset = address_to_offset(layout.data_address, base_address).to_uint64()
+  let mut selected = 0
+  while selected < indices.length() {
+    let index = indices[selected]
+    guard index < full_count.reinterpret_as_uint64() else {
+      raise InvalidField("selection coordinate is outside the dataset")
+    }
+    let mut run_elements = 1
+    while selected + run_elements < indices.length() &&
+          indices[selected + run_elements] == index + run_elements.to_uint64() {
+      run_elements = run_elements + 1
+    }
+    let relative = index * datatype.size.to_uint64()
+    let byte_length = run_elements * datatype.size
+    let data = source.read_at(source_offset + relative, byte_length)
+    output.blit_from_bytes(selected * datatype.size, data, 0, byte_length)
+    selected = selected + run_elements
+  }
+  output.unsafe_reinterpret_as_bytes()
+}
+
+///|
+fn read_source_dataset_selection(
+  source : &Hdf5Source,
+  header : ObjectHeader,
+  metadata : DatasetMetadata,
+  selection : DatasetSelection,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> DatasetSelectionResult raise Hdf5Error {
+  guard !datatype_needs_backing_bytes(metadata.datatype) else {
+    raise InvalidField("datatype requires complete backing bytes")
+  }
+  let (dimensions, indices) = selection_indices(metadata.dataspace, selection)
+  let payload = match metadata.layout.layout_class {
+    0 =>
+      selected_payload(
+        b"", header, metadata, indices, offset_size, length_size, base_address,
+      )
+    1 =>
+      source_contiguous_payload(
+        source, header, metadata, indices, offset_size, base_address,
+      )
+    2 => {
+      let filters = match header.first(msg_filter_pipeline) {
+        Some(message) => parse_filters(message)
+        None => []
+      }
+      read_source_chunked_with_filters(
+        source,
+        metadata.layout,
+        metadata.dataspace,
+        metadata.datatype,
+        offset_size,
+        length_size,
+        base_address,
+        dataset_fill_value(header, metadata.datatype),
+        filters,
+        indices,
+      )
+    }
+    _ => raise InvalidField("unsupported dataset storage layout")
+  }
+  let values = decode_values(
+    b"",
+    payload,
+    indices.length().to_int64(),
+    metadata.datatype,
+    offset_size,
+    length_size,
+    base_address,
+  )
+  { dimensions, datatype: metadata.datatype, values, }
+}
+
+///|
 /// Reads selected values from a dataset.
 pub fn read_dataset_selection(
   bytes : Bytes,

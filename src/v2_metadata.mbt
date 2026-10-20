@@ -58,7 +58,7 @@ fn parse_metadata_btree_record(
 ///|
 /// Shared traversal state for a v2 B-tree.
 priv struct V2BTreeReader {
-  bytes : Bytes
+  source : &Hdf5Source
   base_address : UInt64
   node_size : Int32
   record_size : Int32
@@ -93,7 +93,8 @@ fn V2BTreeReader::node(
   }
   self.visited.push(address)
   let start = address_to_offset(address, self.base_address)
-  let reader = Reader::new(self.bytes).sub(start, self.node_size)
+  let node = self.source.read_at(start.to_uint64(), self.node_size)
+  let reader = Reader::new(node)
   guard reader.read_bytes(4) == (if depth == 0 { b"BTLF" } else { b"BTIN" }) &&
     reader.read_u8() == b'\x00' &&
     reader.read_u8().to_int() == self.node_type else {
@@ -126,12 +127,7 @@ fn V2BTreeReader::node(
       children.push((child_address, child_count.to_int(), child_total))
     }
   }
-  verify_metadata_checksum(
-    self.bytes,
-    start,
-    reader.position(),
-    self.label + " node",
-  )
+  verify_metadata_checksum(node, 0, reader.position(), self.label + " node")
   reader.skip(4)
   guard computed_total == total else {
     raise InvalidField(self.label + " subtree count mismatch")
@@ -168,8 +164,38 @@ fn read_v2_btree_records(
   expected_types : Array[Int32],
   label : String,
 ) -> V2BTreeContents raise Hdf5Error {
+  let sources : Array[&Hdf5Source] = [bytes]
+  read_source_v2_btree_records(
+    sources[0],
+    address,
+    offset_size,
+    length_size,
+    base_address,
+    expected_types,
+    label,
+  )
+}
+
+///|
+fn read_source_v2_btree_records(
+  source : &Hdf5Source,
+  address : UInt64,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+  expected_types : Array[Int32],
+  label : String,
+) -> V2BTreeContents raise Hdf5Error {
   let header_offset = address_to_offset(address, base_address)
-  let header = Reader::at(bytes, header_offset)
+  let header_content = 18 + offset_size + length_size
+  let header = Reader::new(
+    source_read_checksummed(
+      source,
+      header_offset.to_uint64(),
+      header_content,
+      label + " header",
+    ),
+  )
   guard header.read_bytes(4) == b"BTHD" && header.read_u8() == b'\x00' else {
     raise InvalidField("invalid " + label + " header")
   }
@@ -189,12 +215,9 @@ fn read_v2_btree_records(
   let root_address = header.read_uint_le(offset_size)
   let root_count = header.read_u16_le().to_int()
   let total = header.read_uint_le(length_size)
-  verify_metadata_checksum(
-    bytes,
-    header_offset,
-    header.position(),
-    label + " header",
-  )
+  guard header.position() == header_content else {
+    raise InvalidField(label + " header size mismatch")
+  }
   header.skip(4)
   guard node_size > 10 && record_size > 0 && depth <= 32 else {
     raise InvalidField("invalid " + label + " header")
@@ -249,7 +272,7 @@ fn read_v2_btree_records(
     raise InvalidField(label + " has too many records")
   }
   let context : V2BTreeReader = {
-    bytes,
+    source,
     base_address,
     node_size,
     record_size,
@@ -281,6 +304,27 @@ fn read_metadata_btree_records(
 ) -> Array[MetadataBTreeRecord] raise Hdf5Error {
   let contents = read_v2_btree_records(
     bytes, address, offset_size, length_size, base_address, expected_types, "metadata v2 B-tree",
+  )
+  contents.records.map(record => {
+    parse_metadata_btree_record(
+      record,
+      contents.node_type,
+      contents.record_size,
+    )
+  })
+}
+
+///|
+fn read_source_metadata_btree_records(
+  source : &Hdf5Source,
+  address : UInt64,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+  expected_types : Array[Int32],
+) -> Array[MetadataBTreeRecord] raise Hdf5Error {
+  let contents = read_source_v2_btree_records(
+    source, address, offset_size, length_size, base_address, expected_types, "metadata v2 B-tree",
   )
   contents.records.map(record => {
     parse_metadata_btree_record(

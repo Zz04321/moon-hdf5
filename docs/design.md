@@ -1,6 +1,11 @@
 # Design
 
-The library operates on in-memory `Bytes`; filesystem access belongs to the caller.
+The parser accepts in-memory `Bytes` or a caller-provided random-access
+`Hdf5Source`. Superblocks, object headers, group structures and dense metadata
+use bounded source reads. Dataset values, attributes and selections from every
+supported storage layout also use bounded reads when datatypes do not reference
+global heaps. Datatypes that require global-heap backing retain a full-source
+compatibility path.
 
 | Layer | Files | Responsibility |
 | --- | --- | --- |

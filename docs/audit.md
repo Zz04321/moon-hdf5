@@ -170,7 +170,10 @@ the implemented behavior. The UTF-8 reader comment now reflects its validation,
 the writer demo prints the correct source path, and compatibility limits remain
 centralized in `docs/compatibility.md`.
 
-One proposal-level architecture item remains open: parsing still starts from a
-complete in-memory `Bytes` value. Dataset selections avoid decoding unrelated
-chunks, but the input source itself is not yet a replaceable random-access
-reader. Publication also remains gated on proposal approval.
+One proposal-level architecture item remains open. `Hdf5Source` now defines a
+replaceable random-access input boundary. Superblocks, object headers, v1/v2
+group navigation, dense attributes and dataset value reads use bounded source
+reads for datatypes without global-heap references. Chunk selections read only
+their index blocks and intersecting chunks for every supported index. Datatypes
+that require global-heap backing retain a full-source compatibility path.
+Publication also remains gated on proposal approval.

@@ -100,6 +100,26 @@ fn parse_attribute_message(
 }
 
 ///|
+fn read_source_attribute_message(
+  message : HeaderMessage,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> Attribute raise Hdf5Error {
+  guard message.msg_type == msg_attribute else {
+    raise InvalidField("message is not an attribute message")
+  }
+  parse_attribute_data(
+    message.data,
+    message.flags,
+    b"",
+    offset_size,
+    length_size,
+    base_address,
+  )
+}
+
+///|
 /// Parses all attributes attached to an object header.
 pub fn read_attributes(
   bytes : Bytes,
@@ -189,6 +209,103 @@ pub fn read_attributes(
       attributes.push(
         parse_attribute_message(
           message, bytes, offset_size, length_size, base_address,
+        ),
+      )
+    }
+  }
+  attributes
+}
+
+///|
+/// Parses attributes using bounded reads from a random-access source.
+fn read_source_attributes(
+  source : &Hdf5Source,
+  header : ObjectHeader,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> Array[Attribute] raise Hdf5Error {
+  let attributes : Array[Attribute] = []
+  for message in header.find(msg_attribute_info) {
+    let reader = Reader::new(message.data)
+    guard reader.read_u8() == b'\x00' else {
+      raise UnsupportedFeature("unsupported attribute info message version")
+    }
+    let flags = reader.read_u8().to_int()
+    guard (flags & 0xFC) == 0 && (flags & 3) != 2 else {
+      raise InvalidField("invalid attribute info flags")
+    }
+    if (flags & 1) != 0 {
+      reader.skip(2)
+    }
+    let heap_address = reader.read_uint_le(offset_size)
+    let name_index_address = reader.read_uint_le(offset_size)
+    let undefined = if offset_size == 8 {
+      0xFFFFFFFFFFFFFFFFUL
+    } else {
+      (1UL << (offset_size * 8)) - 1UL
+    }
+    let order_index_address = if (flags & 2) != 0 {
+      reader.read_uint_le(offset_size)
+    } else {
+      undefined
+    }
+    if heap_address != undefined {
+      let ordered = (flags & 2) != 0 && order_index_address != undefined
+      let index_address = if ordered {
+        order_index_address
+      } else if name_index_address != undefined {
+        name_index_address
+      } else {
+        raise InvalidField("dense attributes have no name or order index")
+      }
+      let heap = parse_source_fractal_heap(
+        source, heap_address, offset_size, length_size, base_address,
+      )
+      let records = read_source_metadata_btree_records(
+        source,
+        index_address,
+        offset_size,
+        length_size,
+        base_address,
+        [8, 9],
+      )
+      let dense : Array[Attribute] = []
+      for record in records {
+        dense.push(
+          parse_attribute_data(
+            heap.get_data(record.heap_id),
+            record.flags,
+            b"",
+            offset_size,
+            length_size,
+            base_address,
+          ),
+        )
+      }
+      if !ordered {
+        dense.sort_by((left, right) => {
+          if left.name < right.name {
+            -1
+          } else if left.name > right.name {
+            1
+          } else {
+            0
+          }
+        })
+      }
+      attributes.append(dense)
+    } else {
+      guard name_index_address == undefined && order_index_address == undefined else {
+        raise InvalidField("attribute index is present without a fractal heap")
+      }
+    }
+  }
+  for message in header.messages {
+    if message.msg_type == msg_attribute {
+      attributes.push(
+        read_source_attribute_message(
+          message, offset_size, length_size, base_address,
         ),
       )
     }

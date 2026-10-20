@@ -39,7 +39,7 @@ fn validate_extensible_config(
 
 ///|
 priv struct ExtensibleReader {
-  bytes : Bytes
+  source : &Hdf5Source
   layout : DataLayout
   dataspace : Dataspace
   datatype : Datatype
@@ -56,25 +56,6 @@ priv struct ExtensibleReader {
   order : Array[Int32]
   grid : Array[Int64]
   limit : Int64
-}
-
-///|
-fn ExtensibleReader::block(
-  self : ExtensibleReader,
-  address : UInt64,
-  signature : Bytes,
-) -> Reader raise Hdf5Error {
-  let reader = Reader::at(
-    self.bytes,
-    address_to_offset(address, self.base_address),
-  )
-  guard reader.read_bytes(4) == signature &&
-    reader.read_u8() == b'\x00' &&
-    reader.read_u8().to_int() == self.client &&
-    reader.read_uint_le(self.offset_size) == self.layout.data_address else {
-    raise InvalidField("invalid extensible array block")
-  }
-  reader
 }
 
 ///|
@@ -127,8 +108,8 @@ fn ExtensibleReader::entries(
       ) {
       continue
     }
-    let decoded = read_filtered_chunk(
-      self.bytes,
+    let decoded = read_source_filtered_chunk(
+      self.source,
       address,
       self.base_address,
       stored_size,
@@ -163,25 +144,53 @@ fn ExtensibleReader::data_block(
   if address == self.undefined || start >= self.limit {
     return
   }
-  let reader = self.block(address, b"EADB")
-  let absolute = address_to_offset(address, self.base_address)
+  let prefix_size = 6 + self.offset_size + (self.config.max_bits + 7) / 8
+  let page_size = 1L << self.config.page_bits
+  let total_size = if count <= page_size {
+    prefix_size.to_int64() + count * self.entry_size.to_int64() + 4L
+  } else {
+    let pages = (count + page_size - 1) / page_size
+    let page_bytes = page_size * self.entry_size.to_int64() + 4L
+    let last_page_elements = count % page_size
+    prefix_size.to_int64() +
+    4L +
+    (pages - 1) * page_bytes +
+    (if last_page_elements > 0 {
+      last_page_elements * self.entry_size.to_int64() + 4L
+    } else {
+      page_bytes
+    })
+  }
+  guard total_size <= 0x7FFFFFFFL else {
+    raise InvalidField("extensible array data block is too large")
+  }
+  let block = self.source.read_at(
+    address_to_offset(address, self.base_address).to_uint64(),
+    total_size.to_int(),
+  )
+  let reader = Reader::new(block)
+  guard reader.read_bytes(4) == b"EADB" &&
+    reader.read_u8() == b'\x00' &&
+    reader.read_u8().to_int() == self.client &&
+    reader.read_uint_le(self.offset_size) == self.layout.data_address else {
+    raise InvalidField("invalid extensible array block")
+  }
   guard reader.read_var_uint_le((self.config.max_bits + 7) / 8) ==
     block_offset.reinterpret_as_uint64() else {
     raise InvalidField("invalid extensible array data block offset")
   }
-  let page_size = 1L << self.config.page_bits
   if count <= page_size {
     verify_metadata_checksum(
-      self.bytes,
-      absolute,
-      (reader.position().to_int64() + count * self.entry_size.to_int64()).to_int(),
+      block,
+      0,
+      reader.position() + (count * self.entry_size.to_int64()).to_int(),
       "extensible array data block",
     )
     self.entries(reader, count, start)
   } else {
     verify_metadata_checksum(
-      self.bytes,
-      absolute,
+      block,
+      0,
       reader.position(),
       "extensible array data block",
     )
@@ -218,13 +227,13 @@ fn ExtensibleReader::data_block(
         }
         let page_offset = page_start + page.to_int64() * page_bytes
         verify_metadata_checksum(
-          self.bytes,
+          block,
           page_offset.to_int(),
           (page_offset + page_elements * self.entry_size.to_int64()).to_int(),
           "extensible array data block page",
         )
         self.entries(
-          Reader::at(self.bytes, page_offset.to_int()),
+          Reader::at(block, page_offset.to_int()),
           page_elements,
           first,
         )
@@ -236,6 +245,38 @@ fn ExtensibleReader::data_block(
 ///|
 fn read_extensible_array_chunks(
   bytes : Bytes,
+  layout : DataLayout,
+  dataspace : Dataspace,
+  datatype : Datatype,
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+  filters : Array[Filter],
+  output : FixedArray[Byte],
+  undefined : UInt64,
+  config : ExtensibleArrayConfig,
+  selection : Array[UInt64]?,
+) -> Unit raise Hdf5Error {
+  let sources : Array[&Hdf5Source] = [bytes]
+  read_source_extensible_array_chunks(
+    sources[0],
+    layout,
+    dataspace,
+    datatype,
+    offset_size,
+    length_size,
+    base_address,
+    filters,
+    output,
+    undefined,
+    config,
+    selection,
+  )
+}
+
+///|
+fn read_source_extensible_array_chunks(
+  source : &Hdf5Source,
   layout : DataLayout,
   dataspace : Dataspace,
   datatype : Datatype,
@@ -291,7 +332,15 @@ fn read_extensible_array_chunks(
     }
   }
   let header_offset = address_to_offset(layout.data_address, base_address)
-  let header = Reader::at(bytes, header_offset)
+  let header_content = 12 + length_size * 6 + offset_size
+  let header = Reader::new(
+    source_read_checksummed(
+      source,
+      header_offset.to_uint64(),
+      header_content,
+      "extensible array header",
+    ),
+  )
   guard header.read_bytes(4) == b"EAHD" && header.read_u8() == b'\x00' else {
     raise InvalidField("invalid extensible array header")
   }
@@ -323,12 +372,9 @@ fn read_extensible_array_chunks(
   let maximum_set = header.read_uint_le(length_size)
   header.read_uint_le(length_size) |> ignore
   let index_address = header.read_uint_le(offset_size)
-  verify_metadata_checksum(
-    bytes,
-    header_offset,
-    header.position(),
-    "extensible array header",
-  )
+  guard header.position() == header_content else {
+    raise InvalidField("extensible array header size mismatch")
+  }
   header.skip(4)
   guard config.max_bits == 64 || maximum_set <= 1UL << config.max_bits else {
     raise InvalidField("extensible array index exceeds capacity")
@@ -343,7 +389,7 @@ fn read_extensible_array_chunks(
     total
   }
   let context : ExtensibleReader = {
-    bytes,
+    source,
     layout,
     dataspace,
     datatype,
@@ -361,12 +407,29 @@ fn read_extensible_array_chunks(
     grid,
     limit,
   }
-  let index = context.block(index_address, b"EAIB")
-  let entry_start = index.position()
-  index.skip(config.index_elements * entry_size)
   let first_super = 2 * array_log2(config.min_pointers)
   let levels = 1 + config.max_bits - array_log2(config.min_elements)
   let direct_count = 2 * (config.min_pointers - 1)
+  let index_content = 6 +
+    offset_size +
+    config.index_elements * entry_size +
+    direct_count * offset_size +
+    (levels - first_super) * offset_size
+  let index_bytes = source_read_checksummed(
+    source,
+    address_to_offset(index_address, base_address).to_uint64(),
+    index_content,
+    "extensible array index block",
+  )
+  let index = Reader::new(index_bytes)
+  guard index.read_bytes(4) == b"EAIB" &&
+    index.read_u8() == b'\x00' &&
+    index.read_u8().to_int() == client &&
+    index.read_uint_le(offset_size) == layout.data_address else {
+    raise InvalidField("invalid extensible array block")
+  }
+  let entry_start = index.position()
+  index.skip(config.index_elements * entry_size)
   let direct : Array[UInt64] = []
   for _ in 0..<direct_count {
     direct.push(index.read_uint_le(offset_size))
@@ -375,15 +438,12 @@ fn read_extensible_array_chunks(
   for _ in first_super..<levels {
     supers.push(index.read_uint_le(offset_size))
   }
-  verify_metadata_checksum(
-    bytes,
-    address_to_offset(index_address, base_address),
-    index.position(),
-    "extensible array index block",
-  )
+  guard index.position() == index_content else {
+    raise InvalidField("extensible array index block size mismatch")
+  }
   index.skip(4)
   context.entries(
-    Reader::at(bytes, entry_start),
+    Reader::at(index_bytes, entry_start),
     config.index_elements.to_int64(),
     0L,
   )
@@ -410,14 +470,34 @@ fn read_extensible_array_chunks(
       }
       direct_start = direct_start + blocks.to_int()
     } else if supers[level - first_super] != undefined {
-      let super_block = context.block(supers[level - first_super], b"EASB")
+      let page_size = 1L << config.page_bits
+      let pages = if count > page_size { count / page_size } else { 0L }
+      let bitmap_size = blocks * ((pages + 7) / 8)
+      let super_content = 6L +
+        offset_size.to_int64() +
+        ((config.max_bits + 7) / 8).to_int64() +
+        bitmap_size +
+        blocks * offset_size.to_int64()
+      guard super_content <= 0x7FFFFFFFL else {
+        raise InvalidField("extensible array super block is too large")
+      }
+      let super_bytes = source_read_checksummed(
+        source,
+        address_to_offset(supers[level - first_super], base_address).to_uint64(),
+        super_content.to_int(),
+        "extensible array super block",
+      )
+      let super_block = Reader::new(super_bytes)
+      guard super_block.read_bytes(4) == b"EASB" &&
+        super_block.read_u8() == b'\x00' &&
+        super_block.read_u8().to_int() == client &&
+        super_block.read_uint_le(offset_size) == layout.data_address else {
+        raise InvalidField("invalid extensible array block")
+      }
       guard super_block.read_var_uint_le((config.max_bits + 7) / 8) ==
         start.reinterpret_as_uint64() else {
         raise InvalidField("invalid extensible array super block offset")
       }
-      let page_size = 1L << config.page_bits
-      let pages = if count > page_size { count / page_size } else { 0L }
-      let bitmap_size = blocks * ((pages + 7) / 8)
       guard bitmap_size + blocks * offset_size.to_int64() + 4 <=
         super_block.remaining().to_int64() else {
         raise InvalidField("extensible array super block extends beyond input")
@@ -436,12 +516,9 @@ fn read_extensible_array_chunks(
           block_index.to_int64() * pages,
         )
       }
-      verify_metadata_checksum(
-        bytes,
-        address_to_offset(supers[level - first_super], base_address),
-        super_block.position(),
-        "extensible array super block",
-      )
+      guard super_block.position() == super_content.to_int() else {
+        raise InvalidField("extensible array super block size mismatch")
+      }
       super_block.skip(4)
     }
     start = start + blocks * count

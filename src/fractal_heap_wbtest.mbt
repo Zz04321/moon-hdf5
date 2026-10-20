@@ -7,6 +7,7 @@ fn test_fractal_heap(
 ) -> FractalHeap {
   {
     bytes,
+    source: None,
     header_address: 0UL,
     offset_size: 8,
     length_size: 8,
@@ -90,6 +91,7 @@ fn test_fractal_heap_with_checksums(
 ) -> FractalHeap {
   {
     bytes,
+    source: None,
     header_address: 0UL,
     offset_size: 8,
     length_size: 8,
@@ -232,6 +234,7 @@ test "fractal heap header checksum corruption is rejected" {
 fn test_filtered_fractal_heap(bytes : Bytes) -> FractalHeap {
   {
     bytes,
+    source: None,
     header_address: 0UL,
     offset_size: 8,
     length_size: 8,
@@ -312,6 +315,7 @@ test "fractal heap decodes directly accessed filtered huge objects" {
   let compressed = @zlib.zlib(b"payload"[:])
   let heap : FractalHeap = {
     bytes: compressed,
+    source: None,
     header_address: 0UL,
     offset_size: 8,
     length_size: 8,
