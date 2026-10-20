@@ -9,6 +9,7 @@ The library operates on in-memory `Bytes`; filesystem access belongs to the call
 | Dense metadata | fractal_heap, v2_metadata | Fractal heaps and metadata v2 B-trees |
 | Metadata | dataspace, datatype, data_layout | Shapes, types and storage |
 | Values | dataset, chunked, direct_chunks, filter, fill_value, global_heap, attribute | Value decoding |
+| Writing | writer | New-file encoding for groups, datasets and attributes |
 
 Dataset metadata parsing is separate from storage reads and value decoding.
 `open_dataset_metadata` returns the dataspace, datatype and layout without
@@ -116,3 +117,15 @@ instructions are in
 The inspector writes diagnostics to stderr and returns 0/1/2 for success,
 data errors and usage errors respectively. Per-dataset failures do not prevent
 other datasets from being inspected, but make the overall result unsuccessful.
+
+The initial writer emits a superblock v3, object headers v2, compact hard-link
+messages, contiguous dataset layouts and inline attributes. It calculates all
+object and raw-data addresses before encoding checksummed metadata. The public
+builder validates absolute paths, duplicate objects and attributes, dataspace
+rank and element counts, and fixed-string widths before allocating output.
+Supported values are little-endian 64-bit signed/unsigned integers, IEEE
+float64 and fixed-width UTF-8 strings. Finite chunked datasets use v4 layouts
+and fixed-array indexes. Fill-only chunks retain undefined addresses; allocated
+chunks can run through shuffle, zlib-wrapped deflate and Fletcher32 before their
+stored sizes are indexed. The writer creates new files in memory; extensible
+indexes and in-place modification are separate follow-up work.

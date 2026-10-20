@@ -1,9 +1,11 @@
 # moon-hdf5
 
-A pure MoonBit, read-only HDF5 reader. The library accepts file bytes and
-exposes groups, datasets and attributes without a native HDF5 dependency.
-This is an early implementation with known compatibility gaps, not a complete
-HDF5 implementation. See [audit findings](docs/audit.md).
+A pure MoonBit HDF5 reader with an initial writer. The library accepts file
+bytes and exposes groups, datasets and attributes without a native HDF5
+dependency. It can also create new files containing nested groups, contiguous
+basic datasets and inline attributes. This is an early implementation with
+known compatibility gaps, not a complete HDF5 implementation. See
+[audit findings](docs/audit.md).
 
 ## Run from source
 
@@ -78,6 +80,49 @@ only intersecting allocated chunks and preserve fill values for missing chunks.
 See the [inspector](src/cmd/main/main.mbt) for error handling and the
 [generated interface](src/pkg.generated.mbti) for all public functions.
 
+## Writing
+
+`Hdf5Writer` builds a new file in memory. It supports nested groups, contiguous
+or fixed-array chunked `Int64`, `UInt64`, `Float64` and fixed-width UTF-8 string
+datasets, scalar or simple dataspaces, and inline attributes with the same
+types. Chunked datasets can omit fill-only chunks and apply shuffle, deflate
+and Fletcher32 filters.
+
+```moonbit nocheck
+///|
+let writer = @lib.Hdf5Writer::new()
+
+///|
+writer.add_group("/experiment")
+
+///|
+writer.add_dataset(
+  "/experiment/counts",
+  [2UL, 3UL],
+  @lib.Int64Values([1L, 2L, 3L, 4L, 5L, 6L]),
+)
+
+///|
+writer.add_attribute(
+  "/experiment/counts",
+  "unit",
+  [],
+  @lib.FixedStringValues(["items"], 8),
+)
+
+///|
+let bytes = writer.encode()
+```
+
+For chunked data, call `add_chunked_dataset` with the dataset and chunk shapes.
+Its optional `fill_value` must contain exactly one value of the dataset type;
+its optional `filters` use HDF5 pipeline order, such as
+`[Shuffle, Deflate(6), Fletcher32]`. This non-paged fixed-array writer currently
+limits each dataset to 1024 chunks.
+
+Run `moon run src/cmd/write_demo --target native -- output.h5` for a complete
+file-writing example. The output is readable by this library and h5py.
+
 ## Scope
 
 | Area | Implemented subset |
@@ -90,8 +135,10 @@ See the [inspector](src/cmd/main/main.mbt) for error handling and the
 | Attributes | Inline messages v1–v3, dense attributes via fractal heaps and metadata v2 B-trees |
 | Fills | Default zeros and fixed-size fills for missing chunks and unallocated contiguous data |
 | Selections | Strided hyperslabs and ordered points, including duplicates, across supported layouts and chunk indexes |
+| Writing | New files with nested groups, contiguous/fixed-array chunked basic datasets, fills, shuffle/deflate/Fletcher32 and inline attributes |
 
-Writing, other filters and external links are outside the current scope.
+Extensible datasets, variable-length writer values, additional filters and
+external links are outside the current scope.
 Undefined/disabled fill policies and custom variable-length fills are rejected
 when fill decoding is needed. External dataset storage is unsupported.
 Version support does not imply support for every structure in that version.
@@ -105,7 +152,8 @@ Inputs and decoded datasets reside in memory; this is not a streaming reader.
 
 ## Development
 
-`src/` contains the library and its tests; `src/cmd/main/` contains the CLI.
+`src/` contains the library and its tests; `src/cmd/main/` contains the
+inspector and `src/cmd/write_demo/` contains a writer example.
 `moon.mod` sets the source root, preserving the library import path
 `Zz04321/moon-hdf5`. Documentation, fixture generators and test data live in
 `docs/`, `scripts/` and `testdata/`. Run the following commands from the repository root.
@@ -117,6 +165,10 @@ moon test --target native
 moon info
 moon fmt
 ```
+
+To verify native writer output independently, run the writer example followed
+by `python scripts/verify_writer_output.py output.h5` in an environment with
+h5py and NumPy.
 
 CI runs manually through GitHub Actions → CI → Run workflow; it runs `moon
 check`, builds both wasm and native targets, and runs the tests for both.

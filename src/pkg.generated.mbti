@@ -308,6 +308,33 @@ pub fn Hdf5ObjectKind::equal(Self, Self) -> Bool
 pub fn Hdf5ObjectKind::not_equal(Self, Self) -> Bool
 pub fn Hdf5ObjectKind::to_repr(Self) -> @debug.Repr
 
+pub(all) enum Hdf5WriteFilter {
+  Shuffle
+  Deflate(Int32)
+  Fletcher32
+} derive(Eq, @debug.Debug)
+pub fn Hdf5WriteFilter::equal(Self, Self) -> Bool
+pub fn Hdf5WriteFilter::not_equal(Self, Self) -> Bool
+pub fn Hdf5WriteFilter::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Hdf5WriteValues {
+  Int64Values(Array[Int64])
+  UInt64Values(Array[UInt64])
+  Float64Values(Array[Double])
+  FixedStringValues(Array[String], Int32)
+} derive(@debug.Debug)
+pub fn Hdf5WriteValues::to_repr(Self) -> @debug.Repr
+
+pub struct Hdf5Writer {
+  // private fields
+}
+pub fn Hdf5Writer::add_attribute(Self, String, String, Array[UInt64], Hdf5WriteValues) -> Unit raise Hdf5Error
+pub fn Hdf5Writer::add_chunked_dataset(Self, String, Array[UInt64], Array[UInt32], Hdf5WriteValues, fill_value? : Hdf5WriteValues, filters? : Array[Hdf5WriteFilter]) -> Unit raise Hdf5Error
+pub fn Hdf5Writer::add_dataset(Self, String, Array[UInt64], Hdf5WriteValues) -> Unit raise Hdf5Error
+pub fn Hdf5Writer::add_group(Self, String) -> Unit raise Hdf5Error
+pub fn Hdf5Writer::encode(Self) -> Bytes raise Hdf5Error
+pub fn Hdf5Writer::new() -> Self
+
 pub(all) struct HeaderMessage {
   msg_type : Int32
   flags : Byte

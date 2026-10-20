@@ -109,3 +109,15 @@ Parser regressions reject truncated properties, out-of-bounds compound members,
 inconsistent array/complex sizes and invalid tags. Numeric
 subtypes retain the existing restriction to standard full-width integer and IEEE
 float layouts.
+
+## Writer MVP review — 2026-10-20
+
+The new-file writer validates paths, duplicate names, shape/value counts,
+dataspace rank and fixed-string widths before encoding. Its own reader
+round-trips nested groups, scalar/simple/empty contiguous datasets and group,
+dataset and root attributes. A native-generated file was independently opened
+with h5py 3.16.0/HDF5 2.0.0; values, shapes, datatypes, UTF-8 strings and the
+dataset attribute matched. A second interop pass covers multi-chunk fixed-array
+indexes, sparse fill-only chunks, custom fill metadata and combined shuffle,
+deflate and Fletcher32 encoding. This does not assess extensible output or
+in-place updates.
