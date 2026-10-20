@@ -61,6 +61,8 @@ shape `(3, 5)`, chunks `(2, 3)`, and two allocated chunks. Fills are -7, -1234,
 
 Small groups isolate fill behavior; header continuation regressions use their
 own fixture. See [the audit](../docs/audit.md) for resolved and remaining issues.
+The reader side of the [compatibility matrix](../docs/compatibility.md) maps
+these fixtures to the supported HDF5 structures they verify.
 
 The interop matrix files contain identical object names and values, so the
 same expectations run against superblock v0, v2 and v3. The v110 file covers

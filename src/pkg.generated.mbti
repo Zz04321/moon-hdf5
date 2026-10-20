@@ -240,6 +240,12 @@ pub(all) struct Datatype {
   reference_kind : Int32
 } derive(@debug.Debug)
 pub fn Datatype::to_repr(Self) -> @debug.Repr
+pub fn Datatype::write_array(Self, Array[UInt64]) -> Self raise Hdf5Error
+pub fn Datatype::write_compound(Array[(String, Self)]) -> Self raise Hdf5Error
+pub fn Datatype::write_enum(Self, Array[EnumMember]) -> Self raise Hdf5Error
+pub fn Datatype::write_fixed_string(Int32) -> Self raise Hdf5Error
+pub fn Datatype::write_float(Int32) -> Self raise Hdf5Error
+pub fn Datatype::write_integer(Bool, Int32) -> Self raise Hdf5Error
 
 pub(all) struct EnumMember {
   name : String
@@ -318,10 +324,19 @@ pub fn Hdf5WriteFilter::not_equal(Self, Self) -> Bool
 pub fn Hdf5WriteFilter::to_repr(Self) -> @debug.Repr
 
 pub(all) enum Hdf5WriteValues {
+  Int8Values(Array[Int32])
+  Int16Values(Array[Int32])
+  Int32Values(Array[Int32])
   Int64Values(Array[Int64])
+  UInt8Values(Array[UInt32])
+  UInt16Values(Array[UInt32])
+  UInt32Values(Array[UInt32])
   UInt64Values(Array[UInt64])
+  Float32Values(Array[Float])
   Float64Values(Array[Double])
   FixedStringValues(Array[String], Int32)
+  VariableStringValues(Array[String])
+  StructuredValues(Datatype, Array[DatasetValue])
 } derive(@debug.Debug)
 pub fn Hdf5WriteValues::to_repr(Self) -> @debug.Repr
 
@@ -331,9 +346,12 @@ pub struct Hdf5Writer {
 pub fn Hdf5Writer::add_attribute(Self, String, String, Array[UInt64], Hdf5WriteValues) -> Unit raise Hdf5Error
 pub fn Hdf5Writer::add_chunked_dataset(Self, String, Array[UInt64], Array[UInt32], Hdf5WriteValues, fill_value? : Hdf5WriteValues, filters? : Array[Hdf5WriteFilter]) -> Unit raise Hdf5Error
 pub fn Hdf5Writer::add_dataset(Self, String, Array[UInt64], Hdf5WriteValues) -> Unit raise Hdf5Error
+pub fn Hdf5Writer::add_extensible_dataset(Self, String, Array[UInt64], Array[UInt64?], Array[UInt32], Hdf5WriteValues, fill_value? : Hdf5WriteValues, filters? : Array[Hdf5WriteFilter]) -> Unit raise Hdf5Error
 pub fn Hdf5Writer::add_group(Self, String) -> Unit raise Hdf5Error
+pub fn Hdf5Writer::append_dataset(Self, String, Array[UInt64], Hdf5WriteValues) -> Unit raise Hdf5Error
 pub fn Hdf5Writer::encode(Self) -> Bytes raise Hdf5Error
 pub fn Hdf5Writer::new() -> Self
+pub fn Hdf5Writer::resize_dataset(Self, String, Array[UInt64]) -> Unit raise Hdf5Error
 
 pub(all) struct HeaderMessage {
   msg_type : Int32

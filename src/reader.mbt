@@ -162,7 +162,7 @@ pub fn Reader::read_bytes(self : Reader, n : Int32) -> Bytes raise Hdf5Error {
 }
 
 ///|
-/// Reads `n` bytes as a UTF-8 string without validating the encoding.
+/// Reads `n` bytes as a UTF-8 string and rejects invalid encoding.
 pub fn Reader::read_fixed_string(
   self : Reader,
   n : Int32,

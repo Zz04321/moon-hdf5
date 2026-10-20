@@ -211,3 +211,463 @@ test "writer validates chunk metadata filters and fill types" {
     Some(InvalidField("writer fixed-array index exceeds 1024 chunks")),
   ])
 }
+
+///|
+test "writer appends resizes and fills extensible datasets" {
+  let writer = Hdf5Writer::new()
+  writer.add_extensible_dataset(
+    "/series",
+    [0UL, 3UL],
+    [None, Some(4UL)],
+    [2U, 2U],
+    Int64Values([]),
+    fill_value=Int64Values([-1L]),
+  )
+  writer.append_dataset(
+    "/series",
+    [2UL, 3UL],
+    Int64Values([1L, 2L, 3L, 4L, 5L, 6L]),
+  )
+  writer.append_dataset("/series", [1UL, 3UL], Int64Values([7L, 8L, 9L]))
+  writer.resize_dataset("/series", [5UL, 3UL])
+  let grown_file = Hdf5File::parse(writer.encode())
+  let grown = grown_file.open_dataset("/series")
+  assert_eq(grown.dataspace.dimensions, [5UL, 3UL])
+  assert_eq(grown.dataspace.maximum_dimensions, [0xFFFFFFFFFFFFFFFFUL, 4UL])
+  assert_true(grown.layout.chunk_index is ExtensibleArray(_))
+  assert_eq(integer_values(grown), [
+    1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, -1L, -1L, -1L, -1L, -1L, -1L,
+  ])
+
+  writer.resize_dataset("/series", [2UL, 3UL])
+  let shrunk = Hdf5File::parse(writer.encode()).open_dataset("/series")
+  assert_eq(integer_values(shrunk), [1L, 2L, 3L, 4L, 5L, 6L])
+}
+
+///|
+test "writer extensible indexes swizzle a nonleading unlimited dimension" {
+  let writer = Hdf5Writer::new()
+  writer.add_extensible_dataset(
+    "/filtered",
+    [2UL, 0UL],
+    [Some(2UL), None],
+    [1U, 2U],
+    UInt64Values([]),
+    filters=[Shuffle, Deflate(6), Fletcher32],
+  )
+  writer.append_dataset(
+    "/filtered",
+    [2UL, 3UL],
+    UInt64Values([1UL, 2UL, 3UL, 4UL, 5UL, 6UL]),
+  )
+  writer.append_dataset("/filtered", [2UL, 1UL], UInt64Values([7UL, 8UL]))
+  let dataset = Hdf5File::parse(writer.encode()).open_dataset("/filtered")
+  assert_eq(dataset.dataspace.dimensions, [2UL, 4UL])
+  assert_eq(unsigned_values(dataset), [1UL, 2UL, 3UL, 7UL, 4UL, 5UL, 6UL, 8UL])
+}
+
+///|
+test "writer validates extensible shapes and mutations" {
+  let writer = Hdf5Writer::new()
+  let missing_unlimited = try {
+    writer.add_extensible_dataset(
+      "/fixed",
+      [2UL],
+      [Some(4UL)],
+      [2U],
+      Int64Values([1L, 2L]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    missing_unlimited,
+    Some(InvalidField("extensible dataset requires one unlimited dimension")),
+  )
+  let oversized_chunk = try {
+    writer.add_extensible_dataset(
+      "/oversized_chunk",
+      [0UL, 1UL],
+      [None, Some(1UL)],
+      [0x7FFFFFFFU, 2U],
+      Int64Values([]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(oversized_chunk, Some(InvalidField("writer chunk is too large")))
+  writer.add_extensible_dataset(
+    "/values",
+    [1UL, 2UL],
+    [None, Some(2UL)],
+    [1U, 2U],
+    Int64Values([1L, 2L]),
+  )
+  let maximum = try {
+    writer.resize_dataset("/values", [2UL, 3UL])
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    maximum,
+    Some(InvalidField("resized dataset exceeds its maximum dimensions")),
+  )
+  let append_shape = try {
+    writer.append_dataset("/values", [1UL, 1UL], Int64Values([3L]))
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    append_shape,
+    Some(InvalidField("appended block must match fixed dataset dimensions")),
+  )
+}
+
+///|
+test "writer round-trips narrow integers and float32 across layouts" {
+  let writer = Hdf5Writer::new()
+  writer.add_dataset("/i8", [3UL], Int8Values([-128, 0, 127]))
+  writer.add_dataset("/i16", [3UL], Int16Values([-32768, 0, 32767]))
+  writer.add_dataset("/i32", [3UL], Int32Values([-2147483647, 0, 2147483647]))
+  writer.add_dataset("/u8", [3UL], UInt8Values([0U, 1U, 255U]))
+  writer.add_dataset("/u16", [3UL], UInt16Values([0U, 1U, 65535U]))
+  writer.add_dataset("/u32", [3UL], UInt32Values([0U, 1U, 0xFFFFFFFFU]))
+  writer.add_dataset(
+    "/f32",
+    [3UL],
+    Float32Values([Float(-1.5), Float(0.0), Float(2.25)]),
+  )
+  writer.add_chunked_dataset(
+    "/chunked_i16",
+    [5UL],
+    [2U],
+    Int16Values([-7, 2, -7, 4, -7]),
+    fill_value=Int16Values([-7]),
+    filters=[Shuffle, Deflate(6), Fletcher32],
+  )
+  writer.add_extensible_dataset(
+    "/growing_f32",
+    [0UL],
+    [None],
+    [2U],
+    Float32Values([]),
+    fill_value=Float32Values([Float(-1.0)]),
+    filters=[Shuffle, Deflate(6), Fletcher32],
+  )
+  writer.append_dataset(
+    "/growing_f32",
+    [3UL],
+    Float32Values([Float(1.25), Float(2.5), Float(3.75)]),
+  )
+  writer.resize_dataset("/growing_f32", [4UL])
+
+  let file = Hdf5File::parse(writer.encode())
+  assert_eq(integer_values(file.open_dataset("/i8")), [-128L, 0L, 127L])
+  assert_eq(integer_values(file.open_dataset("/i16")), [-32768L, 0L, 32767L])
+  assert_eq(integer_values(file.open_dataset("/i32")), [
+    -2147483647L, 0L, 2147483647L,
+  ])
+  assert_eq(unsigned_values(file.open_dataset("/u8")), [0UL, 1UL, 255UL])
+  assert_eq(unsigned_values(file.open_dataset("/u16")), [0UL, 1UL, 65535UL])
+  assert_eq(unsigned_values(file.open_dataset("/u32")), [0UL, 1UL, 0xFFFFFFFFUL])
+  assert_eq(float_values(file.open_dataset("/f32")), [-1.5, 0.0, 2.25])
+  assert_eq(integer_values(file.open_dataset("/chunked_i16")), [
+    -7L, 2L, -7L, 4L, -7L,
+  ])
+  assert_eq(float_values(file.open_dataset("/growing_f32")), [
+    1.25, 2.5, 3.75, -1.0,
+  ])
+}
+
+///|
+test "writer rejects narrow integer values outside their datatype" {
+  let writer = Hdf5Writer::new()
+  let signed = try {
+    writer.add_dataset("/signed", [1UL], Int8Values([128]))
+    None
+  } catch {
+    error => Some(error)
+  }
+  let unsigned = try {
+    writer.add_dataset("/unsigned", [1UL], UInt16Values([65536U]))
+    None
+  } catch {
+    error => Some(error)
+  }
+  let fill = try {
+    writer.add_chunked_dataset(
+      "/fill",
+      [1UL],
+      [1U],
+      Int8Values([1]),
+      fill_value=Int8Values([-129]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(signed, Some(InvalidField("Int8 writer value is out of range")))
+  assert_eq(unsigned, Some(InvalidField("UInt16 writer value is out of range")))
+  assert_eq(fill, Some(InvalidField("Int8 writer value is out of range")))
+}
+
+///|
+fn writer_record_type() -> Datatype raise Hdf5Error {
+  let status = Datatype::write_enum(Datatype::write_integer(false, 1), [
+    { name: "MISSING", value: EnumValue::Unsigned(0UL), },
+    { name: "READY", value: EnumValue::Unsigned(1UL), },
+    { name: "DONE", value: EnumValue::Unsigned(2UL), },
+  ])
+  let samples = Datatype::write_array(Datatype::write_integer(true, 2), [
+    2UL, 2UL,
+  ])
+  Datatype::write_compound([
+    ("id", Datatype::write_integer(true, 4)),
+    ("status", status),
+    ("samples", samples),
+    ("label", Datatype::write_fixed_string(6)),
+  ])
+}
+
+///|
+fn writer_record(
+  id : Int64,
+  status : String,
+  samples : Array[Int64],
+  label : String,
+) -> DatasetValue {
+  Compound([
+    { name: "id", value: SignedInteger(id), },
+    { name: "status", value: Enumeration(status), },
+    {
+      name: "samples",
+      value: Elements(samples.map(value => SignedInteger(value))),
+    },
+    { name: "label", value: Text(label), },
+  ])
+}
+
+///|
+test "writer encodes compound enum and array values recursively" {
+  let writer = Hdf5Writer::new()
+  let record_type = writer_record_type()
+  let missing = writer_record(0L, "MISSING", [0L, 0L, 0L, 0L], "")
+  let first = writer_record(7L, "READY", [1L, 2L, 3L, 4L], "alpha")
+  let second = writer_record(-2L, "DONE", [-1L, -2L, -3L, -4L], "beta")
+  writer.add_chunked_dataset(
+    "/records",
+    [3UL],
+    [2U],
+    StructuredValues(record_type, [first, missing, second]),
+    fill_value=StructuredValues(record_type, [missing]),
+    filters=[Shuffle, Deflate(6), Fletcher32],
+  )
+  let array_type = Datatype::write_array(Datatype::write_float(4), [2UL])
+  writer.add_dataset(
+    "/vectors",
+    [2UL],
+    StructuredValues(array_type, [
+      Elements([FloatingPoint(1.5), FloatingPoint(-2.0)]),
+      Elements([FloatingPoint(3.25), FloatingPoint(4.5)]),
+    ]),
+  )
+  writer.add_attribute(
+    "/records",
+    "prototype",
+    [],
+    StructuredValues(record_type, [first]),
+  )
+
+  let file = Hdf5File::parse(writer.encode())
+  let records = file.open_dataset("/records")
+  assert_eq(records.datatype.class, 6)
+  assert_eq(records.datatype.compound_members.length(), 4)
+  assert_eq(structured_values(records), [first, missing, second])
+  assert_eq(structured_values(file.open_dataset("/vectors")), [
+    Elements([FloatingPoint(1.5), FloatingPoint(-2.0)]),
+    Elements([FloatingPoint(3.25), FloatingPoint(4.5)]),
+  ])
+  match file.attributes("/records")[0].values {
+    Some(Structured(values)) => assert_eq(values, [first])
+    _ => abort("expected compound attribute")
+  }
+}
+
+///|
+test "writer appends and fills extensible enums" {
+  let writer = Hdf5Writer::new()
+  let state = Datatype::write_enum(Datatype::write_integer(false, 1), [
+    { name: "UNKNOWN", value: EnumValue::Unsigned(0UL), },
+    { name: "OPEN", value: EnumValue::Unsigned(1UL), },
+    { name: "CLOSED", value: EnumValue::Unsigned(2UL), },
+  ])
+  writer.add_extensible_dataset(
+    "/states",
+    [0UL],
+    [None],
+    [2U],
+    StructuredValues(state, []),
+    fill_value=StructuredValues(state, [Enumeration("UNKNOWN")]),
+  )
+  writer.append_dataset(
+    "/states",
+    [2UL],
+    StructuredValues(state, [Enumeration("OPEN"), Enumeration("CLOSED")]),
+  )
+  writer.resize_dataset("/states", [4UL])
+  match Hdf5File::parse(writer.encode()).open_dataset("/states").values {
+    Enums(values) => assert_eq(values, ["OPEN", "CLOSED", "UNKNOWN", "UNKNOWN"])
+    _ => abort("expected enum values")
+  }
+}
+
+///|
+test "writer validates structured values before encoding" {
+  let writer = Hdf5Writer::new()
+  let record_type = writer_record_type()
+  let wrong_fields = try {
+    writer.add_dataset(
+      "/bad",
+      [1UL],
+      StructuredValues(record_type, [
+        Compound([
+          { name: "status", value: Enumeration("READY"), },
+          { name: "id", value: SignedInteger(1L), },
+          {
+            name: "samples",
+            value: Elements([
+              SignedInteger(1L),
+              SignedInteger(2L),
+              SignedInteger(3L),
+              SignedInteger(4L),
+            ]),
+          },
+          { name: "label", value: Text("bad"), },
+        ]),
+      ]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    wrong_fields,
+    Some(InvalidField("compound value fields are out of order")),
+  )
+  let oversized_enum = try {
+    let invalid = Datatype::write_enum(Datatype::write_integer(false, 1), [
+      { name: "TOO_LARGE", value: EnumValue::Unsigned(256UL), },
+    ])
+    writer.add_dataset(
+      "/enum",
+      [1UL],
+      StructuredValues(invalid, [Enumeration("TOO_LARGE")]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    oversized_enum,
+    Some(InvalidField("structured unsigned integer is out of range")),
+  )
+}
+
+///|
+test "writer round-trips variable-length UTF-8 strings" {
+  let writer = Hdf5Writer::new()
+  writer.add_dataset(
+    "/names",
+    [4UL],
+    VariableStringValues(["月亮", "HDF5", "", "月亮"]),
+  )
+  writer.add_chunked_dataset(
+    "/filtered_names",
+    [5UL],
+    [2U],
+    VariableStringValues(["alpha", "", "数据", "alpha", ""]),
+    filters=[Deflate(6), Fletcher32],
+  )
+  writer.add_extensible_dataset(
+    "/events",
+    [0UL],
+    [None],
+    [2U],
+    VariableStringValues([]),
+  )
+  writer.append_dataset(
+    "/events",
+    [2UL],
+    VariableStringValues(["start", "结束"]),
+  )
+  writer.resize_dataset("/events", [3UL])
+  writer.add_attribute(
+    "/names",
+    "description",
+    [],
+    VariableStringValues(["UTF-8 标签"]),
+  )
+
+  let file = Hdf5File::parse(writer.encode())
+  assert_eq(string_values(file.open_dataset("/names")), [
+    "月亮", "HDF5", "", "月亮",
+  ])
+  assert_eq(string_values(file.open_dataset("/filtered_names")), [
+    "alpha", "", "数据", "alpha", "",
+  ])
+  assert_eq(string_values(file.open_dataset("/events")), ["start", "结束", ""])
+  match file.attributes("/names")[0].values {
+    Some(Strings(values)) => assert_eq(values, ["UTF-8 标签"])
+    _ => abort("expected variable-length string attribute")
+  }
+}
+
+///|
+test "writer rejects custom variable-length string fills" {
+  let writer = Hdf5Writer::new()
+  let chunked = try {
+    writer.add_chunked_dataset(
+      "/strings",
+      [1UL],
+      [1U],
+      VariableStringValues(["value"]),
+      fill_value=VariableStringValues(["missing"]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  let extensible = try {
+    writer.add_extensible_dataset(
+      "/extensible_strings",
+      [0UL],
+      [None],
+      [1U],
+      VariableStringValues([]),
+      fill_value=VariableStringValues(["missing"]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    chunked,
+    Some(
+      UnsupportedFeature(
+        "custom variable-length fill values are not supported yet",
+      ),
+    ),
+  )
+  assert_eq(
+    extensible,
+    Some(
+      UnsupportedFeature(
+        "custom variable-length fill values are not supported yet",
+      ),
+    ),
+  )
+}

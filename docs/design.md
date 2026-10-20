@@ -114,18 +114,49 @@ Manual CI checks, builds and tests both wasm and native targets. Regeneration
 instructions are in
 [testdata/README.md](../testdata/README.md).
 
+The command-line inspector supports whole-file traversal, metadata-only dataset
+inspection, hyperslab or ordered-point reads, and simple statistics. Coordinate
+vectors use comma-separated unsigned integers; point lists use semicolons. The
+metadata, selection and writer demo executables keep each public workflow small
+enough to use as a standalone example.
+
 The inspector writes diagnostics to stderr and returns 0/1/2 for success,
 data errors and usage errors respectively. Per-dataset failures do not prevent
 other datasets from being inspected, but make the overall result unsuccessful.
 
-The initial writer emits a superblock v3, object headers v2, compact hard-link
-messages, contiguous dataset layouts and inline attributes. It calculates all
-object and raw-data addresses before encoding checksummed metadata. The public
-builder validates absolute paths, duplicate objects and attributes, dataspace
+The new-file writer emits a superblock v3, object headers v2, compact hard-link
+messages, contiguous or chunked dataset layouts and inline attributes. It
+calculates all object and raw-data addresses before encoding checksummed
+metadata. The public builder validates absolute paths, duplicate objects and
+attributes, dataspace
 rank and element counts, and fixed-string widths before allocating output.
-Supported values are little-endian 64-bit signed/unsigned integers, IEEE
-float64 and fixed-width UTF-8 strings. Finite chunked datasets use v4 layouts
-and fixed-array indexes. Fill-only chunks retain undefined addresses; allocated
-chunks can run through shuffle, zlib-wrapped deflate and Fletcher32 before their
-stored sizes are indexed. The writer creates new files in memory; extensible
-indexes and in-place modification are separate follow-up work.
+Supported values are little-endian signed/unsigned integers at 8, 16, 32 and 64
+bits, IEEE float32/64, and fixed-width or variable-length UTF-8 strings. Variable
+strings use 16-byte descriptors and a shared global heap collection; empty
+strings use the zero descriptor and repeated strings share one heap object.
+Narrow integer constructors validate every value before truncating it to the
+encoded width. Structured values reuse the reader's recursive `Datatype` and
+`DatasetValue` model. The writer encodes version-three compound, enum and array
+datatype descriptions; compound members are packed in declaration order, enums
+use a standard integer
+base, and arrays can recursively contain any supported fixed-size writer type.
+Finite chunked datasets use v4 layouts and fixed-array indexes. Datasets with
+one unlimited dimension use a v4 extensible-array index with 128 inline
+index-block entries. Fixed dimensions use their maximum extents when mapping
+chunk coordinates, so indexes remain
+stable as the current shape changes. Fill-only chunks retain undefined
+addresses; allocated chunks can run through shuffle, zlib-wrapped deflate and
+Fletcher32 before their stored sizes are indexed.
+
+`resize_dataset` rebuilds the row-major value array while preserving the
+overlapping coordinate region. `append_dataset` grows the unlimited dimension
+and copies a shape-compatible block into the new region. Shared generic array
+helpers perform both operations for every writer datatype. Both operations
+mutate the in-memory builder before complete-file encoding; modifying an
+existing file in place remains separate work.
+
+Structured datasets, fills and inline attributes share one recursive encoder.
+Validation checks nesting depth, member names and order, integer widths, enum
+names and values, array element counts, compound bounds and exact encoded sizes
+before address assignment. Caller-owned datatype and value arrays are copied
+when objects are added to the builder.

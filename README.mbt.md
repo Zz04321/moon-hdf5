@@ -1,16 +1,30 @@
 # moon-hdf5
 
-A pure MoonBit HDF5 reader with an initial writer. The library accepts file
-bytes and exposes groups, datasets and attributes without a native HDF5
-dependency. It can also create new files containing nested groups, contiguous
-basic datasets and inline attributes. This is an early implementation with
-known compatibility gaps, not a complete HDF5 implementation. See
-[audit findings](docs/audit.md).
+moon-hdf5 is a pure MoonBit implementation for reading HDF5 files and creating
+new HDF5 files. It has no native HDF5 dependency and supports both wasm and
+native targets.
 
-## Run from source
+The project is under active development and implements a documented subset of
+HDF5. See the [compatibility matrix](docs/compatibility.md) for exact coverage
+and [audit report](docs/audit.md) for verification history.
 
-Requires the [MoonBit toolchain](https://www.moonbitlang.com/download);
-the native backend also needs a C compiler.
+## Features
+
+- Reads groups, datasets, attributes, links and common HDF5 metadata versions.
+- Decodes numeric, string, compound, enum, array, bitfield, opaque, reference,
+  variable-length sequence, time and complex values.
+- Supports compact, contiguous and chunked layouts with the common HDF5 chunk
+  indexes.
+- Applies deflate, shuffle and Fletcher32 filters, including per-chunk masks.
+- Provides metadata-only access, hyperslab selection and ordered point
+  selection.
+- Creates new files with groups, attributes, contiguous or chunked datasets,
+  filters, fill values and one extensible dimension.
+
+## Quick Start
+
+Install the [MoonBit toolchain](https://www.moonbitlang.com/download). The
+native target also requires a C compiler.
 
 ```sh
 git clone https://github.com/Zz04321/moon-hdf5.git
@@ -19,15 +33,13 @@ moon update
 moon run src/cmd/main --target native -- testdata/basic_v0.h5
 ```
 
-Replace the final argument with your file path. Output `int[10] 0` means ten
-integers with first value zero. The inspector loads complete datasets. Diagnostics
-go to stderr; exit status is 0 for success, 1 for read/parse/unsupported-data
-errors (including attributes), and 2 for invalid arguments. Other readable
-datasets are still inspected after a dataset-level error.
+The inspector writes diagnostics to stderr and returns status 0 for success, 1
+for data errors and 2 for invalid arguments. A dataset-level error does not stop
+inspection of other readable datasets.
 
-## Library API
+## Reading
 
-Within this checkout, use imports as in [src/cmd/main/moon.pkg](src/cmd/main/moon.pkg):
+Import the library as shown in [src/cmd/main/moon.pkg](src/cmd/main/moon.pkg):
 
 ```moonbit nocheck
 ///|
@@ -35,22 +47,15 @@ import {
   "Zz04321/moon-hdf5" @lib,
   "moonbitlang/x/fs",
 }
-```
 
-In a function that handles or propagates errors:
-
-```moonbit nocheck
 ///|
 let file = @lib.Hdf5File::parse(@fs.read_file_to_bytes("data.h5"))
 
 ///|
-let dataset = file.open_dataset("/group/values")
-
-///|
-let shape = dataset.dataspace.dimensions
-
-///|
 let metadata = file.open_dataset_metadata("/group/values")
+
+///|
+let dataset = file.open_dataset("/group/values")
 
 ///|
 let selected = file.read_dataset_selection(
@@ -66,40 +71,46 @@ let nodes = file.walk()
 ```
 
 Simple values are returned as `Integers`, `UnsignedIntegers`, `Floats`,
-`Strings` or `Enums`. Other datatype classes use `Structured`, whose recursive
-`DatasetValue` entries represent time, bitfield, opaque, compound, reference,
-variable-length sequence, array and complex values. References expose their
-encoded bytes; the reader does not dereference the target object or region.
-Enum datasets decode to member names; `Datatype.enum_members` exposes each name
-and its signed or unsigned base value.
-`open_dataset_metadata(path)` reads shape, datatype and layout without loading
-dataset values, while `resolve(path)` locates objects without parsing dataset
-metadata. `read_dataset_selection` supports strided hyperslabs and ordered point
-selections for compact, contiguous and chunked datasets. Chunked reads decode
-only intersecting allocated chunks and preserve fill values for missing chunks.
-See the [inspector](src/cmd/main/main.mbt) for error handling and the
-[generated interface](src/pkg.generated.mbti) for all public functions.
+`Strings` or `Enums`. Other datatype classes use recursive `Structured` values.
+References are returned as encoded bytes and are not dereferenced.
+
+`open_dataset_metadata` does not load dataset values. Selection reads support
+compact, contiguous and chunked datasets; chunked reads decode only intersecting
+allocated chunks.
 
 ## Writing
 
-`Hdf5Writer` builds a new file in memory. It supports nested groups, contiguous
-or fixed-array chunked `Int64`, `UInt64`, `Float64` and fixed-width UTF-8 string
-datasets, scalar or simple dataspaces, and inline attributes with the same
-types. Chunked datasets can omit fill-only chunks and apply shuffle, deflate
-and Fletcher32 filters.
+`Hdf5Writer` builds a complete new file in memory. It supports signed and
+unsigned 8/16/32/64-bit integers, float32/64, fixed or variable-length UTF-8
+strings, and structured compound, enum and fixed-array values.
 
 ```moonbit nocheck
 ///|
 let writer = @lib.Hdf5Writer::new()
 
 ///|
-writer.add_group("/experiment")
-
-///|
 writer.add_dataset(
   "/experiment/counts",
   [2UL, 3UL],
   @lib.Int64Values([1L, 2L, 3L, 4L, 5L, 6L]),
+)
+
+///|
+writer.add_extensible_dataset(
+  "/experiment/series",
+  [0UL, 2UL],
+  [None, Some(2UL)],
+  [2U, 2U],
+  @lib.Int64Values([]),
+  fill_value=@lib.Int64Values([-1L]),
+  filters=[@lib.Shuffle, @lib.Deflate(6), @lib.Fletcher32],
+)
+
+///|
+writer.append_dataset(
+  "/experiment/series",
+  [2UL, 2UL],
+  @lib.Int64Values([10L, 11L, 20L, 21L]),
 )
 
 ///|
@@ -114,67 +125,68 @@ writer.add_attribute(
 let bytes = writer.encode()
 ```
 
-For chunked data, call `add_chunked_dataset` with the dataset and chunk shapes.
-Its optional `fill_value` must contain exactly one value of the dataset type;
-its optional `filters` use HDF5 pipeline order, such as
-`[Shuffle, Deflate(6), Fletcher32]`. This non-paged fixed-array writer currently
-limits each dataset to 1024 chunks.
+Use `add_chunked_dataset` for a finite chunked dataset. Use
+`add_extensible_dataset`, `resize_dataset` and `append_dataset` for a dataset
+with one unlimited dimension. `Datatype::write_integer`, `write_float`,
+`write_fixed_string`, `write_enum`, `write_array` and `write_compound` construct
+supported structured writer types.
 
-Run `moon run src/cmd/write_demo --target native -- output.h5` for a complete
-file-writing example. The output is readable by this library and h5py.
+Run the complete writer example and verify its output independently with h5py:
 
-## Scope
+```sh
+moon run src/cmd/write_demo --target native -- output.h5
+python scripts/verify_writer_output.py output.h5
+```
 
-| Area | Implemented subset |
-| --- | --- |
-| Framing | Superblocks v0–v3, user blocks, object headers v1/v2 |
-| Groups | Symbol tables, compact link messages, dense groups via fractal heaps and metadata v2 B-trees; hard/soft links |
-| Layout | Compact, contiguous, v1 B-tree chunks; v4 single-chunk, implicit, fixed-array, extensible-array and v2 B-tree indexes |
-| Filters | Deflate (HDF5 gzip), shuffle, Fletcher32 and combinations; per-chunk skip masks |
-| Values | Standard int/uint8–64, IEEE float32/64, time, fixed/vlen strings, bitfield, opaque, compound, reference, enum, vlen sequence, array and complex datatypes |
-| Attributes | Inline messages v1–v3, dense attributes via fractal heaps and metadata v2 B-trees |
-| Fills | Default zeros and fixed-size fills for missing chunks and unallocated contiguous data |
-| Selections | Strided hyperslabs and ordered points, including duplicates, across supported layouts and chunk indexes |
-| Writing | New files with nested groups, contiguous/fixed-array chunked basic datasets, fills, shuffle/deflate/Fletcher32 and inline attributes |
+## Command Line
 
-Extensible datasets, variable-length writer values, additional filters and
-external links are outside the current scope.
-Undefined/disabled fill policies and custom variable-length fills are rejected
-when fill decoding is needed. External dataset storage is unsupported.
+```sh
+moon run src/cmd/main -- inspect testdata/basic_v0.h5
+moon run src/cmd/main -- metadata testdata/basic_v0.h5 /matrix
+moon run src/cmd/main -- stats testdata/basic_v0.h5 /matrix
+moon run src/cmd/main -- read testdata/basic_v0.h5 /matrix 0,0 2,2 1,2
+moon run src/cmd/main -- read testdata/basic_v0.h5 /matrix --points "1,2;0,1"
+```
+
+Coordinates are zero-based. Hyperslabs use comma-separated `start`, `count` and
+`stride` vectors. Point selections use semicolon-separated coordinates and
+preserve order and duplicates.
+
+Focused examples are available in `src/cmd/metadata_demo`,
+`src/cmd/selection_demo` and `src/cmd/write_demo`.
+
+## Limitations
+
+- Inputs and decoded values remain in memory; the parser does not yet expose a
+  replaceable random-access source.
+- The writer creates complete new files and does not edit existing files.
+- Fixed-array output is limited to 1024 chunks; extensible-array output is
+  limited to 128 chunk slots.
+- External links and external dataset storage are not supported.
+- Custom variable-length fill values, additional writer filters and reference
+  writing are not supported.
+
 Version support does not imply support for every structure in that version.
-Nonstandard numeric layouts are explicitly rejected. Fractal heaps support
-I/O filter pipelines and managed, tiny, direct-huge and indirect-huge objects.
-Empty/null contiguous datasets return empty values. Object-header checksums
-and other supported metadata checksums are verified with HDF5's lookup3
-algorithm, covering superblocks, object-header chunks and continuations,
-v2 B-trees, fractal heaps, fixed arrays and extensible arrays.
-Inputs and decoded datasets reside in memory; this is not a streaming reader.
+Unsupported structures raise `UnsupportedFeature`; malformed data normally
+raises `InvalidField` or `UnexpectedEof`.
 
 ## Development
 
-`src/` contains the library and its tests; `src/cmd/main/` contains the
-inspector and `src/cmd/write_demo/` contains a writer example.
-`moon.mod` sets the source root, preserving the library import path
-`Zz04321/moon-hdf5`. Documentation, fixture generators and test data live in
-`docs/`, `scripts/` and `testdata/`. Run the following commands from the repository root.
-
 ```sh
-moon check
-moon test
-moon test --target native
 moon info
 moon fmt
+moon check
+moon test --target wasm
+moon test --target native
 ```
 
-To verify native writer output independently, run the writer example followed
-by `python scripts/verify_writer_output.py output.h5` in an environment with
-h5py and NumPy.
+GitHub Actions CI is manual and runs checks, builds and tests for wasm and
+native targets. Fixture generation is documented in
+[testdata/README.md](testdata/README.md). Architecture and implementation notes
+are in [docs/design.md](docs/design.md); external sources and ecosystem projects
+are listed in [docs/prior-art.md](docs/prior-art.md).
 
-CI runs manually through GitHub Actions → CI → Run workflow; it runs `moon
-check`, builds both wasm and native targets, and runs the tests for both.
-Ordinary tests use committed fixtures and do not need Python. See [fixture
-generation](testdata/README.md),
-[design](docs/design.md) and [ecosystem comparison and sources](docs/prior-art.md).
+## License
 
-Apache-2.0; see [LICENSE](LICENSE). Zlib decompression uses the pure MoonBit
-[MoonZip](https://github.com/moonbitstack/moonzip) library (Apache-2.0).
+Apache-2.0. Zlib decompression uses
+[MoonZip](https://github.com/moonbitstack/moonzip), also under Apache-2.0.

@@ -119,5 +119,58 @@ dataset and root attributes. A native-generated file was independently opened
 with h5py 3.16.0/HDF5 2.0.0; values, shapes, datatypes, UTF-8 strings and the
 dataset attribute matched. A second interop pass covers multi-chunk fixed-array
 indexes, sparse fill-only chunks, custom fill metadata and combined shuffle,
-deflate and Fletcher32 encoding. This does not assess extensible output or
-in-place updates.
+deflate and Fletcher32 encoding. A third pass covers an extensible-array dataset
+created empty, appended twice, grown with fill values and encoded with the full
+filter pipeline. h5py 3.16.0/HDF5 2.0.0 reads its shape, unlimited maximum,
+chunks, values, fill and filters, and can subsequently resize and write it in
+place. The MoonBit API itself still creates complete files in memory rather than
+editing existing files.
+
+The writer datatype matrix was then independently checked with h5py for
+little-endian int8/16/32, uint8/16/32 and float32 output. Filtered int16 chunks
+and an appended extensible float32 dataset preserve their dtype, values, fill
+and shuffle/deflate/Fletcher32 metadata. Out-of-range int8/16 and uint8/16 input
+is rejected before encoding.
+
+The structured writer pass covers packed compound records containing int32,
+uint8 enums, int16 `2×2` arrays and fixed UTF-8 strings; standalone float32
+arrays; compound fill values and attributes; and an appended extensible enum.
+h5py 3.12.1/HDF5 1.14.4 confirms compound names, offsets and item size, enum
+metadata, array subdtypes, recursive values, filters, fill metadata, attributes
+and unlimited shape. Invalid field order and enum values outside their integer
+base width are rejected before encoding.
+
+The variable-length string pass adds UTF-8 class-9 datatype messages, 16-byte
+descriptors and a shared global heap with deduplicated nonempty strings. Empty
+strings use zero descriptors. MoonBit round-trips contiguous, filtered chunked
+and extensible datasets plus scalar attributes; h5py 3.12.1/HDF5 1.14.4 reads
+their values, UTF-8 metadata, chunking and filters. Custom variable-length fill
+values remain rejected because their heap references require separate fill
+message ownership rules.
+
+## CLI and examples review — 2026-10-20
+
+The inspector now keeps its original whole-file invocation and adds explicit
+`inspect`, `metadata`, `read` and `stats` modes. Numeric coordinate parsing is
+overflow checked before building hyperslab or point selections, and selection
+bounds remain enforced by the library. Focused metadata, selection and writer
+executables provide the three runnable examples described in the proposal.
+
+## Repository-wide follow-up — 2026-10-20
+
+The writer's finite chunked path rejected custom variable-length string fills,
+while the extensible path accepted them and could emit invalid heap references.
+Both entry points now share the same fill validation and reject this unsupported
+case before mutating the builder. Extensible datasets now also validate encoded
+chunk byte size when added, matching finite chunked datasets instead of delaying
+the error until `encode`. Regression tests cover both behaviors.
+
+Public API comments, command examples and proposal wording were checked against
+the implemented behavior. The UTF-8 reader comment now reflects its validation,
+the writer demo prints the correct source path, and compatibility limits remain
+centralized in `docs/compatibility.md`.
+
+One proposal-level architecture item remains open: parsing still starts from a
+complete in-memory `Bytes` value. Dataset selections avoid decoding unrelated
+chunks, but the input source itself is not yet a replaceable random-access
+reader. Publication also remains gated on proposal approval.
