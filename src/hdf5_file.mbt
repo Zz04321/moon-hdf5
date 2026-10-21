@@ -54,22 +54,6 @@ pub fn Hdf5File::parse_source(source : &Hdf5Source) -> Hdf5File raise Hdf5Error 
 }
 
 ///|
-fn Hdf5File::materialized_bytes(self : Hdf5File) -> Bytes raise Hdf5Error {
-  match self.source {
-    None => self.bytes
-    Some(source) => {
-      let length = source.length()
-      guard length <= 0x7FFFFFFFUL else {
-        raise UnsupportedFeature(
-          "materializing sources larger than 2 GiB is not supported",
-        )
-      }
-      source.read_at(0UL, length.to_int())
-    }
-  }
-}
-
-///|
 pub fn Hdf5File::root_address(self : Hdf5File) -> UInt64 {
   self.superblock.root_group_object_header
 }
@@ -281,7 +265,7 @@ pub fn Hdf5File::open_dataset(
     self.superblock.length_size,
   )
   match self.source {
-    Some(source) if source_selection_supported(metadata) => {
+    Some(source) => {
       let rank = metadata.dataspace.dimensions.length()
       let start = Array::make(rank, 0UL)
       let stride = Array::make(rank, 1UL)
@@ -301,9 +285,9 @@ pub fn Hdf5File::open_dataset(
         values: selected.values,
       }
     }
-    _ =>
+    None =>
       read_dataset(
-        self.materialized_bytes(),
+        self.bytes,
         header,
         self.superblock.offset_size,
         self.superblock.length_size,
@@ -349,7 +333,7 @@ pub fn Hdf5File::read_dataset_selection(
     self.superblock.length_size,
   )
   match self.source {
-    Some(source) if source_selection_supported(metadata) =>
+    Some(source) =>
       read_source_dataset_selection(
         source,
         header,
@@ -359,9 +343,9 @@ pub fn Hdf5File::read_dataset_selection(
         self.superblock.length_size,
         self.superblock.base_address,
       )
-    _ =>
+    None =>
       read_dataset_selection(
-        self.materialized_bytes(),
+        self.bytes,
         header,
         metadata,
         selection,

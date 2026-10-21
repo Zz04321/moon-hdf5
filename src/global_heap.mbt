@@ -13,8 +13,27 @@ pub fn read_global_heap_object(
   length_size : Int32,
   base_address : UInt64,
 ) -> Bytes raise Hdf5Error {
-  let offset = address_to_offset(heap_address, base_address)
-  let reader = Reader::at(bytes, offset)
+  let sources : Array[&Hdf5Source] = [bytes]
+  read_source_global_heap_object(
+    sources[0],
+    heap_address,
+    object_index,
+    length_size,
+    base_address,
+  )
+}
+
+///|
+fn read_source_global_heap_object(
+  source : &Hdf5Source,
+  heap_address : UInt64,
+  object_index : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> Bytes raise Hdf5Error {
+  let offset = source_address_to_offset(heap_address, base_address)
+  let header_size = 8 + length_size
+  let reader = Reader::new(source.read_at(offset, header_size))
   guard reader.read_bytes(4) == b"GCOL" else {
     raise InvalidField("expected GCOL signature")
   }
@@ -24,35 +43,40 @@ pub fn read_global_heap_object(
   }
   reader.skip(3)
   let collection_size = reader.read_uint_le(length_size)
-  guard collection_size >= 16UL &&
-    collection_size <= (bytes.length() - offset).to_uint64() else {
+  guard collection_size >= header_size.to_uint64() &&
+    offset <= source.length() &&
+    collection_size <= source.length() - offset else {
     raise InvalidField("invalid global heap collection size")
   }
-  let end = offset.to_int64() + collection_size.reinterpret_as_int64()
-  while reader.position().to_int64() + 16 <= end {
-    let index = reader.read_u16_le().to_int()
-    let _reference_count = reader.read_u16_le()
-    let _reserved = reader.read_u32_le()
-    let size = reader.read_uint_le(length_size)
+  let object_header_size = 8 + length_size
+  let mut cursor = header_size.to_uint64()
+  while cursor <= collection_size &&
+        object_header_size.to_uint64() <= collection_size - cursor {
+    let object_header = Reader::new(
+      source.read_at(offset + cursor, object_header_size),
+    )
+    let index = object_header.read_u16_le().to_int()
+    let _reference_count = object_header.read_u16_le()
+    let _reserved = object_header.read_u32_le()
+    let size = object_header.read_uint_le(length_size)
     guard size <= 0x7FFFFFFFUL else {
       raise InvalidField("global heap object is too large")
     }
+    cursor = cursor + object_header_size.to_uint64()
     if index == 0 {
       break
     }
-    let object_end = reader.position().to_int64() + size.reinterpret_as_int64()
-    guard object_end <= end else {
+    guard size <= collection_size - cursor else {
       raise InvalidField("global heap object extends past its collection")
     }
-    let data = reader.read_bytes(size.to_int())
     let padding = (8 - size.to_int() % 8) % 8
-    guard reader.position().to_int64() + padding.to_int64() <= end else {
+    guard padding.to_uint64() <= collection_size - cursor - size else {
       raise InvalidField("global heap padding extends past its collection")
     }
-    reader.skip(padding)
     if index == object_index {
-      return data
+      return source.read_at(offset + cursor, size.to_int())
     }
+    cursor = cursor + size + padding.to_uint64()
   }
   raise InvalidField("global heap object not found")
 }

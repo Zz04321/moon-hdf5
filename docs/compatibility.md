@@ -41,7 +41,7 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | File framing | Superblock v3 and object headers v2 | Writer does not select older format versions |
 | Groups | Nested groups and compact hard links | Dense link creation and soft/external link writing are absent |
 | Attributes | Inline numeric, fixed/vlen string and structured attributes | Dense attribute writing is absent |
-| Dataset layouts | Contiguous, fixed-array chunked and extensible-array chunked | Fixed-array index is limited to 1024 chunks; extensible-array index to 128 slots |
+| Dataset layouts | Contiguous, paged fixed-array chunked and extensible-array chunked with inline/direct blocks | Extensible-array super-block output is absent |
 | Numeric values | Little-endian int/uint8–64 and IEEE float32/64 | Big-endian and nonstandard numeric output are absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Variable-length sequence output is absent |
 | Structured values | Packed compound, enum and fixed array values | Reference, bitfield, opaque, time and complex output are absent |

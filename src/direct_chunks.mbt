@@ -145,7 +145,7 @@ fn read_source_direct_chunks(
   }
   let rank = dataspace.dimensions.length()
   let chunk_size = chunk_byte_size(layout.chunk_dimensions, datatype.size)
-  let start = address_to_offset(layout.data_address, base_address)
+  let start = source_address_to_offset(layout.data_address, base_address)
   match layout.chunk_index {
     Single(stored_size, mask) => {
       guard dataspace.maximum_dimensions == dataspace.dimensions &&
@@ -212,12 +212,12 @@ fn read_source_direct_chunks(
       }
       let total = product(current_grid)
       let maximum_total = product(maximum_grid)
-      guard start.to_uint64() <= source.length() else {
-        raise UnexpectedEof(start.to_int64())
+      guard start <= source.length() else {
+        raise UnexpectedEof(start.reinterpret_as_int64())
       }
       let storage_size = maximum_total.reinterpret_as_uint64() *
         chunk_size.to_uint64()
-      guard storage_size <= source.length() - start.to_uint64() else {
+      guard storage_size <= source.length() - start else {
         raise InvalidField("implicit chunk array extends beyond input")
       }
       for linear in 0..<total.to_int() {
@@ -245,7 +245,7 @@ fn read_source_direct_chunks(
           ) {
           continue
         }
-        let position = start.to_uint64() +
+        let position = start +
           stored_index.reinterpret_as_uint64() * chunk_size.to_uint64()
         let data = source.read_at(position, chunk_size)
         copy_chunk(

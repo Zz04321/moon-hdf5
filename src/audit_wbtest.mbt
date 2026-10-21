@@ -161,3 +161,21 @@ test "global heap reads require the declared collection and object padding" {
     }
   }
 }
+
+///|
+test "global heaps honor four-byte length fields" {
+  let buffer = @buffer.Buffer::Buffer(size_hint=32)
+  for byte in b"GCOL\x01\x00\x00\x00" {
+    buffer.write_byte(byte)
+  }
+  buffer.write_uint_le(32U)
+  buffer.write_uint16_le(1)
+  buffer.write_uint16_le(1)
+  buffer.write_uint_le(0U)
+  buffer.write_uint_le(1U)
+  buffer.write_byte(b'a')
+  for _ in 0..<7 {
+    buffer.write_byte(b'\x00')
+  }
+  assert_eq(read_global_heap_object(buffer.to_bytes(), 0UL, 1, 4, 4, 0UL), b"a")
+}

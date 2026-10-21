@@ -3,9 +3,9 @@
 The parser accepts in-memory `Bytes` or a caller-provided random-access
 `Hdf5Source`. Superblocks, object headers, group structures and dense metadata
 use bounded source reads. Dataset values, attributes and selections from every
-supported storage layout also use bounded reads when datatypes do not reference
-global heaps. Datatypes that require global-heap backing retain a full-source
-compatibility path.
+supported storage layout also use bounded reads. Variable-length values fetch
+their global heap objects on demand. Source-backed file addresses remain
+`UInt64`; only individual read lengths and in-memory buffers narrow to `Int32`.
 
 | Layer | Files | Responsibility |
 | --- | --- | --- |
@@ -145,13 +145,14 @@ encoded width. Structured values reuse the reader's recursive `Datatype` and
 datatype descriptions; compound members are packed in declaration order, enums
 use a standard integer
 base, and arrays can recursively contain any supported fixed-size writer type.
-Finite chunked datasets use v4 layouts and fixed-array indexes. Datasets with
-one unlimited dimension use a v4 extensible-array index with 128 inline
-index-block entries. Fixed dimensions use their maximum extents when mapping
-chunk coordinates, so indexes remain
-stable as the current shape changes. Fill-only chunks retain undefined
-addresses; allocated chunks can run through shuffle, zlib-wrapped deflate and
-Fletcher32 before their stored sizes are indexed.
+Finite chunked datasets use v4 layouts and fixed-array indexes. Large fixed
+arrays use paged data blocks with allocation bitmaps and per-page checksums.
+Datasets with one unlimited dimension use a v4 extensible-array index with
+inline entries followed by direct data blocks. Fixed dimensions use their
+maximum extents when mapping chunk coordinates, so indexes remain stable as the
+current shape changes. Fill-only chunks retain undefined addresses; allocated
+chunks can run through shuffle, zlib-wrapped deflate and Fletcher32 before their
+stored sizes are indexed.
 
 `resize_dataset` rebuilds the row-major value array while preserving the
 overlapping coordinate region. `append_dataset` grows the unlimited dimension

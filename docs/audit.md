@@ -170,10 +170,14 @@ the implemented behavior. The UTF-8 reader comment now reflects its validation,
 the writer demo prints the correct source path, and compatibility limits remain
 centralized in `docs/compatibility.md`.
 
-One proposal-level architecture item remains open. `Hdf5Source` now defines a
-replaceable random-access input boundary. Superblocks, object headers, v1/v2
-group navigation, dense attributes and dataset value reads use bounded source
-reads for datatypes without global-heap references. Chunk selections read only
-their index blocks and intersecting chunks for every supported index. Datatypes
-that require global-heap backing retain a full-source compatibility path.
-Publication also remains gated on proposal approval.
+`Hdf5Source` now defines a replaceable random-access input boundary.
+Superblocks, object headers, v1/v2 group navigation, dense attributes and
+dataset value reads use bounded source reads. Chunk selections read only their
+index blocks and intersecting chunks for every supported index. Variable-length
+values fetch individual global heap objects without materializing the source.
+Source-backed object, heap, index and payload addresses now remain `UInt64`,
+with a sparse-source regression covering an object above the 2 GiB boundary.
+Writer regressions now cover fixed arrays spanning multiple checksummed pages
+and filtered extensible arrays that continue from inline entries into direct
+data blocks. The former 1024-chunk and 128-slot writer guards were removed.
+Publication remains gated on proposal approval.

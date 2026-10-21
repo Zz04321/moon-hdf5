@@ -240,6 +240,7 @@ fn masked_value(raw : UInt64, offset : Int32, precision : Int32) -> UInt64 {
 
 ///|
 fn decode_dataset_value(
+  source : &Hdf5Source?,
   bytes : Bytes,
   payload : Bytes,
   offset : Int32,
@@ -301,6 +302,7 @@ fn decode_dataset_value(
         fields.push({
           name: compound_member.name,
           value: decode_dataset_value(
+            source,
             bytes,
             payload,
             offset + compound_member.offset,
@@ -351,14 +353,25 @@ fn decode_dataset_value(
         guard object_index <= 0x7FFFFFFFUL else {
           raise InvalidField("global heap object index is too large")
         }
-        let data = read_global_heap_object(
-          bytes,
-          heap_address,
-          object_index.to_int(),
-          offset_size,
-          length_size,
-          base_address,
-        )
+        let data = match source {
+          Some(random_access) =>
+            read_source_global_heap_object(
+              random_access,
+              heap_address,
+              object_index.to_int(),
+              length_size,
+              base_address,
+            )
+          None =>
+            read_global_heap_object(
+              bytes,
+              heap_address,
+              object_index.to_int(),
+              offset_size,
+              length_size,
+              base_address,
+            )
+        }
         if datatype.vlen_is_string {
           guard data.length() >= count else {
             raise InvalidField(
@@ -383,6 +396,7 @@ fn decode_dataset_value(
           for index in 0..<count {
             values.push(
               decode_dataset_value(
+                source,
                 bytes,
                 data,
                 index * base.size,
@@ -411,6 +425,7 @@ fn decode_dataset_value(
       for index in 0..<(datatype.size / base.size) {
         values.push(
           decode_dataset_value(
+            source,
             bytes,
             payload,
             offset + index * base.size,
@@ -451,6 +466,7 @@ fn decode_values(
   offset_size : Int32,
   length_size : Int32,
   base_address : UInt64,
+  source~ : &Hdf5Source? = None,
 ) -> DatasetValues raise Hdf5Error {
   guard count >= 0 && count <= 0x7FFFFFFFL else {
     raise InvalidField("dataset has too many elements")
@@ -535,6 +551,7 @@ fn decode_values(
       for i in 0..<n {
         match
           decode_dataset_value(
+            source,
             bytes,
             payload,
             i * datatype.size,
@@ -554,6 +571,7 @@ fn decode_values(
       for i in 0..<n {
         values.push(
           decode_dataset_value(
+            source,
             bytes,
             payload,
             i * datatype.size,

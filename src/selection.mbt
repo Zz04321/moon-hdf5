@@ -235,36 +235,6 @@ fn selected_payload(
 }
 
 ///|
-fn datatype_needs_backing_bytes(datatype : Datatype) -> Bool {
-  if datatype.class == 9 {
-    return true
-  }
-  for base in datatype.base_types {
-    if datatype_needs_backing_bytes(base) {
-      return true
-    }
-  }
-  for compound_member in datatype.compound_members {
-    if datatype_needs_backing_bytes(compound_member.datatype) {
-      return true
-    }
-  }
-  false
-}
-
-///|
-fn source_selection_supported(metadata : DatasetMetadata) -> Bool {
-  if datatype_needs_backing_bytes(metadata.datatype) {
-    return false
-  }
-  match metadata.layout.layout_class {
-    0 | 1 => true
-    2 => true
-    _ => false
-  }
-}
-
-///|
 fn source_contiguous_payload(
   source : &Hdf5Source,
   header : ObjectHeader,
@@ -312,7 +282,10 @@ fn source_contiguous_payload(
   guard stored_size >= full_size.to_uint64() else {
     raise InvalidField("dataset storage is smaller than its declared shape")
   }
-  let source_offset = address_to_offset(layout.data_address, base_address).to_uint64()
+  let source_offset = source_address_to_offset(
+    layout.data_address,
+    base_address,
+  )
   let mut selected = 0
   while selected < indices.length() {
     let index = indices[selected]
@@ -343,9 +316,6 @@ fn read_source_dataset_selection(
   length_size : Int32,
   base_address : UInt64,
 ) -> DatasetSelectionResult raise Hdf5Error {
-  guard !datatype_needs_backing_bytes(metadata.datatype) else {
-    raise InvalidField("datatype requires complete backing bytes")
-  }
   let (dimensions, indices) = selection_indices(metadata.dataspace, selection)
   let payload = match metadata.layout.layout_class {
     0 =>
@@ -384,6 +354,7 @@ fn read_source_dataset_selection(
     offset_size,
     length_size,
     base_address,
+    source=Some(source),
   )
   { dimensions, datatype: metadata.datatype, values, }
 }

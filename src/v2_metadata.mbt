@@ -92,8 +92,8 @@ fn V2BTreeReader::node(
     raise InvalidField(self.label + " contains a node cycle")
   }
   self.visited.push(address)
-  let start = address_to_offset(address, self.base_address)
-  let node = self.source.read_at(start.to_uint64(), self.node_size)
+  let start = source_address_to_offset(address, self.base_address)
+  let node = self.source.read_at(start, self.node_size)
   let reader = Reader::new(node)
   guard reader.read_bytes(4) == (if depth == 0 { b"BTLF" } else { b"BTIN" }) &&
     reader.read_u8() == b'\x00' &&
@@ -186,12 +186,12 @@ fn read_source_v2_btree_records(
   expected_types : Array[Int32],
   label : String,
 ) -> V2BTreeContents raise Hdf5Error {
-  let header_offset = address_to_offset(address, base_address)
+  let header_offset = source_address_to_offset(address, base_address)
   let header_content = 18 + offset_size + length_size
   let header = Reader::new(
     source_read_checksummed(
       source,
-      header_offset.to_uint64(),
+      header_offset,
       header_content,
       label + " header",
     ),

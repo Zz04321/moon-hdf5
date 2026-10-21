@@ -165,7 +165,7 @@ fn ExtensibleReader::data_block(
     raise InvalidField("extensible array data block is too large")
   }
   let block = self.source.read_at(
-    address_to_offset(address, self.base_address).to_uint64(),
+    source_address_to_offset(address, self.base_address),
     total_size.to_int(),
   )
   let reader = Reader::new(block)
@@ -331,14 +331,14 @@ fn read_source_extensible_array_chunks(
       order.push(dimension)
     }
   }
-  let header_offset = address_to_offset(layout.data_address, base_address)
+  let header_offset = source_address_to_offset(
+    layout.data_address,
+    base_address,
+  )
   let header_content = 12 + length_size * 6 + offset_size
   let header = Reader::new(
     source_read_checksummed(
-      source,
-      header_offset.to_uint64(),
-      header_content,
-      "extensible array header",
+      source, header_offset, header_content, "extensible array header",
     ),
   )
   guard header.read_bytes(4) == b"EAHD" && header.read_u8() == b'\x00' else {
@@ -417,7 +417,7 @@ fn read_source_extensible_array_chunks(
     (levels - first_super) * offset_size
   let index_bytes = source_read_checksummed(
     source,
-    address_to_offset(index_address, base_address).to_uint64(),
+    source_address_to_offset(index_address, base_address),
     index_content,
     "extensible array index block",
   )
@@ -483,7 +483,7 @@ fn read_source_extensible_array_chunks(
       }
       let super_bytes = source_read_checksummed(
         source,
-        address_to_offset(supers[level - first_super], base_address).to_uint64(),
+        source_address_to_offset(supers[level - first_super], base_address),
         super_content.to_int(),
         "extensible array super block",
       )

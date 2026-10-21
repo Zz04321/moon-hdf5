@@ -26,6 +26,35 @@ impl Hdf5Source for CountingSource with fn read_at(
 }
 
 ///|
+priv struct SparseSource {
+  window_start : UInt64
+  bytes : Bytes
+  virtual_length : UInt64
+} derive(@debug.Debug)
+
+///|
+impl Hdf5Source for SparseSource with fn length(self : SparseSource) -> UInt64 {
+  self.virtual_length
+}
+
+///|
+impl Hdf5Source for SparseSource with fn read_at(
+  self : SparseSource,
+  offset : UInt64,
+  length : Int32,
+) -> Bytes raise Hdf5Error {
+  guard length >= 0 && offset >= self.window_start else {
+    raise UnexpectedEof(offset.reinterpret_as_int64())
+  }
+  let relative = offset - self.window_start
+  let available = self.bytes.length().to_uint64()
+  guard relative <= available && length.to_uint64() <= available - relative else {
+    raise UnexpectedEof(offset.reinterpret_as_int64())
+  }
+  Hdf5Source::read_at(self.bytes, relative, length)
+}
+
+///|
 test "Hdf5File accepts a random-access source" {
   let source = CountingSource::{
     bytes: @fs.read_file_to_bytes("testdata/basic_v0.h5"),
@@ -403,6 +432,82 @@ test "random-access sources support value reads during parser migration" {
       assert_eq(values, [0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L])
     _ => fail("expected signed integer values")
   }
+}
+
+///|
+test "global heap values use bounded source reads" {
+  let source = CountingSource::{
+    bytes: @fs.read_file_to_bytes("testdata/datatypes_v200.h5"),
+    reads: 0,
+    requested: 0UL,
+    largest_read: 0,
+  }
+  let sources : Array[&Hdf5Source] = [source]
+  let file = Hdf5File::parse_source(sources[0])
+  assert_eq(string_values(file.open_dataset("/utf8")), ["月亮", "HDF5", ""])
+  match
+    file.read_dataset_selection("/sequences", Points([[2UL], [0UL], [2UL]])).values {
+    Structured(values) =>
+      assert_eq(values, [
+        Sequence([SignedInteger(300L), SignedInteger(400L)]),
+        Sequence([SignedInteger(1L), SignedInteger(-2L), SignedInteger(3L)]),
+        Sequence([SignedInteger(300L), SignedInteger(400L)]),
+      ])
+    _ => fail("expected variable-length sequences")
+  }
+  assert_true(source.largest_read < source.bytes.length())
+}
+
+///|
+test "random-access addresses can exceed two GiB" {
+  let buffer = @buffer.Buffer::Buffer(size_hint=40)
+  for byte in b"GCOL\x01\x00\x00\x00" {
+    buffer.write_byte(byte)
+  }
+  buffer.write_uint64_le(40UL)
+  buffer.write_uint16_le(1)
+  buffer.write_uint16_le(1)
+  buffer.write_uint_le(0U)
+  buffer.write_uint64_le(5UL)
+  for byte in b"large\x00\x00\x00" {
+    buffer.write_byte(byte)
+  }
+  let address = 0x80000000UL
+  let source = SparseSource::{
+    window_start: address,
+    bytes: buffer.to_bytes(),
+    virtual_length: address + 40UL,
+  }
+  let sources : Array[&Hdf5Source] = [source]
+  assert_eq(
+    read_source_global_heap_object(sources[0], address, 1, 8, 0UL),
+    b"large",
+  )
+}
+
+///|
+test "variable-length attributes use bounded source reads" {
+  let writer = Hdf5Writer::new()
+  writer.add_dataset("/names", [2UL], VariableStringValues(["moon", "月亮"]))
+  writer.add_attribute(
+    "/names",
+    "description",
+    [],
+    VariableStringValues(["UTF-8 标签"]),
+  )
+  let source = CountingSource::{
+    bytes: writer.encode(),
+    reads: 0,
+    requested: 0UL,
+    largest_read: 0,
+  }
+  let sources : Array[&Hdf5Source] = [source]
+  let attributes = Hdf5File::parse_source(sources[0]).attributes("/names")
+  match attributes[0].values {
+    Some(Strings(values)) => assert_eq(values, ["UTF-8 标签"])
+    _ => fail("expected variable-length string attribute")
+  }
+  assert_true(source.largest_read < source.bytes.length())
 }
 
 ///|

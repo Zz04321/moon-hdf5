@@ -134,8 +134,8 @@ fn ChunkBTreeV2::node(
     total <= self.remaining_records else {
     raise InvalidField("invalid v2 B-tree node record count")
   }
-  let start = address_to_offset(address, self.base_address)
-  let node = self.source.read_at(start.to_uint64(), self.config.node_size)
+  let start = source_address_to_offset(address, self.base_address)
+  let node = self.source.read_at(start, self.config.node_size)
   let reader = Reader::new(node)
   guard reader.read_bytes(4) == (if depth == 0 { b"BTLF" } else { b"BTIN" }) &&
     reader.read_u8() == b'\x00' &&
@@ -233,14 +233,14 @@ fn read_source_btree_v2_chunks(
   selection : Array[UInt64]?,
 ) -> Unit raise Hdf5Error {
   validate_btree_v2_config(config)
-  let header_offset = address_to_offset(layout.data_address, base_address)
+  let header_offset = source_address_to_offset(
+    layout.data_address,
+    base_address,
+  )
   let header_content = 18 + offset_size + length_size
   let header = Reader::new(
     source_read_checksummed(
-      source,
-      header_offset.to_uint64(),
-      header_content,
-      "v2 B-tree header",
+      source, header_offset, header_content, "v2 B-tree header",
     ),
   )
   guard header.read_bytes(4) == b"BTHD" && header.read_u8() == b'\x00' else {

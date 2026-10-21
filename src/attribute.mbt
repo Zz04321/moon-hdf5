@@ -30,6 +30,7 @@ fn parse_attribute_data(
   offset_size : Int32,
   length_size : Int32,
   base_address : UInt64,
+  source~ : &Hdf5Source? = None,
 ) -> Attribute raise Hdf5Error {
   guard (message_flags.to_int() & 0x02) == 0 else {
     raise UnsupportedFeature("shared attribute messages are not supported yet")
@@ -69,7 +70,14 @@ fn parse_attribute_data(
   let count = dataspace.element_count()
   let values = Some(
     decode_values(
-      bytes, value_data, count, datatype, offset_size, length_size, base_address,
+      bytes,
+      value_data,
+      count,
+      datatype,
+      offset_size,
+      length_size,
+      base_address,
+      source~,
     ),
   ) catch {
     UnsupportedFeature(_) => None
@@ -101,6 +109,7 @@ fn parse_attribute_message(
 
 ///|
 fn read_source_attribute_message(
+  source : &Hdf5Source,
   message : HeaderMessage,
   offset_size : Int32,
   length_size : Int32,
@@ -116,6 +125,7 @@ fn read_source_attribute_message(
     offset_size,
     length_size,
     base_address,
+    source=Some(source),
   )
 }
 
@@ -280,6 +290,7 @@ fn read_source_attributes(
             offset_size,
             length_size,
             base_address,
+            source=Some(source),
           ),
         )
       }
@@ -305,7 +316,7 @@ fn read_source_attributes(
     if message.msg_type == msg_attribute {
       attributes.push(
         read_source_attribute_message(
-          message, offset_size, length_size, base_address,
+          source, message, offset_size, length_size, base_address,
         ),
       )
     }

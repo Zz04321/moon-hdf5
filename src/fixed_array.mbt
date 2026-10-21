@@ -232,14 +232,14 @@ fn read_source_fixed_array_chunks(
   }
   let maximum_total = product(maximum_grid)
   let chunk_size = chunk_byte_size(layout.chunk_dimensions, datatype.size)
-  let header_offset = address_to_offset(layout.data_address, base_address)
+  let header_offset = source_address_to_offset(
+    layout.data_address,
+    base_address,
+  )
   let header_content = 8 + length_size + offset_size
   let header = Reader::new(
     source_read_checksummed(
-      source,
-      header_offset.to_uint64(),
-      header_content,
-      "fixed array header",
+      source, header_offset, header_content, "fixed array header",
     ),
   )
   guard header.read_bytes(4) == b"FAHD" && header.read_u8() == b'\x00' else {
@@ -270,11 +270,9 @@ fn read_source_fixed_array_chunks(
   if block_address == undefined || output.length() == 0 {
     return
   }
-  let block_offset = address_to_offset(block_address, base_address)
+  let block_offset = source_address_to_offset(block_address, base_address)
   let block_prefix_size = 6 + offset_size
-  let prefix = Reader::new(
-    source.read_at(block_offset.to_uint64(), block_prefix_size),
-  )
+  let prefix = Reader::new(source.read_at(block_offset, block_prefix_size))
   guard prefix.read_bytes(4) == b"FADB" &&
     prefix.read_u8() == b'\x00' &&
     prefix.read_u8().to_int() == client &&
@@ -288,7 +286,7 @@ fn read_source_fixed_array_chunks(
   let block_header = if paged {
     source_read_checksummed(
       source,
-      block_offset.to_uint64(),
+      block_offset,
       block_prefix_size + bitmap_size,
       "fixed array data block",
     )
@@ -303,7 +301,7 @@ fn read_source_fixed_array_chunks(
   } else {
     b""
   }
-  let entries_start = block_offset.to_uint64() +
+  let entries_start = block_offset +
     block_prefix_size.to_uint64() +
     (if paged { bitmap_size + 4 } else { 0 }).to_uint64()
   let unpaged = if paged {
@@ -314,7 +312,7 @@ fn read_source_fixed_array_chunks(
     }
     source_read_checksummed(
       source,
-      block_offset.to_uint64(),
+      block_offset,
       block_prefix_size + maximum_total.to_int() * entry_size,
       "fixed array data block",
     )

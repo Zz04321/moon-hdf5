@@ -918,10 +918,7 @@ pub fn Hdf5Writer::add_chunked_dataset(
       raise InvalidField("chunk dimension is invalid")
     }
   }
-  let (_, total_chunks) = chunk_grid(dimensions, chunk_dimensions)
-  guard total_chunks <= 1024 else {
-    raise InvalidField("writer fixed-array index exceeds 1024 chunks")
-  }
+  chunk_grid(dimensions, chunk_dimensions) |> ignore
   validate_writer_chunk_size(
     chunk_dimensions,
     encode_write_values(values).element_size,
@@ -1034,10 +1031,7 @@ pub fn Hdf5Writer::add_extensible_dataset(
       grid_dimensions[axis] = encoded_maximum[axis]
     }
   }
-  let (_, total_chunks) = chunk_grid(grid_dimensions, chunk_dimensions)
-  guard total_chunks <= 128 else {
-    raise InvalidField("writer extensible-array index exceeds 128 chunks")
-  }
+  chunk_grid(grid_dimensions, chunk_dimensions) |> ignore
   self.ensure_groups(writer_parent_path(normalized))
   self.datasets.push({
     path: normalized,
@@ -1215,10 +1209,7 @@ pub fn Hdf5Writer::resize_dataset(
       grid_dimensions[axis] = dataset.maximum_dimensions[axis]
     }
   }
-  let (_, total_chunks) = chunk_grid(grid_dimensions, chunk_dimensions)
-  guard total_chunks <= 128 else {
-    raise InvalidField("writer extensible-array index exceeds 128 chunks")
-  }
+  chunk_grid(grid_dimensions, chunk_dimensions) |> ignore
   let fill = match dataset.fill_value {
     Some(value) => value
     None => default_write_fill(dataset.values)
@@ -1870,9 +1861,9 @@ fn encode_chunked_layout(
   if extensible {
     buffer.write_byte(b'\x20')
     buffer.write_byte(b'\x80')
-    buffer.write_byte(b'\x04')
-    buffer.write_byte(b'\x10')
-    buffer.write_byte(b'\x0a')
+    buffer.write_byte(b'\x80')
+    buffer.write_byte(b'\x80')
+    buffer.write_byte(b'\x0e')
   } else {
     buffer.write_byte(b'\x0a')
   }
@@ -2148,9 +2139,21 @@ fn encode_fixed_array_storage(
   let entries = encode_dataset_chunks(dataset, heap)
   let filtered = filters.length() > 0
   let entry_size = if filtered { 14 } else { 8 }
+  let page_bits = 10
+  let page_entries = 1 << page_bits
+  let paged = entries.length() > page_entries
+  let page_count = if paged {
+    (entries.length() + page_entries - 1) / page_entries
+  } else {
+    1
+  }
+  let bitmap_size = if paged { (page_count + 7) / 8 } else { 0 }
   let header_length = 28
   let block_address = writer_align(start.to_int() + header_length).to_uint64()
-  let block_length = 14 + entries.length() * entry_size + 4
+  let block_length = 14 +
+    bitmap_size +
+    (if paged { 4 + page_count * 4 } else { 4 }) +
+    entries.length() * entry_size
   let mut chunk_address = writer_align(block_address.to_int() + block_length)
   for index in 0..<entries.length() {
     if entries[index].allocated {
@@ -2168,7 +2171,7 @@ fn encode_fixed_array_storage(
   header.write_byte(b'\x00')
   header.write_byte(if filtered { b'\x01' } else { b'\x00' })
   header.write_byte(entry_size.to_byte())
-  header.write_byte(b'\x0a')
+  header.write_byte(page_bits.to_byte())
   header.write_uint64_le(entries.length().to_uint64())
   header.write_uint64_le(block_address)
   header.write_uint_le(metadata_checksum(header.to_bytes(), 0, header.length()))
@@ -2178,23 +2181,55 @@ fn encode_fixed_array_storage(
   block.write_byte(b'\x00')
   block.write_byte(if filtered { b'\x01' } else { b'\x00' })
   block.write_uint64_le(start)
-  for entry in entries {
-    block.write_uint64_le(
-      if entry.allocated {
-        entry.address
-      } else {
-        0xFFFFFFFFFFFFFFFFUL
-      },
-    )
-    if filtered {
-      guard entry.data.length() <= 65535 else {
-        raise InvalidField("filtered writer chunk is too large")
+  if paged {
+    for byte_index in 0..<bitmap_size {
+      let remaining = page_count - byte_index * 8
+      block.write_byte(
+        if remaining >= 8 {
+          b'\xff'
+        } else {
+          (0xFF << (8 - remaining)).to_byte()
+        },
+      )
+    }
+    block.write_uint_le(metadata_checksum(block.to_bytes(), 0, block.length()))
+  }
+  let mut entry_index = 0
+  for _ in 0..<page_count {
+    let page = @buffer.Buffer::Buffer()
+    let page_end = if entry_index + page_entries < entries.length() {
+      entry_index + page_entries
+    } else {
+      entries.length()
+    }
+    while entry_index < page_end {
+      let entry = entries[entry_index]
+      page.write_uint64_le(
+        if entry.allocated {
+          entry.address
+        } else {
+          0xFFFFFFFFFFFFFFFFUL
+        },
+      )
+      if filtered {
+        guard entry.data.length() <= 65535 else {
+          raise InvalidField("filtered writer chunk is too large")
+        }
+        page.write_uint16_le(entry.data.length().to_uint16())
+        page.write_uint_le(0U)
       }
-      block.write_uint16_le(entry.data.length().to_uint16())
-      block.write_uint_le(0U)
+      entry_index = entry_index + 1
+    }
+    if paged {
+      writer_write_bytes(block, page.to_bytes())
+      block.write_uint_le(metadata_checksum(page.to_bytes(), 0, page.length()))
+    } else {
+      writer_write_bytes(block, page.to_bytes())
     }
   }
-  block.write_uint_le(metadata_checksum(block.to_bytes(), 0, block.length()))
+  if !paged {
+    block.write_uint_le(metadata_checksum(block.to_bytes(), 0, block.length()))
+  }
 
   let output = @buffer.Buffer::Buffer(size_hint=chunk_address - start.to_int())
   writer_write_bytes(output, header.to_bytes())
@@ -2227,16 +2262,71 @@ fn encode_extensible_array_storage(
     _ => raise InvalidField("expected extensible writer dataset")
   }
   let entries = encode_dataset_chunks(dataset, heap)
-  guard entries.length() <= 128 else {
-    raise InvalidField("writer extensible-array index exceeds 128 chunks")
-  }
   let filtered = filters.length() > 0
   let entry_size = if filtered { 14 } else { 8 }
+  let max_bits = 32
+  let index_elements = 128
+  let min_elements = 128
+  let min_pointers = 128
+  let page_bits = 14
+  let first_super = 14
+  let levels = 1 + max_bits - 7
+  let direct_count = 2 * (min_pointers - 1)
   let header_length = 72
   let index_address = start + header_length.to_uint64()
-  let pointer_count = 31
-  let index_length = 14 + 128 * entry_size + pointer_count * 8 + 4
-  let mut chunk_address = writer_align(index_address.to_int() + index_length)
+  let index_length = 14 +
+    index_elements * entry_size +
+    (direct_count + levels - first_super) * 8 +
+    4
+  let direct_addresses = Array::make(direct_count, 0xFFFFFFFFFFFFFFFFUL)
+  let block_addresses : Array[UInt64] = []
+  let block_starts : Array[Int32] = []
+  let block_counts : Array[Int32] = []
+  let block_offsets : Array[UInt64] = []
+  let mut metadata_end = writer_align(index_address.to_int() + index_length)
+  let mut level_start = 0
+  let mut direct_start = 0
+  for level in 0..<first_super {
+    let blocks = 1 << (level / 2)
+    let count = min_elements << ((level + 1) / 2)
+    for block_index in 0..<blocks {
+      let entry_start = index_elements + level_start + block_index * count
+      if entry_start >= entries.length() {
+        break
+      }
+      let entry_end = if entry_start + count < entries.length() {
+        entry_start + count
+      } else {
+        entries.length()
+      }
+      let mut allocated = false
+      for entry_index in entry_start..<entry_end {
+        if entries[entry_index].allocated {
+          allocated = true
+          break
+        }
+      }
+      if allocated {
+        let block_address = metadata_end.to_uint64()
+        direct_addresses[direct_start + block_index] = block_address
+        block_addresses.push(block_address)
+        block_starts.push(entry_start)
+        block_counts.push(count)
+        block_offsets.push(
+          (level_start + (direct_start + block_index) * count).to_uint64(),
+        )
+        metadata_end = writer_align(metadata_end + 18 + count * entry_size + 4)
+      }
+    }
+    level_start = level_start + blocks * count
+    direct_start = direct_start + blocks
+  }
+  guard entries.length() <= index_elements + level_start else {
+    raise InvalidField(
+      "writer extensible-array index exceeds direct-block capacity",
+    )
+  }
+  let mut chunk_address = metadata_end
   for index in 0..<entries.length() {
     if entries[index].allocated {
       entries[index] = {
@@ -2253,16 +2343,16 @@ fn encode_extensible_array_storage(
   header.write_byte(b'\x00')
   header.write_byte(if filtered { b'\x01' } else { b'\x00' })
   header.write_byte(entry_size.to_byte())
-  header.write_byte(b'\x20')
-  header.write_byte(b'\x80')
-  header.write_byte(b'\x10')
-  header.write_byte(b'\x04')
-  header.write_byte(b'\x0a')
+  header.write_byte(max_bits.to_byte())
+  header.write_byte(index_elements.to_byte())
+  header.write_byte(min_elements.to_byte())
+  header.write_byte(min_pointers.to_byte())
+  header.write_byte(page_bits.to_byte())
   for _ in 0..<4 {
     header.write_uint64_le(0UL)
   }
   header.write_uint64_le(entries.length().to_uint64())
-  header.write_uint64_le(128UL)
+  header.write_uint64_le((index_elements + level_start).to_uint64())
   header.write_uint64_le(index_address)
   header.write_uint_le(metadata_checksum(header.to_bytes(), 0, header.length()))
 
@@ -2271,7 +2361,7 @@ fn encode_extensible_array_storage(
   index.write_byte(b'\x00')
   index.write_byte(if filtered { b'\x01' } else { b'\x00' })
   index.write_uint64_le(start)
-  for entry_index in 0..<128 {
+  for entry_index in 0..<index_elements {
     let allocated = entry_index < entries.length() &&
       entries[entry_index].allocated
     index.write_uint64_le(
@@ -2290,7 +2380,10 @@ fn encode_extensible_array_storage(
       index.write_uint_le(0U)
     }
   }
-  for _ in 0..<pointer_count {
+  for address in direct_addresses {
+    index.write_uint64_le(address)
+  }
+  for _ in first_super..<levels {
     index.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
   }
   index.write_uint_le(metadata_checksum(index.to_bytes(), 0, index.length()))
@@ -2298,6 +2391,45 @@ fn encode_extensible_array_storage(
   let output = @buffer.Buffer::Buffer(size_hint=chunk_address - start.to_int())
   writer_write_bytes(output, header.to_bytes())
   writer_write_bytes(output, index.to_bytes())
+  for block_index in 0..<block_addresses.length() {
+    writer_write_zeros(
+      output,
+      block_addresses[block_index].to_int() - start.to_int() - output.length(),
+    )
+    let block = @buffer.Buffer::Buffer()
+    writer_write_bytes(block, b"EADB")
+    block.write_byte(b'\x00')
+    block.write_byte(if filtered { b'\x01' } else { b'\x00' })
+    block.write_uint64_le(start)
+    block.write_uint_le(block_offsets[block_index].to_uint())
+    let entry_start = block_starts[block_index]
+    let entry_end = entry_start + block_counts[block_index]
+    for entry_index in entry_start..<entry_end {
+      let allocated = entry_index < entries.length() &&
+        entries[entry_index].allocated
+      block.write_uint64_le(
+        if allocated {
+          entries[entry_index].address
+        } else {
+          0xFFFFFFFFFFFFFFFFUL
+        },
+      )
+      if filtered {
+        let size = if allocated {
+          entries[entry_index].data.length()
+        } else {
+          0
+        }
+        guard size <= 65535 else {
+          raise InvalidField("filtered writer chunk is too large")
+        }
+        block.write_uint16_le(size.to_uint16())
+        block.write_uint_le(0U)
+      }
+    }
+    block.write_uint_le(metadata_checksum(block.to_bytes(), 0, block.length()))
+    writer_write_bytes(output, block.to_bytes())
+  }
   for entry in entries {
     if entry.allocated {
       writer_write_zeros(

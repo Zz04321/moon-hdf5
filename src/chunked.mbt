@@ -59,8 +59,8 @@ fn read_source_filtered_chunk(
   guard stored_size > 0UL && stored_size <= 0x7FFFFFFFUL else {
     raise InvalidField("invalid stored chunk size")
   }
-  let offset = address_to_offset(address, base_address)
-  let data = source.read_at(offset.to_uint64(), stored_size.to_int())
+  let offset = source_address_to_offset(address, base_address)
+  let data = source.read_at(offset, stored_size.to_int())
   decode_filters(data, filters, mask, element_size, expected_size)
 }
 
@@ -311,9 +311,9 @@ fn read_source_chunk_btree(
   filters : Array[Filter],
   selection : Array[UInt64]?,
 ) -> Unit raise Hdf5Error {
-  let offset = address_to_offset(node_address, base_address)
+  let offset = source_address_to_offset(node_address, base_address)
   let prefix_size = 8 + offset_size * 2
-  let prefix = Reader::new(source.read_at(offset.to_uint64(), prefix_size))
+  let prefix = Reader::new(source.read_at(offset, prefix_size))
   guard prefix.read_bytes(4) == b"TREE" else {
     raise InvalidField("expected chunk B-tree node")
   }
@@ -331,7 +331,7 @@ fn read_source_chunk_btree(
   let key_size = 8 + key_dimensions * 8
   let entry_size = key_size + offset_size
   let total_size = prefix_size + entries_used * entry_size + key_size
-  let reader = Reader::new(source.read_at(offset.to_uint64(), total_size))
+  let reader = Reader::new(source.read_at(offset, total_size))
   reader.skip(prefix_size)
   for _ in 0..<entries_used {
     let chunk_size = reader.read_u32_le().reinterpret_as_int()

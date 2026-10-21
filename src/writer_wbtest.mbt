@@ -191,25 +191,31 @@ test "writer validates chunk metadata filters and fill types" {
     } catch {
       error => Some(error)
     },
-    try {
-      writer.add_chunked_dataset(
-        "/many",
-        [1025UL],
-        [1U],
-        Int64Values(Array::make(1025, 0L)),
-      )
-      None
-    } catch {
-      error => Some(error)
-    },
   ]
   assert_eq(cases, [
     Some(InvalidField("chunk dimensions must match a simple dataspace")),
     Some(InvalidField("chunk dimension is invalid")),
     Some(InvalidField("fill value must be one value of the dataset type")),
     Some(InvalidField("shuffle must be the first writer filter")),
-    Some(InvalidField("writer fixed-array index exceeds 1024 chunks")),
   ])
+}
+
+///|
+test "writer fixed arrays span multiple pages" {
+  let values = Array::make(1025, 0L)
+  values[0] = 7L
+  values[1024] = 9L
+  let writer = Hdf5Writer::new()
+  writer.add_chunked_dataset("/many", [1025UL], [1U], Int64Values(values))
+  let file = Hdf5File::parse(writer.encode())
+  let selected = file.read_dataset_selection(
+    "/many",
+    Points([[1024UL], [512UL], [0UL]]),
+  )
+  match selected.values {
+    Integers(items) => assert_eq(items, [9L, 0L, 7L])
+    _ => fail("expected paged fixed-array values")
+  }
 }
 
 ///|
@@ -242,6 +248,33 @@ test "writer appends resizes and fills extensible datasets" {
   writer.resize_dataset("/series", [2UL, 3UL])
   let shrunk = Hdf5File::parse(writer.encode()).open_dataset("/series")
   assert_eq(integer_values(shrunk), [1L, 2L, 3L, 4L, 5L, 6L])
+}
+
+///|
+test "writer extensible arrays use direct data blocks" {
+  let values = Array::make(300, 0L)
+  values[0] = 1L
+  values[127] = 2L
+  values[128] = 3L
+  values[299] = 4L
+  let writer = Hdf5Writer::new()
+  writer.add_extensible_dataset(
+    "/many",
+    [300UL],
+    [None],
+    [1U],
+    Int64Values(values),
+    filters=[Shuffle, Deflate(6), Fletcher32],
+  )
+  let file = Hdf5File::parse(writer.encode())
+  let selected = file.read_dataset_selection(
+    "/many",
+    Points([[299UL], [128UL], [127UL], [1UL], [0UL]]),
+  )
+  match selected.values {
+    Integers(items) => assert_eq(items, [4L, 3L, 2L, 0L, 1L])
+    _ => fail("expected extensible-array direct block values")
+  }
 }
 
 ///|

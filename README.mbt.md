@@ -79,12 +79,11 @@ compact, contiguous and chunked datasets; chunked reads decode only intersecting
 allocated chunks.
 
 `Hdf5File::parse_source` also accepts an implementation of the random-access
-`Hdf5Source` interface. Superblock parsing, object headers and v1 group
-navigation use bounded reads, as do dataset values, attributes and selections
-from every supported storage layout when their datatypes do not reference
-global heaps. Chunk selections use bounded reads with every supported index.
-Datatypes that require global-heap backing retain a full-source compatibility
-path.
+`Hdf5Source` interface. Superblock parsing, object headers and group navigation
+use bounded reads, as do dataset values, attributes and selections
+from every supported storage layout. Global heap objects are read on demand,
+and chunk selections read only their index blocks and intersecting chunks.
+Source file addresses use 64-bit offsets and can exceed 2 GiB.
 
 ## Writing
 
@@ -165,11 +164,8 @@ Focused examples are available in `src/cmd/metadata_demo`,
 
 ## Limitations
 
-- Datatypes that reference global heaps may request the complete source, and
-  decoded values remain in memory.
+- Decoded values remain in memory even when the input uses random access.
 - The writer creates complete new files and does not edit existing files.
-- Fixed-array output is limited to 1024 chunks; extensible-array output is
-  limited to 128 chunk slots.
 - External links and external dataset storage are not supported.
 - Custom variable-length fill values, additional writer filters and reference
   writing are not supported.

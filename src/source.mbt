@@ -8,6 +8,18 @@ pub(open) trait Hdf5Source: @debug.Debug {
 }
 
 ///|
+fn source_address_to_offset(
+  address : UInt64,
+  base_address : UInt64,
+) -> UInt64 raise Hdf5Error {
+  guard address != 0xFFFFFFFFFFFFFFFFUL &&
+    base_address <= 0xFFFFFFFFFFFFFFFFUL - address else {
+    raise InvalidField("HDF5 address is undefined or out of range")
+  }
+  base_address + address
+}
+
+///|
 fn source_read_available(
   source : &Hdf5Source,
   offset : UInt64,
@@ -92,20 +104,20 @@ fn parse_source_object_header(
   length_size : Int32,
   base_address : UInt64,
 ) -> ObjectHeader raise Hdf5Error {
-  let absolute = address_to_offset(address, base_address)
-  let prefix = source_read_available(source, absolute.to_uint64(), 32)
+  let absolute = source_address_to_offset(address, base_address)
+  let prefix = source_read_available(source, absolute, 32)
   let reader = Reader::new(prefix)
   let first = reader.read_u8()
   match first {
     b'\x01' => {
       guard prefix.length() >= 16 else {
-        raise UnexpectedEof(absolute.to_int64())
+        raise UnexpectedEof(absolute.reinterpret_as_int64())
       }
       let header_size = Reader::at(prefix, 8).read_u32_le().reinterpret_as_int()
       guard header_size >= 0 && header_size <= 0x7FFFFFFF - 16 else {
         raise InvalidField("object header chunk size is too large")
       }
-      let bytes = source.read_at(absolute.to_uint64(), 16 + header_size)
+      let bytes = source.read_at(absolute, 16 + header_size)
       let header = Reader::new(bytes)
       guard header.read_u8() == b'\x01' else {
         raise InvalidField("expected object header version 1")
@@ -117,7 +129,6 @@ fn parse_source_object_header(
       parse_source_v1_messages(
         source,
         header.sub(16, size),
-        absolute,
         offset_size,
         length_size,
         base_address,
@@ -146,7 +157,7 @@ fn parse_source_object_header(
       }
       let payload_start = reader.position()
       let total = payload_start + chunk_size.to_int() + 4
-      let bytes = source.read_at(absolute.to_uint64(), total)
+      let bytes = source.read_at(absolute, total)
       verify_metadata_checksum(
         bytes,
         0,
@@ -157,7 +168,6 @@ fn parse_source_object_header(
       parse_source_v2_messages(
         source,
         Reader::new(bytes).sub(payload_start, chunk_size.to_int()),
-        absolute,
         offset_size,
         length_size,
         base_address,
@@ -179,11 +189,10 @@ fn parse_source_object_header(
 fn parse_source_v1_messages(
   source : &Hdf5Source,
   block : Reader,
-  block_address : Int32,
   offset_size : Int32,
   length_size : Int32,
   base_address : UInt64,
-  visited : Array[Int32],
+  visited : Array[UInt64],
   messages : Array[HeaderMessage],
 ) -> Unit raise Hdf5Error {
   while block.remaining() >= 8 {
@@ -191,14 +200,14 @@ fn parse_source_v1_messages(
     let size = block.read_u16_le().to_int()
     let flags = block.read_u8()
     block.skip(3)
-    let data_offset = block_address + block.position()
+    let data_offset = block.position()
     let data = block.read_bytes(size)
     messages.push({ msg_type, flags, data_offset, data, })
     if msg_type == msg_object_continuation {
       let continuation = Reader::new(data)
       let continuation_address = continuation.read_uint_le(offset_size)
       let continuation_length = continuation.read_uint_le(length_size)
-      let continuation_offset = address_to_offset(
+      let continuation_offset = source_address_to_offset(
         continuation_address, base_address,
       )
       if !visited.contains(continuation_offset) {
@@ -209,12 +218,8 @@ fn parse_source_v1_messages(
         parse_source_v1_messages(
           source,
           Reader::new(
-            source.read_at(
-              continuation_offset.to_uint64(),
-              continuation_length.to_int(),
-            ),
+            source.read_at(continuation_offset, continuation_length.to_int()),
           ),
-          continuation_offset,
           offset_size,
           length_size,
           base_address,
@@ -230,12 +235,11 @@ fn parse_source_v1_messages(
 fn parse_source_v2_messages(
   source : &Hdf5Source,
   block : Reader,
-  block_address : Int32,
   offset_size : Int32,
   length_size : Int32,
   base_address : UInt64,
   creation_order_size : Int32,
-  visited : Array[Int32],
+  visited : Array[UInt64],
   messages : Array[HeaderMessage],
 ) -> Unit raise Hdf5Error {
   let prefix_size = 4 + creation_order_size
@@ -246,14 +250,14 @@ fn parse_source_v2_messages(
     if creation_order_size == 2 {
       block.skip(2)
     }
-    let data_offset = block_address + block.position()
+    let data_offset = block.position()
     let data = block.read_bytes(size)
     messages.push({ msg_type, flags, data_offset, data, })
     if msg_type == msg_object_continuation {
       let continuation = Reader::new(data)
       let continuation_address = continuation.read_uint_le(offset_size)
       let continuation_length = continuation.read_uint_le(length_size)
-      let continuation_offset = address_to_offset(
+      let continuation_offset = source_address_to_offset(
         continuation_address, base_address,
       )
       if !visited.contains(continuation_offset) {
@@ -262,7 +266,7 @@ fn parse_source_v2_messages(
         }
         visited.push(continuation_offset)
         let bytes = source.read_at(
-          continuation_offset.to_uint64(),
+          continuation_offset,
           continuation_length.to_int(),
         )
         guard bytes.get_view(start=0, end=4).unwrap().equal_to_bytes(b"OCHK") else {
@@ -277,7 +281,6 @@ fn parse_source_v2_messages(
         parse_source_v2_messages(
           source,
           Reader::new(bytes).sub(4, bytes.length() - 8),
-          continuation_offset,
           offset_size,
           length_size,
           base_address,
@@ -324,9 +327,9 @@ fn read_source_local_heap(
   length_size : Int32,
   base_address : UInt64,
 ) -> SourceLocalHeap raise Hdf5Error {
-  let absolute = address_to_offset(address, base_address)
+  let absolute = source_address_to_offset(address, base_address)
   let header_size = 8 + length_size * 2 + offset_size
-  let reader = Reader::new(source.read_at(absolute.to_uint64(), header_size))
+  let reader = Reader::new(source.read_at(absolute, header_size))
   guard reader.read_bytes(4) == b"HEAP" && reader.read_u8() == b'\x00' else {
     raise InvalidField("expected HEAP signature or version 0")
   }
@@ -336,11 +339,11 @@ fn read_source_local_heap(
     raise InvalidField("local heap size is too large")
   }
   reader.read_uint_le(length_size) |> ignore
-  let data_address = address_to_offset(
+  let data_address = source_address_to_offset(
     reader.read_uint_le(offset_size),
     base_address,
   )
-  { data: source.read_at(data_address.to_uint64(), data_size.to_int()), }
+  { data: source.read_at(data_address, data_size.to_int()), }
 }
 
 ///|
@@ -352,8 +355,8 @@ fn read_source_symbol_node(
   heap : SourceLocalHeap,
   links : Array[GroupLink],
 ) -> Unit raise Hdf5Error {
-  let absolute = address_to_offset(address, base_address)
-  let prefix = source.read_at(absolute.to_uint64(), 8)
+  let absolute = source_address_to_offset(address, base_address)
+  let prefix = source.read_at(absolute, 8)
   let count_reader = Reader::new(prefix)
   guard count_reader.read_bytes(4) == b"SNOD" &&
     count_reader.read_u8() == b'\x01' else {
@@ -363,7 +366,7 @@ fn read_source_symbol_node(
   let symbol_count = count_reader.read_u16_le().to_int()
   let entry_size = offset_size * 2 + 24
   let reader = Reader::new(
-    source.read_at(absolute.to_uint64(), 8 + symbol_count * entry_size),
+    source.read_at(absolute, 8 + symbol_count * entry_size),
   )
   reader.skip(8)
   for _ in 0..<symbol_count {
@@ -396,13 +399,13 @@ fn read_source_group_btree(
   base_address : UInt64,
   heap : SourceLocalHeap,
   links : Array[GroupLink],
-  visited : Array[Int32],
+  visited : Array[UInt64],
 ) -> Unit raise Hdf5Error {
-  let absolute = address_to_offset(address, base_address)
+  let absolute = source_address_to_offset(address, base_address)
   guard !visited.contains(absolute) else { return }
   visited.push(absolute)
   let prefix_size = 8 + offset_size * 2
-  let prefix = Reader::new(source.read_at(absolute.to_uint64(), prefix_size))
+  let prefix = Reader::new(source.read_at(absolute, prefix_size))
   guard prefix.read_bytes(4) == b"TREE" && prefix.read_u8() == b'\x00' else {
     raise InvalidField("expected group TREE signature")
   }
@@ -412,7 +415,7 @@ fn read_source_group_btree(
   }
   let entries = prefix.read_u16_le().to_int()
   let total = prefix_size + entries * (length_size + offset_size) + length_size
-  let reader = Reader::new(source.read_at(absolute.to_uint64(), total))
+  let reader = Reader::new(source.read_at(absolute, total))
   reader.skip(prefix_size)
   for _ in 0..<entries {
     reader.skip(length_size)
