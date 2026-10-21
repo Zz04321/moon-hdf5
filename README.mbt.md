@@ -229,8 +229,8 @@ documentation generation, package contents, the writer demo and independent
 h5py verification. Set `H5PY_PYTHON` when h5py is installed in a specific
 environment, or `SKIP_H5PY=1` to omit only the interoperability check.
 
-GitHub Actions CI is manual and runs checks, formatting, documentation, builds,
-wasm/native tests and writer interoperability. Fixture generation is documented in
+GitHub Actions CI is manual and runs checks, builds and wasm/native tests.
+Fixture generation is documented in
 [testdata/README.md](testdata/README.md). Architecture and implementation notes
 are in [docs/design.md](docs/design.md); external sources and ecosystem projects
 are listed in [docs/prior-art.md](docs/prior-art.md).
