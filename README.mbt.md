@@ -8,6 +8,21 @@ The project is under active development and implements a documented subset of
 HDF5. See the [compatibility matrix](docs/compatibility.md) for exact coverage
 and [audit report](docs/audit.md) for verification history.
 
+## Read/write status
+
+This is not a read-only library.
+
+- `Hdf5File` reads existing files without modifying them.
+- `Hdf5Writer` creates a complete new HDF5 file in memory and writes groups,
+  datasets, attributes, soft and external links, filters, fill values and one
+  extensible dimension.
+- In-place editing of an existing file is not implemented. The reader also
+  parses external-link metadata but does not open or resolve the target file.
+
+The public writer entry points are listed in
+[`src/pkg.generated.mbti`](src/pkg.generated.mbti); see [Writing](#writing) for
+an executable example.
+
 ## Features
 
 - Reads groups, datasets, attributes, links and common HDF5 metadata versions.

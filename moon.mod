@@ -21,7 +21,7 @@ repository = "https://github.com/Zz04321/moon-hdf5"
 
 license = "Apache-2.0"
 
-keywords = [ "hdf5", "scientific-data", "file-format", "reader" ]
+keywords = [ "hdf5", "scientific-data", "file-format", "reader", "writer" ]
 
 preferred_target = "wasm"
 
