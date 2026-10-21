@@ -225,7 +225,13 @@ fn Hdf5File::resolve_from(
     match link.link_target {
       Some(target) => {
         if link.cache_type == 64U {
-          raise UnsupportedFeature("external links are not supported yet")
+          let target_path = match link.external_path {
+            Some(value) => value
+            None => ""
+          }
+          raise UnsupportedFeature(
+            "external links are not resolved: " + target + ":" + target_path,
+          )
         }
         let rebased = if target.has_prefix("/") {
           target

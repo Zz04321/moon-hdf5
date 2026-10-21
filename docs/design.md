@@ -126,12 +126,22 @@ The inspector writes diagnostics to stderr and returns 0/1/2 for success,
 data errors and usage errors respectively. Per-dataset failures do not prevent
 other datasets from being inspected, but make the overall result unsuccessful.
 
-The new-file writer emits a superblock v3, object headers v2, compact hard-link
-messages, contiguous or chunked dataset layouts and inline attributes. It
-calculates all object and raw-data addresses before encoding checksummed
-metadata. The public builder validates absolute paths, duplicate objects and
-attributes, dataspace
-rank and element counts, and fixed-string widths before allocating output.
+The new-file writer emits a superblock v3, object headers v2, compact hard, soft
+and external-link messages, contiguous or chunked dataset layouts and inline
+attributes.
+Object headers are split on complete message boundaries: the initial OHDR chunk
+uses a 16-bit size, and additional messages continue through checksummed OCHK
+chunks referenced by continuation messages. Objects with attributes include a
+compact attribute-info message with undefined dense-storage addresses, allowing
+HDF5 readers to report attribute counts correctly. The writer calculates all
+object, continuation and raw-data addresses before encoding checksummed
+metadata. Soft links may use absolute targets or targets relative to their
+containing group and may remain dangling. External links use HDF5's version-zero
+external-link information block with null-terminated target file and object-path
+strings; the reader parses those fields but never opens another file. The public
+builder validates absolute paths, duplicate objects, links and attributes,
+dataspace rank and element counts, fixed-string widths and encoded link-message
+sizes before allocating output.
 Supported values are little-endian signed/unsigned integers at 8, 16, 32 and 64
 bits, IEEE float32/64, and fixed-width or variable-length UTF-8 strings. Variable
 strings use 16-byte descriptors and a shared global heap collection; empty

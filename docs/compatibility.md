@@ -12,7 +12,7 @@ MoonBit tests.
 | Area | Verified input | Current boundary |
 | --- | --- | --- |
 | File framing | Superblocks v0–v3, user blocks, 4-byte and 8-byte addresses | Other address/length combinations are not comprehensively tested |
-| Groups | Symbol-table groups, compact links, dense links, creation-order indexes, soft links | External links are rejected |
+| Groups | Symbol-table groups, compact links, dense links, creation-order indexes, soft links and external-link metadata | External links are parsed but not dereferenced |
 | Attributes | Inline messages v1–v3 and dense attributes | Unsupported attribute datatypes may be reported without values |
 | Dataset layouts | Compact, contiguous and chunked | External and virtual dataset storage are rejected |
 | Chunk indexes | V1 B-tree, single chunk, implicit, fixed array, extensible array and v2 B-tree | Unsupported index variants are rejected |
@@ -38,9 +38,9 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 
 | Area | Verified output | Current boundary |
 | --- | --- | --- |
-| File framing | Superblock v3 and object headers v2 | Writer does not select older format versions |
-| Groups | Nested groups and compact hard links | Dense link creation and soft/external link writing are absent |
-| Attributes | Inline numeric, fixed/vlen string and structured attributes | Dense attribute writing is absent |
+| File framing | Superblock v3 and object headers v2 with OCHK continuations | Writer does not select older format versions |
+| Groups | Nested groups, compact hard, soft and external links, and continued headers | Dense link creation is absent |
+| Attributes | Inline numeric, fixed/vlen string and structured attributes with compact attribute-info messages | Dense attribute writing is absent |
 | Dataset layouts | Contiguous, paged fixed-array chunked and extensible-array chunked with inline, direct, super and paged data blocks | External and virtual dataset storage are absent |
 | Numeric values | Little-endian int/uint8–64 and IEEE float32/64 | Big-endian and nonstandard numeric output are absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Variable-length sequence output is absent |
@@ -51,7 +51,9 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 
 The h5py verification also checks extensible-array super blocks and paged data
 blocks across 134200 chunks. Generated extensible datasets expose the expected
-maximum shape and can subsequently be resized and written by h5py.
+maximum shape and can subsequently be resized and written by h5py. External-link
+output is checked for its link class, target filename and object path; the
+reader intentionally leaves external targets unresolved.
 
 ## Reproduce
 

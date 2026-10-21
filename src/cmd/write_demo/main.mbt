@@ -12,6 +12,10 @@ fn run(args : Array[String]) -> Int32 {
       [2UL, 3UL],
       Int64Values([1L, 2L, 3L, 4L, 5L, 6L]),
     )
+    writer.add_soft_link("/experiment", "latest", "/experiment/counts")
+    writer.add_external_link(
+      "/experiment", "external", "external-target.h5", "/experiment/counts",
+    )
     writer.add_dataset(
       "/experiment/labels",
       [2UL],
@@ -258,6 +262,16 @@ fn run(args : Array[String]) -> Int32 {
       ]),
     )
     writer.resize_dataset("/structured/states", [4UL])
+    writer.add_group("/metadata")
+    writer.add_dataset("/metadata/values", [], UInt64Values([42UL]))
+    for index in 0..<2500 {
+      writer.add_attribute(
+        "/metadata/values",
+        "attr_" + index.to_string(),
+        [],
+        UInt64Values([index.to_uint64()]),
+      )
+    }
     @fs.write_bytes_to_file(args[1], writer.encode())
     println("wrote " + args[1])
     0

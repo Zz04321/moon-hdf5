@@ -46,6 +46,383 @@ test "writer round-trips groups datasets and attributes" {
 }
 
 ///|
+test "writer round-trips absolute relative and dangling soft links" {
+  let writer = Hdf5Writer::new()
+  writer.add_dataset("/experiment/counts", [3UL], Int64Values([1L, 2L, 3L]))
+  writer.add_group("/experiment/archive")
+  writer.add_soft_link("/experiment", "latest", "/experiment/counts")
+  writer.add_soft_link("/experiment", "relative", "counts")
+  writer.add_soft_link("/experiment", "archive_link", "archive")
+  writer.add_soft_link("/experiment", "missing", "/does/not/exist")
+
+  let file = Hdf5File::parse(writer.encode())
+  assert_eq(file.resolve("/experiment/latest").path, "/experiment/counts")
+  assert_eq(file.resolve("/experiment/latest").kind, Dataset)
+  assert_eq(integer_values(file.read_dataset("/experiment/latest")), [
+    1L, 2L, 3L,
+  ])
+  assert_eq(file.resolve("/experiment/relative").path, "/experiment/counts")
+  assert_eq(
+    file.resolve("/experiment/archive_link").path,
+    "/experiment/archive",
+  )
+  assert_eq(file.resolve("/experiment/archive_link").kind, Group)
+  let dangling = try {
+    file.resolve("/experiment/missing") |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(dangling, Some(InvalidField("path component not found: does")))
+}
+
+///|
+test "writer round-trips external links" {
+  let writer = Hdf5Writer::new()
+  writer.add_dataset("/experiment/counts", [3UL], Int64Values([1L, 2L, 3L]))
+  writer.add_external_link(
+    "/experiment", "external", "external-target.h5", "/experiment/counts",
+  )
+  let bytes = writer.encode()
+  let file = Hdf5File::parse(bytes)
+  let header = file.object_header_at(file.resolve("/experiment").address)
+  let links = file.links(header)
+  let index = links.search_by(link => link.name == "external").unwrap()
+  assert_eq(links[index].cache_type, 64U)
+  match links[index].link_target {
+    Some(target) => assert_eq(target, "external-target.h5")
+    None => abort("expected external link target file")
+  }
+  match links[index].external_path {
+    Some(path) => assert_eq(path, "/experiment/counts")
+    None => abort("expected external link target path")
+  }
+  assert_true(
+    file
+    .walk()
+    .any(node => node.path == "/experiment/external" && node.kind == Unknown),
+  )
+  let unresolved = try {
+    file.resolve("/experiment/external") |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    unresolved,
+    Some(
+      UnsupportedFeature(
+        "external links are not resolved: external-target.h5:/experiment/counts",
+      ),
+    ),
+  )
+}
+
+///|
+test "writer rejects invalid and conflicting external links" {
+  let writer = Hdf5Writer::new()
+  let empty_name = try {
+    writer.add_external_link("/", "", "target.h5", "/target")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let slash_name = try {
+    writer.add_external_link("/", "bad/name", "target.h5", "/target")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let empty_file = try {
+    writer.add_external_link("/", "link", "", "/target")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let nul_file = try {
+    writer.add_external_link("/", "link", "bad\u{0}file", "/target")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let empty_path = try {
+    writer.add_external_link("/", "link", "target.h5", "")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let nul_path = try {
+    writer.add_external_link("/", "link", "target.h5", "/bad\u{0}path")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let too_long = try {
+    writer.add_external_link("/", "link", "target.h5", "p".repeat(65521))
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(empty_name, Some(InvalidArgument("external link name is empty")))
+  assert_eq(
+    slash_name,
+    Some(InvalidArgument("external link names cannot contain '/'")),
+  )
+  assert_eq(
+    empty_file,
+    Some(InvalidArgument("external link target file is empty")),
+  )
+  assert_eq(
+    nul_file,
+    Some(InvalidArgument("external link target file cannot contain NUL")),
+  )
+  assert_eq(
+    empty_path,
+    Some(InvalidArgument("external link target path is empty")),
+  )
+  assert_eq(
+    nul_path,
+    Some(InvalidArgument("external link target path cannot contain NUL")),
+  )
+  assert_eq(
+    too_long,
+    Some(InvalidArgument("external link message is too long")),
+  )
+
+  writer.add_dataset("/real", [], Int64Values([1L]))
+  let occupied = try {
+    writer.add_external_link("/", "real", "target.h5", "/target")
+    None
+  } catch {
+    error => Some(error)
+  }
+  writer.add_external_link("/", "link", "target.h5", "/target")
+  let duplicate = try {
+    writer.add_external_link("/", "link", "other.h5", "/other")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let group_conflict = try {
+    writer.add_group("/link/child")
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    occupied,
+    Some(InvalidArgument("writer object path already exists")),
+  )
+  assert_eq(
+    duplicate,
+    Some(InvalidArgument("writer object path already exists")),
+  )
+  assert_eq(
+    group_conflict,
+    Some(InvalidArgument("writer path conflicts with an external link")),
+  )
+}
+
+///|
+test "writer rejects invalid and conflicting soft links" {
+  let writer = Hdf5Writer::new()
+  let empty_name = try {
+    writer.add_soft_link("/", "", "/target")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let slash_name = try {
+    writer.add_soft_link("/", "bad/name", "/target")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let dot_name = try {
+    writer.add_soft_link("/", ".", "/target")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let nul_name = try {
+    writer.add_soft_link("/", "bad\u{0}name", "/target")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let empty_target = try {
+    writer.add_soft_link("/", "link", "")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let nul_target = try {
+    writer.add_soft_link("/", "link", "/bad\u{0}target")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let too_long_target = try {
+    writer.add_soft_link("/", "link", "t".repeat(65524))
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(empty_name, Some(InvalidArgument("soft link name is empty")))
+  assert_eq(
+    slash_name,
+    Some(InvalidArgument("soft link names cannot contain '/'")),
+  )
+  assert_eq(
+    dot_name,
+    Some(InvalidArgument("soft link names cannot be dot segments")),
+  )
+  assert_eq(
+    nul_name,
+    Some(InvalidArgument("soft link names cannot contain NUL")),
+  )
+  assert_eq(empty_target, Some(InvalidArgument("soft link target is empty")))
+  assert_eq(
+    nul_target,
+    Some(InvalidArgument("soft link targets cannot contain NUL")),
+  )
+  assert_eq(
+    too_long_target,
+    Some(InvalidArgument("soft link message is too long")),
+  )
+
+  writer.add_dataset("/real", [], Int64Values([1L]))
+  let occupied = try {
+    writer.add_soft_link("/", "real", "/other")
+    None
+  } catch {
+    error => Some(error)
+  }
+  writer.add_soft_link("/", "link", "/real")
+  let duplicate = try {
+    writer.add_soft_link("/", "link", "/real")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let dataset_conflict = try {
+    writer.add_dataset("/link", [], Int64Values([2L]))
+    None
+  } catch {
+    error => Some(error)
+  }
+  let group_conflict = try {
+    writer.add_group("/link/child")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let parent_conflict = try {
+    writer.add_soft_link("/link", "child", "/real")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let dataset_parent = try {
+    writer.add_soft_link("/real", "child", "/real")
+    None
+  } catch {
+    error => Some(error)
+  }
+  let attribute_target = try {
+    writer.add_attribute("/link", "unit", [], UInt64Values([1UL]))
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    occupied,
+    Some(InvalidArgument("writer object path already exists")),
+  )
+  assert_eq(
+    duplicate,
+    Some(InvalidArgument("writer object path already exists")),
+  )
+  assert_eq(
+    dataset_conflict,
+    Some(InvalidArgument("writer object path already exists")),
+  )
+  assert_eq(
+    group_conflict,
+    Some(InvalidArgument("writer path conflicts with a soft link")),
+  )
+  assert_eq(
+    parent_conflict,
+    Some(InvalidArgument("writer path conflicts with a soft link")),
+  )
+  assert_eq(
+    dataset_parent,
+    Some(InvalidArgument("writer path conflicts with a dataset")),
+  )
+  assert_eq(
+    attribute_target,
+    Some(InvalidArgument("attribute target does not exist")),
+  )
+}
+
+///|
+test "writer continues attribute and link object headers" {
+  let writer = Hdf5Writer::new()
+  writer.add_dataset("/many_attributes", [], UInt64Values([0UL]))
+  for index in 0..<2500 {
+    writer.add_attribute(
+      "/many_attributes",
+      "attr_" + index.to_string(),
+      [],
+      UInt64Values([index.to_uint64()]),
+    )
+  }
+  writer.add_group("/many_links")
+  for index in 0..<2500 {
+    writer.add_soft_link(
+      "/many_links",
+      "link_" + index.to_string(),
+      "/many_attributes",
+    )
+  }
+  let bytes = writer.encode()
+  let file = Hdf5File::parse(bytes)
+  let attributes = file.attributes("/many_attributes")
+  assert_eq(attributes.length(), 2500)
+  match attributes[0].values {
+    Some(UnsignedIntegers(values)) => assert_eq(values, [0UL])
+    _ => abort("expected first continued attribute")
+  }
+  match attributes[2499].values {
+    Some(UnsignedIntegers(values)) => assert_eq(values, [2499UL])
+    _ => abort("expected last continued attribute")
+  }
+  let header = parse_object_header(
+    bytes,
+    file.resolve("/many_attributes").address,
+    8,
+    8,
+    0UL,
+  )
+  assert_true(
+    header.messages.any(message => message.msg_type == msg_object_continuation),
+  )
+  assert_eq(file.resolve("/many_links/link_2499").path, "/many_attributes")
+  let links_header = parse_object_header(
+    bytes,
+    file.resolve("/many_links").address,
+    8,
+    8,
+    0UL,
+  )
+  assert_true(
+    links_header.messages.any(message => {
+      message.msg_type == msg_object_continuation
+    }),
+  )
+}
+
+///|
 test "writer rejects invalid paths shapes strings and duplicates" {
   let writer = Hdf5Writer::new()
   let relative = try {
@@ -204,20 +581,29 @@ test "writer validates chunk metadata filters and fill types" {
 }
 
 ///|
-test "writer fixed arrays span multiple pages" {
-  let values = Array::make(1025, 0L)
-  values[0] = 7L
-  values[1024] = 9L
+test "writer fixed arrays handle the page boundary" {
   let writer = Hdf5Writer::new()
-  writer.add_chunked_dataset("/many", [1025UL], [1U], Int64Values(values))
+  for (path, count) in [("/exact", 1024), ("/many", 1025)] {
+    let values = Array::make(count, 0L)
+    values[0] = 7L
+    values[count - 1] = 9L
+    writer.add_chunked_dataset(
+      path,
+      [count.to_uint64()],
+      [1U],
+      Int64Values(values),
+    )
+  }
   let file = Hdf5File::parse(writer.encode())
-  let selected = file.read_dataset_selection(
-    "/many",
-    Points([[1024UL], [512UL], [0UL]]),
-  )
-  match selected.values {
-    Integers(items) => assert_eq(items, [9L, 0L, 7L])
-    _ => fail("expected paged fixed-array values")
+  for (path, count) in [("/exact", 1024), ("/many", 1025)] {
+    let selected = file.read_dataset_selection(
+      path,
+      Points([[count.to_uint64() - 1UL], [512UL], [0UL]]),
+    )
+    match selected.values {
+      Integers(items) => assert_eq(items, [9L, 0L, 7L])
+      _ => fail("expected fixed-array values across the page boundary")
+    }
   }
 }
 
@@ -286,6 +672,8 @@ test "writer extensible arrays use super blocks and paged data blocks" {
   values[0] = 1U
   values[243] = 2U
   values[244] = 3U
+  values[65523] = 8U
+  values[65524] = 9U
   values[131059] = 4U
   values[131060] = 5U
   values[132100] = 6U
@@ -308,6 +696,8 @@ test "writer extensible arrays use super blocks and paged data blocks" {
       [131061UL],
       [131060UL],
       [131059UL],
+      [65524UL],
+      [65523UL],
       [244UL],
       [243UL],
       [0UL],
@@ -315,9 +705,28 @@ test "writer extensible arrays use super blocks and paged data blocks" {
   )
   match selected.values {
     UnsignedIntegers(items) =>
-      assert_eq(items, [7UL, 6UL, 0UL, 5UL, 4UL, 3UL, 2UL, 1UL])
+      assert_eq(items, [7UL, 6UL, 0UL, 5UL, 4UL, 9UL, 8UL, 3UL, 2UL, 1UL])
     _ => fail("expected extensible-array super-block values")
   }
+}
+
+///|
+test "writer rejects chunk grids beyond supported capacity" {
+  let writer = Hdf5Writer::new()
+  writer.add_extensible_dataset(
+    "/large",
+    [0UL, 50000UL],
+    [None, Some(50000UL)],
+    [1U, 1U],
+    Int64Values([]),
+  )
+  let error = try {
+    writer.resize_dataset("/large", [50000UL, 50000UL])
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(error, Some(InvalidArgument("writer chunk grid is too large")))
 }
 
 ///|

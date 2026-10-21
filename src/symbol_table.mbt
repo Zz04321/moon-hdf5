@@ -27,6 +27,7 @@ priv struct GroupLink {
   object_header_address : UInt64
   cache_type : UInt32
   link_target : String?
+  external_path : String?
 }
 
 ///|
@@ -64,7 +65,13 @@ fn read_symbol_table_node(
     } else {
       None
     }
-    links.push({ name, object_header_address, cache_type, link_target, })
+    links.push({
+      name,
+      object_header_address,
+      cache_type,
+      link_target,
+      external_path: None,
+    })
   }
 }
 

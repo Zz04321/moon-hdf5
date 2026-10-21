@@ -187,11 +187,28 @@ priv struct WritableAttribute {
 }
 
 ///|
+priv struct WritableSoftLink {
+  parent_path : String
+  name : String
+  target : String
+}
+
+///|
+priv struct WritableExternalLink {
+  parent_path : String
+  name : String
+  target_file : String
+  target_path : String
+}
+
+///|
 /// In-memory builder for a new HDF5 file.
 pub struct Hdf5Writer {
   priv groups : Array[String]
   priv datasets : Array[WritableDataset]
   priv attributes : Array[WritableAttribute]
+  priv soft_links : Array[WritableSoftLink]
+  priv external_links : Array[WritableExternalLink]
 }
 
 ///|
@@ -237,7 +254,13 @@ priv struct WritableLayout {
 ///|
 /// Creates an empty writer containing the root group.
 pub fn Hdf5Writer::new() -> Hdf5Writer {
-  { groups: ["/"], datasets: [], attributes: [], }
+  {
+    groups: ["/"],
+    datasets: [],
+    attributes: [],
+    soft_links: [],
+    external_links: [],
+  }
 }
 
 ///|
@@ -751,6 +774,110 @@ fn Hdf5Writer::has_object(self : Hdf5Writer, path : String) -> Bool {
 }
 
 ///|
+fn writer_soft_link_path(parent_path : String, name : String) -> String {
+  if parent_path == "/" {
+    "/" + name
+  } else {
+    parent_path + "/" + name
+  }
+}
+
+///|
+fn Hdf5Writer::has_soft_link(self : Hdf5Writer, path : String) -> Bool {
+  self.soft_links.search_by(link => {
+    writer_soft_link_path(link.parent_path, link.name) == path
+  })
+  is Some(_)
+}
+
+///|
+fn Hdf5Writer::has_external_link(self : Hdf5Writer, path : String) -> Bool {
+  self.external_links.search_by(link => {
+    writer_soft_link_path(link.parent_path, link.name) == path
+  })
+  is Some(_)
+}
+
+///|
+fn Hdf5Writer::has_entry(self : Hdf5Writer, path : String) -> Bool {
+  self.has_object(path) ||
+  self.has_soft_link(path) ||
+  self.has_external_link(path)
+}
+
+///|
+fn validate_writer_link_name(
+  name : String,
+  kind : String,
+) -> Unit raise Hdf5Error {
+  let encoded = @utf8.encode(name)
+  guard encoded.length() > 0 else {
+    raise InvalidArgument(kind + " name is empty")
+  }
+  guard name.split("/").count() == 1 else {
+    raise InvalidArgument(kind + " names cannot contain '/'")
+  }
+  guard name != "." && name != ".." else {
+    raise InvalidArgument(kind + " names cannot be dot segments")
+  }
+  guard encoded.length() <= 65535 else {
+    raise InvalidArgument(kind + " name is too long")
+  }
+  for byte in encoded {
+    guard byte != b'\x00' else {
+      raise InvalidArgument(kind + " names cannot contain NUL")
+    }
+  }
+}
+
+///|
+fn validate_writer_link_string(
+  value : String,
+  description : String,
+) -> Unit raise Hdf5Error {
+  let encoded = @utf8.encode(value)
+  guard encoded.length() > 0 else {
+    raise InvalidArgument(description + " is empty")
+  }
+  guard encoded.length() <= 65535 else {
+    raise InvalidArgument(description + " is too long")
+  }
+  for byte in encoded {
+    guard byte != b'\x00' else {
+      raise InvalidArgument(description + " cannot contain NUL")
+    }
+  }
+}
+
+///|
+fn validate_soft_link_target(target : String) -> Unit raise Hdf5Error {
+  let encoded = @utf8.encode(target)
+  guard encoded.length() > 0 else {
+    raise InvalidArgument("soft link target is empty")
+  }
+  guard encoded.length() <= 65535 else {
+    raise InvalidArgument("soft link target is too long")
+  }
+  for byte in encoded {
+    guard byte != b'\x00' else {
+      raise InvalidArgument("soft link targets cannot contain NUL")
+    }
+  }
+}
+
+///|
+fn validate_writer_link_message_size(
+  name : String,
+  info_size : Int32,
+  kind : String,
+) -> Unit raise Hdf5Error {
+  let encoded_name = @utf8.encode(name)
+  guard 8 + encoded_name.length() + info_size <= 65535 else {
+    raise InvalidArgument(kind + " message is too long")
+  }
+}
+
+///|
 fn Hdf5Writer::ensure_groups(
   self : Hdf5Writer,
   path : String,
@@ -761,6 +888,12 @@ fn Hdf5Writer::ensure_groups(
     current = current + "/" + segment
     guard self.datasets.search_by(dataset => dataset.path == current) is None else {
       raise InvalidArgument("writer path conflicts with a dataset")
+    }
+    guard !self.has_soft_link(current) else {
+      raise InvalidArgument("writer path conflicts with a soft link")
+    }
+    guard !self.has_external_link(current) else {
+      raise InvalidArgument("writer path conflicts with an external link")
     }
     if !self.groups.contains(current) {
       self.groups.push(current)
@@ -778,6 +911,67 @@ pub fn Hdf5Writer::add_group(
 }
 
 ///|
+/// Adds a soft link at `parent_path`/`name` pointing to `target`.
+///
+/// Absolute targets start at the root group. Relative targets are resolved
+/// from the group containing the link.
+pub fn Hdf5Writer::add_soft_link(
+  self : Hdf5Writer,
+  parent_path : String,
+  name : String,
+  target : String,
+) -> Unit raise Hdf5Error {
+  validate_writer_link_name(name, "soft link")
+  validate_soft_link_target(target)
+  validate_writer_link_message_size(
+    name,
+    @utf8.encode(target).length(),
+    "soft link",
+  )
+  let normalized_parent = canonical_writer_path(parent_path)
+  let link_path = writer_soft_link_path(normalized_parent, name)
+  guard !self.has_entry(link_path) else {
+    raise InvalidArgument("writer object path already exists")
+  }
+  self.ensure_groups(normalized_parent)
+  self.soft_links.push({ parent_path: normalized_parent, name, target, })
+}
+
+///|
+/// Adds an external link at `parent_path`/`name`.
+///
+/// `target_file` is resolved by the HDF5 reader relative to the file
+/// containing the link. `target_path` names an object inside that file.
+pub fn Hdf5Writer::add_external_link(
+  self : Hdf5Writer,
+  parent_path : String,
+  name : String,
+  target_file : String,
+  target_path : String,
+) -> Unit raise Hdf5Error {
+  validate_writer_link_name(name, "external link")
+  validate_writer_link_string(target_file, "external link target file")
+  validate_writer_link_string(target_path, "external link target path")
+  validate_writer_link_message_size(
+    name,
+    5 + @utf8.encode(target_file).length() + @utf8.encode(target_path).length(),
+    "external link",
+  )
+  let normalized_parent = canonical_writer_path(parent_path)
+  let link_path = writer_soft_link_path(normalized_parent, name)
+  guard !self.has_entry(link_path) else {
+    raise InvalidArgument("writer object path already exists")
+  }
+  self.ensure_groups(normalized_parent)
+  self.external_links.push({
+    parent_path: normalized_parent,
+    name,
+    target_file,
+    target_path,
+  })
+}
+
+///|
 /// Adds a contiguous dataset. Empty `dimensions` denotes a scalar dataspace.
 pub fn Hdf5Writer::add_dataset(
   self : Hdf5Writer,
@@ -789,7 +983,7 @@ pub fn Hdf5Writer::add_dataset(
   guard normalized != "/" else {
     raise InvalidArgument("a dataset cannot replace the root group")
   }
-  guard !self.has_object(normalized) else {
+  guard !self.has_entry(normalized) else {
     raise InvalidArgument("writer object path already exists")
   }
   validate_write_values(dimensions, values)
@@ -919,7 +1113,7 @@ pub fn Hdf5Writer::add_chunked_dataset(
   guard normalized != "/" else {
     raise InvalidArgument("a dataset cannot replace the root group")
   }
-  guard !self.has_object(normalized) else {
+  guard !self.has_entry(normalized) else {
     raise InvalidArgument("writer object path already exists")
   }
   validate_write_values(dimensions, values)
@@ -1031,7 +1225,7 @@ pub fn Hdf5Writer::add_extensible_dataset(
   guard normalized != "/" else {
     raise InvalidArgument("a dataset cannot replace the root group")
   }
-  guard !self.has_object(normalized) else {
+  guard !self.has_entry(normalized) else {
     raise InvalidArgument("writer object path already exists")
   }
   validate_write_values(dimensions, values)
@@ -2032,14 +2226,14 @@ fn chunk_grid(
     let width = chunk_dimensions[axis].to_uint64()
     let count = (dimension + width - 1UL) / width
     guard count <= 0x7FFFFFFFUL else {
-      raise InvalidField("writer chunk grid is too large")
+      raise InvalidArgument("writer chunk grid is too large")
     }
     grid.push(count.to_int())
     if count == 0UL {
       total = 0L
     } else {
       guard total <= 0x7FFFFFFFL / count.reinterpret_as_int64() else {
-        raise InvalidField("writer chunk grid is too large")
+        raise InvalidArgument("writer chunk grid is too large")
       }
       total = total * count.reinterpret_as_int64()
     }
@@ -2709,6 +2903,52 @@ fn encode_hard_link(name : String, address : UInt64) -> Bytes {
 }
 
 ///|
+fn encode_soft_link(name : String, target : String) -> Bytes {
+  let encoded_name = @utf8.encode(name)
+  let encoded_target = @utf8.encode(target)
+  let buffer = @buffer.Buffer::Buffer(
+    size_hint=8 + encoded_name.length() + encoded_target.length(),
+  )
+  buffer.write_byte(b'\x01')
+  buffer.write_byte(b'\x19')
+  buffer.write_byte(b'\x01')
+  buffer.write_byte(b'\x01')
+  buffer.write_uint16_le(encoded_name.length().to_uint16())
+  writer_write_bytes(buffer, encoded_name)
+  buffer.write_uint16_le(encoded_target.length().to_uint16())
+  writer_write_bytes(buffer, encoded_target)
+  buffer.to_bytes()
+}
+
+///|
+fn encode_external_link(
+  name : String,
+  target_file : String,
+  target_path : String,
+) -> Bytes {
+  let encoded_name = @utf8.encode(name)
+  let encoded_file = @utf8.encode(target_file)
+  let encoded_path = @utf8.encode(target_path)
+  let info_size = 1 + encoded_file.length() + 1 + encoded_path.length() + 1
+  let buffer = @buffer.Buffer::Buffer(
+    size_hint=8 + encoded_name.length() + info_size,
+  )
+  buffer.write_byte(b'\x01')
+  buffer.write_byte(b'\x19')
+  buffer.write_byte(b'\x40')
+  buffer.write_byte(b'\x01')
+  buffer.write_uint16_le(encoded_name.length().to_uint16())
+  writer_write_bytes(buffer, encoded_name)
+  buffer.write_uint16_le(info_size.to_uint16())
+  buffer.write_byte(b'\x00')
+  writer_write_bytes(buffer, encoded_file)
+  buffer.write_byte(b'\x00')
+  writer_write_bytes(buffer, encoded_path)
+  buffer.write_byte(b'\x00')
+  buffer.to_bytes()
+}
+
+///|
 fn encode_attribute(
   attribute : WritableAttribute,
   heap : WritableGlobalHeap,
@@ -2738,6 +2978,16 @@ fn encode_attribute(
 }
 
 ///|
+fn encode_compact_attribute_info() -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=18)
+  buffer.write_byte(b'\x00')
+  buffer.write_byte(b'\x00')
+  buffer.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
+  buffer.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
+  buffer.to_bytes()
+}
+
+///|
 fn write_header_message(
   buffer : @buffer.Buffer,
   message_type : Int32,
@@ -2753,18 +3003,151 @@ fn write_header_message(
 }
 
 ///|
-fn encode_object_header(payload : Bytes) -> Bytes raise Hdf5Error {
-  guard payload.length() <= 65535 else {
-    raise InvalidField("object header is too large")
+fn split_object_header_messages(
+  payload : Bytes,
+) -> Array[Bytes] raise Hdf5Error {
+  let messages : Array[Bytes] = []
+  let reader = Reader::new(payload)
+  while reader.remaining() > 0 {
+    let start = reader.position()
+    guard reader.remaining() >= 4 else {
+      raise InvalidField("incomplete writer object header message")
+    }
+    let _message_type = reader.read_u8()
+    let size = reader.read_u16_le().to_int()
+    let _flags = reader.read_u8()
+    reader.skip(size)
+    messages.push(
+      payload.get_view(start~, end=reader.position()).unwrap().to_owned(),
+    )
   }
-  let buffer = @buffer.Buffer::Buffer(size_hint=12 + payload.length())
-  writer_write_bytes(buffer, b"OHDR")
-  buffer.write_byte(b'\x02')
-  buffer.write_byte(b'\x01')
-  buffer.write_uint16_le(payload.length().to_uint16())
-  writer_write_bytes(buffer, payload)
-  buffer.write_uint_le(metadata_checksum(buffer.to_bytes(), 0, buffer.length()))
+  messages
+}
+
+///|
+fn object_header_messages_size(messages : Array[Bytes]) -> Int32 {
+  let mut size = 0
+  for message in messages {
+    size = size + message.length()
+  }
+  size
+}
+
+///|
+fn plan_object_header_chunks(messages : Array[Bytes]) -> Array[Array[Bytes]] {
+  let chunks : Array[Array[Bytes]] = []
+  let mut index = 0
+  let mut initial = true
+  while index < messages.length() {
+    let capacity = if initial { 65535 } else { 1024 * 1024 }
+    let mut remaining_size = 0
+    for position in index..<messages.length() {
+      remaining_size = remaining_size + messages[position].length()
+    }
+    let chunk : Array[Bytes] = []
+    if remaining_size <= capacity {
+      for position in index..<messages.length() {
+        chunk.push(messages[position])
+      }
+      index = messages.length()
+    } else {
+      let usable = capacity - 20
+      let mut used = 0
+      while index < messages.length() &&
+            used + messages[index].length() <= usable {
+        used = used + messages[index].length()
+        chunk.push(messages[index])
+        index = index + 1
+      }
+    }
+    chunks.push(chunk)
+    initial = false
+  }
+  if chunks.length() == 0 {
+    chunks.push([])
+  }
+  chunks
+}
+
+///|
+fn encode_object_continuation(address : UInt64, length : UInt64) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=16)
+  buffer.write_uint64_le(address)
+  buffer.write_uint64_le(length)
   buffer.to_bytes()
+}
+
+///|
+fn encode_object_header(
+  payload : Bytes,
+  start : UInt64,
+) -> Bytes raise Hdf5Error {
+  let messages = split_object_header_messages(payload)
+  let chunks = plan_object_header_chunks(messages)
+  let chunk_bodies : Array[Int32] = []
+  for index in 0..<chunks.length() {
+    let continuation_size = if index + 1 < chunks.length() { 20 } else { 0 }
+    chunk_bodies.push(
+      object_header_messages_size(chunks[index]) + continuation_size,
+    )
+  }
+  let addresses : Array[UInt64] = [start]
+  let mut next_end = start.to_int() + 12 + chunk_bodies[0]
+  for index in 1..<chunks.length() {
+    let address = writer_align(next_end)
+    addresses.push(address.to_uint64())
+    next_end = address + 8 + chunk_bodies[index]
+  }
+  let output = @buffer.Buffer::Buffer(size_hint=next_end - start.to_int())
+  let initial = @buffer.Buffer::Buffer(size_hint=chunk_bodies[0])
+  for message in chunks[0] {
+    writer_write_bytes(initial, message)
+  }
+  if chunks.length() > 1 {
+    write_header_message(
+      initial,
+      msg_object_continuation,
+      encode_object_continuation(
+        addresses[1],
+        (8 + chunk_bodies[1]).to_uint64(),
+      ),
+    )
+  }
+  guard initial.length() <= 65535 else {
+    raise InvalidField("object header chunk is too large")
+  }
+  writer_write_bytes(output, b"OHDR")
+  output.write_byte(b'\x02')
+  output.write_byte(b'\x01')
+  output.write_uint16_le(initial.length().to_uint16())
+  writer_write_bytes(output, initial.to_bytes())
+  output.write_uint_le(metadata_checksum(output.to_bytes(), 0, output.length()))
+  for index in 1..<chunks.length() {
+    writer_write_zeros(
+      output,
+      addresses[index].to_int() - start.to_int() - output.length(),
+    )
+    let continuation = @buffer.Buffer::Buffer(size_hint=8 + chunk_bodies[index])
+    writer_write_bytes(continuation, b"OCHK")
+    for message in chunks[index] {
+      writer_write_bytes(continuation, message)
+    }
+    if index + 1 < chunks.length() {
+      write_header_message(
+        continuation,
+        msg_object_continuation,
+        encode_object_continuation(
+          addresses[index + 1],
+          (8 + chunk_bodies[index + 1]).to_uint64(),
+        ),
+      )
+    }
+    continuation.write_uint_le(
+      metadata_checksum(continuation.to_bytes(), 0, continuation.length()),
+    )
+    writer_write_bytes(output, continuation.to_bytes())
+  }
+  output.to_bytes()
 }
 
 ///|
@@ -2803,6 +3186,24 @@ fn Hdf5Writer::object_payload(
             buffer,
             msg_link,
             encode_hard_link(writer_basename(child.path), child.address),
+          )
+        }
+      }
+      for link in self.soft_links {
+        if link.parent_path == object.path {
+          write_header_message(
+            buffer,
+            msg_link,
+            encode_soft_link(link.name, link.target),
+          )
+        }
+      }
+      for link in self.external_links {
+        if link.parent_path == object.path {
+          write_header_message(
+            buffer,
+            msg_link,
+            encode_external_link(link.name, link.target_file, link.target_path),
           )
         }
       }
@@ -2881,7 +3282,15 @@ fn Hdf5Writer::object_payload(
       }
     }
   }
-  for attribute in self.object_attributes(object.path) {
+  let attributes = self.object_attributes(object.path)
+  if attributes.length() > 0 {
+    write_header_message(
+      buffer,
+      msg_attribute_info,
+      encode_compact_attribute_info(),
+    )
+  }
+  for attribute in attributes {
     write_header_message(
       buffer,
       msg_attribute,
@@ -2998,7 +3407,10 @@ fn assign_writable_addresses(
   let lengths : Array[Int32] = []
   for object in templates {
     lengths.push(
-      encode_object_header(writer.object_payload(object, templates, empty_heap)).length(),
+      encode_object_header(
+        writer.object_payload(object, templates, empty_heap),
+        0UL,
+      ).length(),
     )
   }
   let objects : Array[WritableObject] = []
@@ -3097,6 +3509,7 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
   for object in objects {
     let header = encode_object_header(
       self.object_payload(object, objects, layout.heap),
+      object.address,
     )
     encoded_headers.push(header)
     eof = writer_align(object.address.to_int() + header.length())

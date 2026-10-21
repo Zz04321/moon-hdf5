@@ -762,11 +762,23 @@ test "high-level API works with user block and v3 files" {
 }
 
 ///|
-test "high-level API follows soft links and rejects external links" {
+test "high-level API follows soft links and reports external links" {
   let file = Hdf5File::parse(@fs.read_file_to_bytes("testdata/links.h5"))
   let alias_node = file.resolve("/alias")
   assert_eq(alias_node.kind, Group)
   assert_eq(integer_values(file.read_dataset("/alias/values")), [0L, 1L, 2L])
+  let root_header = file.object_header_at(file.resolve("/").address)
+  let links = file.links(root_header)
+  let external_index = links.search_by(link => link.name == "external").unwrap()
+  assert_eq(links[external_index].cache_type, 64U)
+  match links[external_index].link_target {
+    Some(target) => assert_eq(target, "missing.h5")
+    None => abort("expected external link target file")
+  }
+  match links[external_index].external_path {
+    Some(path) => assert_eq(path, "/x")
+    None => abort("expected external link target path")
+  }
   let nodes = file.walk()
   let external = nodes.search_by(node => node.path == "/external").unwrap()
   assert_eq(nodes[external].kind, Unknown)
@@ -776,7 +788,10 @@ test "high-level API follows soft links and rejects external links" {
   } catch {
     error => Some(error)
   }
-  assert_true(error is Some(UnsupportedFeature(_)))
+  assert_eq(
+    error,
+    Some(UnsupportedFeature("external links are not resolved: missing.h5:/x")),
+  )
 }
 
 ///|

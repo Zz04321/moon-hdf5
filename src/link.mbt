@@ -8,6 +8,24 @@ fn read_link_name(reader : Reader, length : Int32) -> String raise Hdf5Error {
 }
 
 ///|
+fn read_link_c_string(
+  reader : Reader,
+  description : String,
+) -> String raise Hdf5Error {
+  let bytes = @buffer.Buffer::Buffer()
+  while reader.remaining() > 0 {
+    let byte = reader.read_u8()
+    if byte == b'\x00' {
+      return @utf8.decode(bytes.to_bytes().get_view().unwrap()) catch {
+        _ => raise InvalidField("invalid UTF-8 " + description)
+      }
+    }
+    bytes.write_byte(byte)
+  }
+  raise InvalidField("unterminated " + description)
+}
+
+///|
 /// Parses a version 1 link message.
 fn parse_link_message(
   message : HeaderMessage,
@@ -47,6 +65,7 @@ fn parse_link_message(
         object_header_address: address,
         cache_type: 0U,
         link_target: None,
+        external_path: None,
       }
     }
     1 => {
@@ -57,16 +76,26 @@ fn parse_link_message(
         object_header_address: 0UL,
         cache_type: 2U,
         link_target: Some(target),
+        external_path: None,
       }
     }
     64 => {
-      let target_length = reader.read_u16_le().to_int()
-      let target = read_link_name(reader, target_length)
+      let info_length = reader.read_u16_le().to_int()
+      let info = Reader::new(reader.read_bytes(info_length))
+      guard info.read_u8() == b'\x00' else {
+        raise UnsupportedFeature("unsupported external link info version")
+      }
+      let target = read_link_c_string(info, "external link target file")
+      let path = read_link_c_string(info, "external link target path")
+      guard info.remaining() == 0 else {
+        raise InvalidField("external link has trailing information")
+      }
       {
         name,
         object_header_address: 0UL,
         cache_type: 64U,
         link_target: Some(target),
+        external_path: Some(path),
       }
     }
     _ => raise InvalidField("unsupported link type")

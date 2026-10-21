@@ -7,13 +7,15 @@ import numpy as np
 
 def verify(path: Path) -> None:
     with h5py.File(path, "r") as handle:
-        assert list(handle) == ["experiment", "structured", "types"]
+        assert list(handle) == ["experiment", "metadata", "structured", "types"]
         assert sorted(handle["experiment"]) == [
             "chunked",
             "counts",
             "events",
+            "external",
             "filtered_names",
             "labels",
+            "latest",
             "metrics",
             "names",
             "paged_series",
@@ -23,6 +25,16 @@ def verify(path: Path) -> None:
             handle["experiment/counts"][:], [[1, 2, 3], [4, 5, 6]]
         )
         assert handle["experiment/counts"].dtype == np.dtype("<i8")
+        latest = handle.get("experiment/latest", getlink=True)
+        assert isinstance(latest, h5py.SoftLink)
+        assert latest.path == "/experiment/counts"
+        np.testing.assert_array_equal(
+            handle["experiment/latest"][:], handle["experiment/counts"][:]
+        )
+        external = handle.get("experiment/external", getlink=True)
+        assert isinstance(external, h5py.ExternalLink)
+        assert external.filename == "external-target.h5"
+        assert external.path == "/experiment/counts"
         assert handle["experiment/labels"].asstr()[:].tolist() == [
             "control",
             "sample",
@@ -32,6 +44,7 @@ def verify(path: Path) -> None:
         )
         assert handle["experiment/metrics"].dtype == np.dtype("<f8")
         assert handle["experiment"].attrs["revision"] == np.uint64(1)
+        assert len(handle["experiment"].attrs) == 1
         chunked = handle["experiment/chunked"]
         expected = np.full((5, 7), -7, dtype="<i8")
         expected[0, 0] = 42
@@ -76,6 +89,7 @@ def verify(path: Path) -> None:
         assert events.chunks == (2,)
         unit = handle["experiment/counts"].attrs["unit"]
         assert unit.decode("utf-8").rstrip("\0") == "items"
+        assert len(handle["experiment/counts"].attrs) == 1
         cases = {
             "i8": ("<i1", [-128, 0, 127]),
             "i16": ("<i2", [-32768, 0, 32767]),
@@ -90,6 +104,7 @@ def verify(path: Path) -> None:
             assert dataset.dtype == np.dtype(dtype)
             np.testing.assert_array_equal(dataset[:], values)
         assert handle["types"].attrs["i8_marker"] == np.int8(-5)
+        assert len(handle["types"].attrs) == 2
         assert handle["types"].attrs["i8_marker"].dtype == np.dtype("<i1")
         assert handle["types"].attrs["f32_marker"] == np.float32(1.5)
         assert handle["types"].attrs["f32_marker"].dtype == np.dtype("<f4")
@@ -107,6 +122,10 @@ def verify(path: Path) -> None:
         assert growing_f32.shuffle
         assert growing_f32.compression == "gzip"
         assert growing_f32.fletcher32
+        continued = handle["metadata/values"]
+        assert len(continued.attrs) == 2500
+        for index in (0, 1250, 2499):
+            assert continued.attrs[f"attr_{index}"] == np.uint64(index)
         records = handle["structured/records"]
         assert records.dtype.names == ("id", "state", "samples", "label")
         assert records.dtype.itemsize == 19

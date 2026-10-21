@@ -18,9 +18,10 @@ and [audit report](docs/audit.md) for verification history.
 - Applies deflate, shuffle and Fletcher32 filters, including per-chunk masks.
 - Provides metadata-only access, hyperslab selection and ordered point
   selection.
-- Creates new files with groups, attributes, contiguous or chunked datasets,
-  filters, fill values and one extensible dimension. Large chunk indexes use
-  fixed-array pages or extensible-array super blocks and data pages.
+- Creates new files with groups, attributes, hard, soft and external links,
+  contiguous or chunked datasets, filters, fill values and one extensible
+  dimension. Large chunk indexes use fixed-array pages or extensible-array
+  super blocks and data pages.
 
 ## Quick Start
 
@@ -104,6 +105,17 @@ writer.add_dataset(
 )
 
 ///|
+writer.add_soft_link("/experiment", "latest", "/experiment/counts")
+
+///|
+writer.add_external_link(
+  "/experiment",
+  "remote_counts",
+  "other-file.h5",
+  "/experiment/counts",
+)
+
+///|
 writer.add_extensible_dataset(
   "/experiment/series",
   [0UL, 2UL],
@@ -135,10 +147,18 @@ let bytes = writer.encode()
 
 Use `add_chunked_dataset` for a finite chunked dataset. Use
 `add_extensible_dataset`, `resize_dataset` and `append_dataset` for a dataset
-with one unlimited dimension. `Datatype::write_integer`, `write_float`,
-`write_fixed_string`, `write_enum`, `write_array` and `write_compound` construct
-supported structured writer types. The writer demo includes an extensible array
-large enough to exercise direct blocks, super blocks and paged data blocks.
+with one unlimited dimension. `add_soft_link` attaches a compact link to an
+absolute target or a target relative to the containing group; dangling links are
+allowed. `add_external_link` records a target file and object path; HDF5 readers
+resolve them, while this library reports external links as unresolved. The
+writer rejects link messages whose encoded metadata exceeds HDF5's 16-bit message
+size. `Datatype::write_integer`, `write_float`, `write_fixed_string`,
+`write_enum`, `write_array` and `write_compound` construct supported structured
+writer types. Large compact group and attribute metadata is split across
+checksummed object-header continuation chunks, so a single object is no longer
+limited to 64 KiB of messages. The writer demo includes an extensible array
+large enough to exercise direct blocks, super blocks and paged data blocks, plus
+an object with enough attributes to exercise header continuations.
 
 Run the complete writer example and verify its output independently with h5py:
 
@@ -168,7 +188,9 @@ Focused examples are available in `src/cmd/metadata_demo`,
 
 - Decoded values remain in memory even when the input uses random access.
 - The writer creates complete new files and does not edit existing files.
-- External links and external dataset storage are not supported.
+- Dense link and dense attribute storage are not written; large compact metadata
+  uses object-header continuations instead. External links can be written but
+  are not resolved by the reader; external dataset storage is not supported.
 - Custom variable-length fill values, additional writer filters and reference
   writing are not supported.
 
@@ -187,8 +209,13 @@ moon test --target wasm
 moon test --target native
 ```
 
-GitHub Actions CI is manual and runs checks, builds and tests for wasm and
-native targets. Fixture generation is documented in
+Run `scripts/release_check.sh` to include interface and formatting checks,
+documentation generation, package contents, the writer demo and independent
+h5py verification. Set `H5PY_PYTHON` when h5py is installed in a specific
+environment, or `SKIP_H5PY=1` to omit only the interoperability check.
+
+GitHub Actions CI is manual and runs checks, formatting, documentation, builds,
+wasm/native tests and writer interoperability. Fixture generation is documented in
 [testdata/README.md](testdata/README.md). Architecture and implementation notes
 are in [docs/design.md](docs/design.md); external sources and ecosystem projects
 are listed in [docs/prior-art.md](docs/prior-art.md).

@@ -46,6 +46,7 @@ test "extensible arrays traverse direct blocks super blocks and sparse pages" {
         },
       )
     }
+    assert_eq(values[131059], -7L)
   }
 }
 

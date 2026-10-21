@@ -383,6 +383,7 @@ fn read_source_symbol_node(
       object_header_address,
       cache_type,
       link_target,
+      external_path: None,
     })
   }
 }
