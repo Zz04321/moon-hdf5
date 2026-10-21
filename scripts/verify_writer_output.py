@@ -16,6 +16,7 @@ def verify(path: Path) -> None:
             "labels",
             "metrics",
             "names",
+            "paged_series",
             "series",
         ]
         np.testing.assert_array_equal(
@@ -148,6 +149,23 @@ def verify(path: Path) -> None:
         }
         assert states.maxshape == (None,)
         np.testing.assert_array_equal(states[:], [1, 2, 0, 0])
+        paged_series = handle["experiment/paged_series"]
+        assert paged_series.maxshape == (None,)
+        assert paged_series.chunks == (1,)
+        assert paged_series.compression == "gzip"
+        assert paged_series.compression_opts == 6
+        assert paged_series.fletcher32
+        expected_paged = np.zeros(134200, dtype="u1")
+        expected_paged[[0, 243, 244, 131059, 131060, 132100, 134199]] = [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+        ]
+        np.testing.assert_array_equal(paged_series[:], expected_paged)
     with h5py.File(path, "r+") as handle:
         series = handle["experiment/series"]
         series.resize((5, 2))

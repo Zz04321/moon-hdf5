@@ -51,7 +51,7 @@ fn run(args : Array[String]) -> Int32 {
   }
   try {
     let file = @lib.Hdf5File::parse(bytes)
-    let metadata = file.open_dataset_metadata("/matrix")
+    let metadata = file.read_dataset_metadata("/matrix")
     println("matrix shape: " + dimensions_text(metadata.dataspace.dimensions))
     let slab = file.read_dataset_selection(
       "/matrix",

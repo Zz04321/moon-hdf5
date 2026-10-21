@@ -6,17 +6,17 @@ test "missing chunks preserve declared fill values" {
       let expected = Array::make(15, fill)
       expected[0] = 42L
       expected[14] = 99L
-      assert_eq(integer_values(file.open_dataset("/numbers/" + name)), expected)
+      assert_eq(integer_values(file.read_dataset("/numbers/" + name)), expected)
     }
     let floats = Array::make(15, 1.5)
     floats[0] = 42.0
     floats[14] = 99.0
-    assert_eq(float_values(file.open_dataset("/numbers/floating")), floats)
+    assert_eq(float_values(file.read_dataset("/numbers/floating")), floats)
     let strings = Array::make(15, "none")
     strings[0] = "yes"
     strings[14] = "end"
-    assert_eq(string_values(file.open_dataset("/other/text")), strings)
-    assert_eq(integer_values(file.open_dataset("/other/partial_default")), [
+    assert_eq(string_values(file.read_dataset("/other/text")), strings)
+    assert_eq(integer_values(file.read_dataset("/other/partial_default")), [
       5L, 0L, 0L, 0L,
     ])
   }
@@ -26,10 +26,10 @@ test "missing chunks preserve declared fill values" {
 test "unallocated chunk indexes return fill values" {
   for fixture in ["testdata/fill_v2.h5", "testdata/fill_v3.h5"] {
     let file = Hdf5File::parse(@fs.read_file_to_bytes(fixture))
-    assert_eq(integer_values(file.open_dataset("/other/unallocated")), [
+    assert_eq(integer_values(file.read_dataset("/other/unallocated")), [
       -9L, -9L, -9L, -9L,
     ])
-    assert_eq(integer_values(file.open_dataset("/other/default")), [
+    assert_eq(integer_values(file.read_dataset("/other/default")), [
       0L, 0L, 0L, 0L,
     ])
   }
@@ -38,7 +38,7 @@ test "unallocated chunk indexes return fill values" {
 ///|
 fn fill_test_header(data : Bytes, old~ : Bool = false) -> ObjectHeader {
   {
-    version: 2,
+    _version: 2,
     messages: [
       {
         msg_type: if old {
@@ -47,7 +47,6 @@ fn fill_test_header(data : Bytes, old~ : Bool = false) -> ObjectHeader {
           msg_fill_value
         },
         flags: b'\x00',
-        data_offset: 0,
         data,
       },
     ],

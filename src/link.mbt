@@ -9,7 +9,7 @@ fn read_link_name(reader : Reader, length : Int32) -> String raise Hdf5Error {
 
 ///|
 /// Parses a version 1 link message.
-pub fn parse_link_message(
+fn parse_link_message(
   message : HeaderMessage,
   offset_size : Int32,
 ) -> GroupLink raise Hdf5Error {
@@ -80,16 +80,13 @@ fn parse_dense_link(
   flags : Byte,
   offset_size : Int32,
 ) -> GroupLink raise Hdf5Error {
-  parse_link_message(
-    { msg_type: msg_link, flags, data_offset: 0, data, },
-    offset_size,
-  )
+  parse_link_message({ msg_type: msg_link, flags, data, }, offset_size)
 }
 
 ///|
 /// Reads all hard, soft and external links stored in a v2 group, including
 /// compact links and links indexed by a fractal heap and v2 B-tree.
-pub fn read_group_links_v2(
+fn read_group_links_v2(
   bytes : Bytes,
   header : ObjectHeader,
   offset_size : Int32,

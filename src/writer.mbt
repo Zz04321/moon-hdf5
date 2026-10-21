@@ -68,7 +68,7 @@ pub fn Datatype::write_integer(
   size : Int32,
 ) -> Datatype raise Hdf5Error {
   guard size == 1 || size == 2 || size == 4 || size == 8 else {
-    raise InvalidField("writer integer datatype width is invalid")
+    raise InvalidArgument("writer integer datatype width is invalid")
   }
   writer_datatype(0, size, signed~)
 }
@@ -77,7 +77,7 @@ pub fn Datatype::write_integer(
 /// Creates a standard little-endian IEEE floating-point datatype.
 pub fn Datatype::write_float(size : Int32) -> Datatype raise Hdf5Error {
   guard size == 4 || size == 8 else {
-    raise InvalidField("writer floating-point datatype width is invalid")
+    raise InvalidArgument("writer floating-point datatype width is invalid")
   }
   writer_datatype(1, size)
 }
@@ -86,7 +86,7 @@ pub fn Datatype::write_float(size : Int32) -> Datatype raise Hdf5Error {
 /// Creates a fixed-width UTF-8 string datatype.
 pub fn Datatype::write_fixed_string(width : Int32) -> Datatype raise Hdf5Error {
   guard width > 0 && width <= 65535 else {
-    raise InvalidField("fixed string width is invalid")
+    raise InvalidArgument("fixed string width is invalid")
   }
   writer_datatype(3, width)
 }
@@ -98,7 +98,7 @@ pub fn Datatype::write_array(
   dimensions : Array[UInt64],
 ) -> Datatype raise Hdf5Error {
   guard dimensions.length() > 0 && dimensions.length() <= 32 else {
-    raise InvalidField("writer array datatype rank is invalid")
+    raise InvalidArgument("writer array datatype rank is invalid")
   }
   let size = datatype_array_size(dimensions, base.size)
   writer_datatype(
@@ -116,7 +116,7 @@ pub fn Datatype::write_enum(
   members : Array[EnumMember],
 ) -> Datatype raise Hdf5Error {
   guard base.class == 0 && members.length() > 0 && members.length() <= 65535 else {
-    raise InvalidField("writer enum requires an integer base and members")
+    raise InvalidArgument("writer enum requires an integer base and members")
   }
   writer_datatype(
     8,
@@ -133,13 +133,13 @@ pub fn Datatype::write_compound(
   members : Array[(String, Datatype)],
 ) -> Datatype raise Hdf5Error {
   guard members.length() > 0 && members.length() <= 65535 else {
-    raise InvalidField("writer compound datatype requires members")
+    raise InvalidArgument("writer compound datatype requires members")
   }
   let fields : Array[CompoundMember] = []
   let mut size = 0
   for (name, datatype) in members {
     guard size <= 0x7FFFFFFF - datatype.size else {
-      raise InvalidField("writer compound datatype is too large")
+      raise InvalidArgument("writer compound datatype is too large")
     }
     fields.push({ name, offset: size, datatype, })
     size = size + datatype.size
@@ -235,6 +235,7 @@ priv struct WritableLayout {
 }
 
 ///|
+/// Creates an empty writer containing the root group.
 pub fn Hdf5Writer::new() -> Hdf5Writer {
   { groups: ["/"], datasets: [], attributes: [], }
 }
@@ -259,22 +260,22 @@ fn writer_align(value : Int32) -> Int32 {
 ///|
 fn writer_path_segments(path : String) -> Array[String] raise Hdf5Error {
   guard path.has_prefix("/") else {
-    raise InvalidField("writer paths must be absolute")
+    raise InvalidArgument("writer paths must be absolute")
   }
   let segments : Array[String] = []
   for raw in path.split("/") {
     let segment = raw.to_owned()
     if segment != "" {
       guard segment != "." && segment != ".." else {
-        raise InvalidField("writer paths cannot contain dot segments")
+        raise InvalidArgument("writer paths cannot contain dot segments")
       }
       let encoded = @utf8.encode(segment)
       guard encoded.length() <= 65535 else {
-        raise InvalidField("writer path component is too long")
+        raise InvalidArgument("writer path component is too long")
       }
       for byte in encoded {
         guard byte != b'\x00' else {
-          raise InvalidField("writer paths cannot contain NUL")
+          raise InvalidArgument("writer paths cannot contain NUL")
         }
       }
       segments.push(segment)
@@ -304,7 +305,9 @@ fn canonical_writer_path(path : String) -> String raise Hdf5Error {
 ///|
 fn writer_parent_path(path : String) -> String raise Hdf5Error {
   let segments = writer_path_segments(path)
-  guard segments.length() > 0 else { raise InvalidField("root has no parent") }
+  guard segments.length() > 0 else {
+    raise InvalidArgument("root has no parent")
+  }
   segments.pop() |> ignore
   writer_path(segments)
 }
@@ -312,7 +315,7 @@ fn writer_parent_path(path : String) -> String raise Hdf5Error {
 ///|
 fn writer_basename(path : String) -> String raise Hdf5Error {
   let segments = writer_path_segments(path)
-  guard segments.length() > 0 else { raise InvalidField("root has no name") }
+  guard segments.length() > 0 else { raise InvalidArgument("root has no name") }
   segments[segments.length() - 1]
 }
 
@@ -410,7 +413,7 @@ fn writer_shape_count(dimensions : Array[UInt64]) -> Int32 raise Hdf5Error {
   let mut count = 1UL
   for dimension in dimensions {
     guard dimension <= 0x7FFFFFFFUL else {
-      raise InvalidField("writer dimension is too large")
+      raise InvalidArgument("writer dimension is too large")
     }
   }
   if dimensions.contains(0UL) {
@@ -418,7 +421,7 @@ fn writer_shape_count(dimensions : Array[UInt64]) -> Int32 raise Hdf5Error {
   }
   for dimension in dimensions {
     guard count <= 0x7FFFFFFFUL / dimension else {
-      raise InvalidField("writer dataspace is too large")
+      raise InvalidArgument("writer dataspace is too large")
     }
     count = count * dimension
   }
@@ -431,7 +434,7 @@ fn validate_writer_byte_size(
   size : Int32,
 ) -> Unit raise Hdf5Error {
   guard size > 0 && count <= 0x7FFFFFFF / size else {
-    raise InvalidField("writer dataset byte size is too large")
+    raise InvalidArgument("writer dataset byte size is too large")
   }
 }
 
@@ -442,11 +445,11 @@ fn validate_writer_datatype_name(
 ) -> Unit raise Hdf5Error {
   let encoded = @utf8.encode(name)
   guard encoded.length() > 0 && encoded.length() <= 65535 else {
-    raise InvalidField(description + " is empty or too long")
+    raise InvalidArgument(description + " is empty or too long")
   }
   for byte in encoded {
     guard byte != b'\x00' else {
-      raise InvalidField(description + " contains NUL")
+      raise InvalidArgument(description + " contains NUL")
     }
   }
 }
@@ -457,7 +460,7 @@ fn validate_writer_datatype(
   depth : Int32,
 ) -> Unit raise Hdf5Error {
   guard depth < 16 && datatype.size > 0 else {
-    raise InvalidField("writer datatype is invalid or too deeply nested")
+    raise InvalidArgument("writer datatype is invalid or too deeply nested")
   }
   match datatype.class {
     0 => {
@@ -468,25 +471,25 @@ fn validate_writer_datatype(
           datatype.size == 8
         ) &&
         datatype.little_endian else {
-        raise InvalidField("writer integer datatype is unsupported")
+        raise InvalidArgument("writer integer datatype is unsupported")
       }
     }
     1 => {
       guard (datatype.size == 4 || datatype.size == 8) && datatype.little_endian else {
-        raise InvalidField("writer floating-point datatype is unsupported")
+        raise InvalidArgument("writer floating-point datatype is unsupported")
       }
     }
     3 => {
       guard datatype.size <= 65535 &&
         datatype.string_padding == 1 &&
         datatype.string_charset == 1 else {
-        raise InvalidField("writer string datatype is unsupported")
+        raise InvalidArgument("writer string datatype is unsupported")
       }
     }
     6 => {
       guard datatype.compound_members.length() > 0 &&
         datatype.compound_members.length() <= 65535 else {
-        raise InvalidField("writer compound datatype requires members")
+        raise InvalidArgument("writer compound datatype requires members")
       }
       for index in 0..<datatype.compound_members.length() {
         let field = datatype.compound_members[index]
@@ -494,16 +497,16 @@ fn validate_writer_datatype(
         validate_writer_datatype(field.datatype, depth + 1)
         guard field.offset >= 0 &&
           field.offset <= datatype.size - field.datatype.size else {
-          raise InvalidField("compound member extends beyond datatype size")
+          raise InvalidArgument("compound member extends beyond datatype size")
         }
         for previous in 0..<index {
           guard datatype.compound_members[previous].name != field.name else {
-            raise InvalidField("duplicate compound member name")
+            raise InvalidArgument("duplicate compound member name")
           }
           let earlier = datatype.compound_members[previous]
           guard field.offset + field.datatype.size <= earlier.offset ||
             earlier.offset + earlier.datatype.size <= field.offset else {
-            raise InvalidField("compound writer members overlap")
+            raise InvalidArgument("compound writer members overlap")
           }
         }
       }
@@ -512,19 +515,21 @@ fn validate_writer_datatype(
       guard datatype.base_types.length() == 1 &&
         datatype.enum_members.length() > 0 &&
         datatype.enum_members.length() <= 65535 else {
-        raise InvalidField("writer enum datatype is invalid")
+        raise InvalidArgument("writer enum datatype is invalid")
       }
       let base = datatype.base_types[0]
       validate_writer_datatype(base, depth + 1)
       guard base.class == 0 && base.size == datatype.size else {
-        raise InvalidField("writer enum base datatype is invalid")
+        raise InvalidArgument("writer enum base datatype is invalid")
       }
       for index in 0..<datatype.enum_members.length() {
         let enum_item = datatype.enum_members[index]
         validate_writer_datatype_name(enum_item.name, "enum member name")
         guard (base.signed && enum_item.value is EnumValue::Signed(_)) ||
           (!base.signed && enum_item.value is EnumValue::Unsigned(_)) else {
-          raise InvalidField("enum member signedness does not match its base")
+          raise InvalidArgument(
+            "enum member signedness does not match its base",
+          )
         }
         validate_writer_integer(
           match enum_item.value {
@@ -536,7 +541,7 @@ fn validate_writer_datatype(
         for previous in 0..<index {
           guard datatype.enum_members[previous].name != enum_item.name &&
             datatype.enum_members[previous].value != enum_item.value else {
-            raise InvalidField("duplicate enum member name or value")
+            raise InvalidArgument("duplicate enum member name or value")
           }
         }
       }
@@ -545,16 +550,19 @@ fn validate_writer_datatype(
       guard datatype.base_types.length() == 1 &&
         datatype.array_dimensions.length() > 0 &&
         datatype.array_dimensions.length() <= 32 else {
-        raise InvalidField("writer array datatype is invalid")
+        raise InvalidArgument("writer array datatype is invalid")
       }
       let base = datatype.base_types[0]
       validate_writer_datatype(base, depth + 1)
       guard datatype_array_size(datatype.array_dimensions, base.size) ==
         datatype.size else {
-        raise InvalidField("array datatype size does not match its base type")
+        raise InvalidArgument(
+          "array datatype size does not match its base type",
+        )
       }
     }
-    _ => raise InvalidField("writer structured datatype class is unsupported")
+    _ =>
+      raise InvalidArgument("writer structured datatype class is unsupported")
   }
 }
 
@@ -565,23 +573,23 @@ fn validate_writer_integer(
 ) -> Unit raise Hdf5Error {
   if datatype.signed {
     guard value is SignedInteger(number) else {
-      raise InvalidField("structured integer value has the wrong kind")
+      raise InvalidArgument("structured integer value has the wrong kind")
     }
     if datatype.size < 8 {
       let bits = datatype.size * 8
       let minimum = -(1L << (bits - 1))
       let maximum = (1L << (bits - 1)) - 1L
       guard number >= minimum && number <= maximum else {
-        raise InvalidField("structured signed integer is out of range")
+        raise InvalidArgument("structured signed integer is out of range")
       }
     }
   } else {
     guard value is UnsignedInteger(number) else {
-      raise InvalidField("structured integer value has the wrong kind")
+      raise InvalidArgument("structured integer value has the wrong kind")
     }
     if datatype.size < 8 {
       guard number < 1UL << (datatype.size * 8) else {
-        raise InvalidField("structured unsigned integer is out of range")
+        raise InvalidArgument("structured unsigned integer is out of range")
       }
     }
   }
@@ -594,31 +602,33 @@ fn validate_structured_value(
   depth : Int32,
 ) -> Unit raise Hdf5Error {
   guard depth < 16 else {
-    raise InvalidField("writer value is too deeply nested")
+    raise InvalidArgument("writer value is too deeply nested")
   }
   match datatype.class {
     0 => validate_writer_integer(value, datatype)
     1 => {
       guard value is FloatingPoint(_) else {
-        raise InvalidField("structured floating-point value has the wrong kind")
+        raise InvalidArgument(
+          "structured floating-point value has the wrong kind",
+        )
       }
     }
     3 => {
       guard value is Text(text) else {
-        raise InvalidField("structured string value has the wrong kind")
+        raise InvalidArgument("structured string value has the wrong kind")
       }
       guard @utf8.encode(text).length() <= datatype.size else {
-        raise InvalidField("structured string exceeds its width")
+        raise InvalidArgument("structured string exceeds its width")
       }
     }
     6 => {
       guard value is Compound(fields) &&
         fields.length() == datatype.compound_members.length() else {
-        raise InvalidField("compound value does not match its datatype")
+        raise InvalidArgument("compound value does not match its datatype")
       }
       for index in 0..<fields.length() {
         guard fields[index].name == datatype.compound_members[index].name else {
-          raise InvalidField("compound value fields are out of order")
+          raise InvalidArgument("compound value fields are out of order")
         }
         validate_structured_value(
           fields[index].value,
@@ -629,20 +639,20 @@ fn validate_structured_value(
     }
     8 => {
       guard value is Enumeration(name) else {
-        raise InvalidField("enum value has the wrong kind")
+        raise InvalidArgument("enum value has the wrong kind")
       }
       guard datatype.enum_members.search_by(enum_item => enum_item.name == name)
         is Some(_) else {
-        raise InvalidField("enum value does not match any member")
+        raise InvalidArgument("enum value does not match any member")
       }
     }
     10 => {
       guard value is Elements(items) else {
-        raise InvalidField("array value has the wrong kind")
+        raise InvalidArgument("array value has the wrong kind")
       }
       let base = datatype.base_types[0]
       guard items.length() == datatype.size / base.size else {
-        raise InvalidField(
+        raise InvalidArgument(
           "array value element count does not match its datatype",
         )
       }
@@ -650,7 +660,8 @@ fn validate_structured_value(
         validate_structured_value(item, base, depth + 1)
       }
     }
-    _ => raise InvalidField("writer structured datatype class is unsupported")
+    _ =>
+      raise InvalidArgument("writer structured datatype class is unsupported")
   }
 }
 
@@ -660,19 +671,19 @@ fn validate_write_values(
   values : Hdf5WriteValues,
 ) -> Unit raise Hdf5Error {
   guard dimensions.length() <= 32 else {
-    raise InvalidField("writer dataspace rank exceeds 32")
+    raise InvalidArgument("writer dataspace rank exceeds 32")
   }
   guard writer_shape_count(dimensions) == writer_value_count(values) else {
-    raise InvalidField("writer value count does not match dataspace")
+    raise InvalidArgument("writer value count does not match dataspace")
   }
   match values {
     FixedStringValues(items, width) => {
       guard width > 0 && width <= 65535 else {
-        raise InvalidField("fixed string width is invalid")
+        raise InvalidArgument("fixed string width is invalid")
       }
       for item in items {
         guard @utf8.encode(item).length() <= width else {
-          raise InvalidField("fixed string value exceeds its width")
+          raise InvalidArgument("fixed string value exceeds its width")
         }
       }
       validate_writer_byte_size(items.length(), width)
@@ -681,7 +692,7 @@ fn validate_write_values(
       validate_writer_byte_size(items.length(), 16)
       for item in items {
         guard @utf8.encode(item).length() <= 0x7FFFFFFF else {
-          raise InvalidField("variable string value is too large")
+          raise InvalidArgument("variable string value is too large")
         }
       }
     }
@@ -689,7 +700,7 @@ fn validate_write_values(
       validate_writer_byte_size(items.length(), 1)
       for item in items {
         guard item >= -128 && item <= 127 else {
-          raise InvalidField("Int8 writer value is out of range")
+          raise InvalidArgument("Int8 writer value is out of range")
         }
       }
     }
@@ -697,7 +708,7 @@ fn validate_write_values(
       validate_writer_byte_size(items.length(), 2)
       for item in items {
         guard item >= -32768 && item <= 32767 else {
-          raise InvalidField("Int16 writer value is out of range")
+          raise InvalidArgument("Int16 writer value is out of range")
         }
       }
     }
@@ -705,7 +716,7 @@ fn validate_write_values(
       validate_writer_byte_size(items.length(), 1)
       for item in items {
         guard item <= 255U else {
-          raise InvalidField("UInt8 writer value is out of range")
+          raise InvalidArgument("UInt8 writer value is out of range")
         }
       }
     }
@@ -713,7 +724,7 @@ fn validate_write_values(
       validate_writer_byte_size(items.length(), 2)
       for item in items {
         guard item <= 65535U else {
-          raise InvalidField("UInt16 writer value is out of range")
+          raise InvalidArgument("UInt16 writer value is out of range")
         }
       }
     }
@@ -749,7 +760,7 @@ fn Hdf5Writer::ensure_groups(
   for segment in segments {
     current = current + "/" + segment
     guard self.datasets.search_by(dataset => dataset.path == current) is None else {
-      raise InvalidField("writer path conflicts with a dataset")
+      raise InvalidArgument("writer path conflicts with a dataset")
     }
     if !self.groups.contains(current) {
       self.groups.push(current)
@@ -776,10 +787,10 @@ pub fn Hdf5Writer::add_dataset(
 ) -> Unit raise Hdf5Error {
   let normalized = canonical_writer_path(path)
   guard normalized != "/" else {
-    raise InvalidField("a dataset cannot replace the root group")
+    raise InvalidArgument("a dataset cannot replace the root group")
   }
   guard !self.has_object(normalized) else {
-    raise InvalidField("writer object path already exists")
+    raise InvalidArgument("writer object path already exists")
   }
   validate_write_values(dimensions, values)
   self.ensure_groups(writer_parent_path(normalized))
@@ -822,7 +833,9 @@ fn same_write_datatype(
 fn validate_write_filters(
   filters : Array[Hdf5WriteFilter],
 ) -> Unit raise Hdf5Error {
-  guard filters.length() <= 32 else { raise InvalidField("too many filters") }
+  guard filters.length() <= 32 else {
+    raise InvalidArgument("too many filters")
+  }
   let mut saw_shuffle = false
   let mut saw_deflate = false
   let mut saw_fletcher = false
@@ -830,19 +843,19 @@ fn validate_write_filters(
     match filter {
       Shuffle => {
         guard !saw_shuffle && !saw_deflate && !saw_fletcher else {
-          raise InvalidField("shuffle must be the first writer filter")
+          raise InvalidArgument("shuffle must be the first writer filter")
         }
         saw_shuffle = true
       }
       Deflate(level) => {
         guard !saw_deflate && !saw_fletcher && level >= 0 && level <= 9 else {
-          raise InvalidField("invalid deflate writer filter")
+          raise InvalidArgument("invalid deflate writer filter")
         }
         saw_deflate = true
       }
       Fletcher32 => {
         guard !saw_fletcher else {
-          raise InvalidField("duplicate Fletcher32 writer filter")
+          raise InvalidArgument("duplicate Fletcher32 writer filter")
         }
         saw_fletcher = true
       }
@@ -858,7 +871,7 @@ fn validate_writer_chunk_size(
   let mut chunk_bytes = element_size.to_int64()
   for dimension in chunk_dimensions {
     guard chunk_bytes <= 0x7FFFFFFFL / dimension.to_int64() else {
-      raise InvalidField("writer chunk is too large")
+      raise InvalidArgument("writer chunk is too large")
     }
     chunk_bytes = chunk_bytes * dimension.to_int64()
   }
@@ -877,7 +890,9 @@ fn validated_write_fill(
         )
       }
       guard writer_value_count(fill) == 1 && same_write_datatype(values, fill) else {
-        raise InvalidField("fill value must be one value of the dataset type")
+        raise InvalidArgument(
+          "fill value must be one value of the dataset type",
+        )
       }
       validate_write_values([], fill)
       Some(copy_write_values(fill))
@@ -902,20 +917,20 @@ pub fn Hdf5Writer::add_chunked_dataset(
 ) -> Unit raise Hdf5Error {
   let normalized = canonical_writer_path(path)
   guard normalized != "/" else {
-    raise InvalidField("a dataset cannot replace the root group")
+    raise InvalidArgument("a dataset cannot replace the root group")
   }
   guard !self.has_object(normalized) else {
-    raise InvalidField("writer object path already exists")
+    raise InvalidArgument("writer object path already exists")
   }
   validate_write_values(dimensions, values)
   guard dimensions.length() > 0 &&
     chunk_dimensions.length() == dimensions.length() else {
-    raise InvalidField("chunk dimensions must match a simple dataspace")
+    raise InvalidArgument("chunk dimensions must match a simple dataspace")
   }
   for axis in 0..<chunk_dimensions.length() {
     let dimension = chunk_dimensions[axis]
     guard dimensions[axis] > 0UL && dimension > 0U && dimension <= 0x7FFFFFFFU else {
-      raise InvalidField("chunk dimension is invalid")
+      raise InvalidArgument("chunk dimension is invalid")
     }
   }
   chunk_grid(dimensions, chunk_dimensions) |> ignore
@@ -944,7 +959,7 @@ fn Hdf5Writer::writer_dataset_index(
   let normalized = canonical_writer_path(path)
   match self.datasets.search_by(dataset => dataset.path == normalized) {
     Some(index) => index
-    None => raise InvalidField("writer dataset does not exist")
+    None => raise InvalidArgument("writer dataset does not exist")
   }
 }
 
@@ -957,7 +972,9 @@ fn validate_extensible_dimensions(
   guard dimensions.length() > 0 &&
     maximum_dimensions.length() == dimensions.length() &&
     chunk_dimensions.length() == dimensions.length() else {
-    raise InvalidField("extensible dimensions must have matching nonzero ranks")
+    raise InvalidArgument(
+      "extensible dimensions must have matching nonzero ranks",
+    )
   }
   let encoded_maximum : Array[UInt64] = []
   let mut unlimited_axis = -1
@@ -965,20 +982,22 @@ fn validate_extensible_dimensions(
     guard dimensions[axis] <= 0x7FFFFFFFUL &&
       chunk_dimensions[axis] > 0U &&
       chunk_dimensions[axis] <= 0x7FFFFFFFU else {
-      raise InvalidField("extensible dataset dimension is invalid")
+      raise InvalidArgument("extensible dataset dimension is invalid")
     }
     match maximum_dimensions[axis] {
       Some(maximum) => {
         guard maximum > 0UL &&
           maximum <= 0x7FFFFFFFUL &&
           dimensions[axis] <= maximum else {
-          raise InvalidField("extensible dataset maximum dimension is invalid")
+          raise InvalidArgument(
+            "extensible dataset maximum dimension is invalid",
+          )
         }
         encoded_maximum.push(maximum)
       }
       None => {
         guard unlimited_axis == -1 else {
-          raise InvalidField(
+          raise InvalidArgument(
             "extensible dataset requires one unlimited dimension",
           )
         }
@@ -988,7 +1007,7 @@ fn validate_extensible_dimensions(
     }
   }
   guard unlimited_axis >= 0 else {
-    raise InvalidField("extensible dataset requires one unlimited dimension")
+    raise InvalidArgument("extensible dataset requires one unlimited dimension")
   }
   (encoded_maximum, unlimited_axis)
 }
@@ -1010,10 +1029,10 @@ pub fn Hdf5Writer::add_extensible_dataset(
 ) -> Unit raise Hdf5Error {
   let normalized = canonical_writer_path(path)
   guard normalized != "/" else {
-    raise InvalidField("a dataset cannot replace the root group")
+    raise InvalidArgument("a dataset cannot replace the root group")
   }
   guard !self.has_object(normalized) else {
-    raise InvalidField("writer object path already exists")
+    raise InvalidArgument("writer object path already exists")
   }
   validate_write_values(dimensions, values)
   let (encoded_maximum, unlimited_axis) = validate_extensible_dimensions(
@@ -1072,7 +1091,7 @@ fn default_structured_value(
         })
       })
       guard zero is Some(index) else {
-        raise InvalidField("enum datatype has no zero-valued default fill")
+        raise InvalidArgument("enum datatype has no zero-valued default fill")
       }
       Enumeration(datatype.enum_members[index].name)
     }
@@ -1082,7 +1101,8 @@ fn default_structured_value(
         Array::make(datatype.size / base.size, default_structured_value(base)),
       )
     }
-    _ => raise InvalidField("writer structured datatype class is unsupported")
+    _ =>
+      raise InvalidArgument("writer structured datatype class is unsupported")
   }
 }
 
@@ -1174,7 +1194,8 @@ fn repeated_write_values(
       VariableStringValues(Array::make(count, items[0]))
     (StructuredValues(datatype, _), StructuredValues(_, items)) =>
       StructuredValues(datatype, Array::make(count, items[0]))
-    _ => raise InvalidField("fill value must be one value of the dataset type")
+    _ =>
+      raise InvalidArgument("fill value must be one value of the dataset type")
   }
 }
 
@@ -1189,10 +1210,10 @@ pub fn Hdf5Writer::resize_dataset(
   let dataset = self.datasets[index]
   let (chunk_dimensions, filters, unlimited_axis) = match dataset.storage {
     WritableExtensible(chunks, pipeline, axis) => (chunks, pipeline, axis)
-    _ => raise InvalidField("only extensible datasets can be resized")
+    _ => raise InvalidArgument("only extensible datasets can be resized")
   }
   guard dimensions.length() == dataset.dimensions.length() else {
-    raise InvalidField("resized dataset rank does not match")
+    raise InvalidArgument("resized dataset rank does not match")
   }
   for axis in 0..<dimensions.length() {
     guard dimensions[axis] <= 0x7FFFFFFFUL &&
@@ -1200,7 +1221,7 @@ pub fn Hdf5Writer::resize_dataset(
         dataset.maximum_dimensions[axis] == 0xFFFFFFFFFFFFFFFFUL ||
         dimensions[axis] <= dataset.maximum_dimensions[axis]
       ) else {
-      raise InvalidField("resized dataset exceeds its maximum dimensions")
+      raise InvalidArgument("resized dataset exceeds its maximum dimensions")
     }
   }
   let grid_dimensions = dimensions.copy()
@@ -1249,7 +1270,9 @@ fn[T] overlay_array(
       Some(destination) => output[destination] = items[index]
       None =>
         if axis >= 0 {
-          raise InvalidField("appended value is outside the destination shape")
+          raise InvalidArgument(
+            "appended value is outside the destination shape",
+          )
         }
     }
   }
@@ -1335,7 +1358,7 @@ fn overlay_write_values(
       )
     (FixedStringValues(output, width), FixedStringValues(items, source_width)) => {
       guard width == source_width else {
-        raise InvalidField("appended values must match the dataset type")
+        raise InvalidArgument("appended values must match the dataset type")
       }
       FixedStringValues(
         overlay_array(
@@ -1350,7 +1373,7 @@ fn overlay_write_values(
           output, items, source_dimensions, destination_dimensions, axis, offset,
         ),
       )
-    _ => raise InvalidField("appended values must match the dataset type")
+    _ => raise InvalidArgument("appended values must match the dataset type")
   }
 }
 
@@ -1366,23 +1389,25 @@ pub fn Hdf5Writer::append_dataset(
   let dataset = self.datasets[index]
   let unlimited_axis = match dataset.storage {
     WritableExtensible(_, _, axis) => axis
-    _ => raise InvalidField("only extensible datasets can be appended")
+    _ => raise InvalidArgument("only extensible datasets can be appended")
   }
   guard dimensions.length() == dataset.dimensions.length() else {
-    raise InvalidField("appended dataset rank does not match")
+    raise InvalidArgument("appended dataset rank does not match")
   }
   validate_write_values(dimensions, values)
   guard same_write_datatype(dataset.values, values) else {
-    raise InvalidField("appended values must match the dataset type")
+    raise InvalidArgument("appended values must match the dataset type")
   }
   for axis in 0..<dimensions.length() {
     if axis != unlimited_axis && dimensions[axis] != dataset.dimensions[axis] {
-      raise InvalidField("appended block must match fixed dataset dimensions")
+      raise InvalidArgument(
+        "appended block must match fixed dataset dimensions",
+      )
     }
   }
   guard dataset.dimensions[unlimited_axis] <=
     0x7FFFFFFFUL - dimensions[unlimited_axis] else {
-    raise InvalidField("appended dataset dimension is too large")
+    raise InvalidArgument("appended dataset dimension is too large")
   }
   let old_dimensions = dataset.dimensions.copy()
   let new_dimensions = old_dimensions.copy()
@@ -1418,22 +1443,22 @@ pub fn Hdf5Writer::add_attribute(
 ) -> Unit raise Hdf5Error {
   let normalized = canonical_writer_path(object_path)
   guard self.has_object(normalized) else {
-    raise InvalidField("attribute target does not exist")
+    raise InvalidArgument("attribute target does not exist")
   }
   let encoded_name = @utf8.encode(name)
   guard encoded_name.length() > 0 && encoded_name.length() < 65535 else {
-    raise InvalidField("attribute name is empty or too long")
+    raise InvalidArgument("attribute name is empty or too long")
   }
   for byte in encoded_name {
     guard byte != b'\x00' else {
-      raise InvalidField("attribute names cannot contain NUL")
+      raise InvalidArgument("attribute names cannot contain NUL")
     }
   }
   guard self.attributes.search_by(attribute => {
       attribute.object_path == normalized && attribute.name == name
     })
     is None else {
-    raise InvalidField("attribute name already exists")
+    raise InvalidArgument("attribute name already exists")
   }
   validate_write_values(dimensions, values)
   self.attributes.push({
@@ -1860,10 +1885,10 @@ fn encode_chunked_layout(
   buffer.write_byte(if extensible { b'\x04' } else { b'\x03' })
   if extensible {
     buffer.write_byte(b'\x20')
-    buffer.write_byte(b'\x80')
-    buffer.write_byte(b'\x80')
-    buffer.write_byte(b'\x80')
-    buffer.write_byte(b'\x0e')
+    buffer.write_byte(b'\x04')
+    buffer.write_byte(b'\x04')
+    buffer.write_byte(b'\x10')
+    buffer.write_byte(b'\x0a')
   } else {
     buffer.write_byte(b'\x0a')
   }
@@ -2252,6 +2277,120 @@ fn encode_fixed_array_storage(
 }
 
 ///|
+fn writer_extensible_range_allocated(
+  entries : Array[EncodedChunkEntry],
+  start : Int64,
+  count : Int64,
+) -> Bool {
+  if start >= entries.length().to_int64() {
+    return false
+  }
+  let end = if start + count < entries.length().to_int64() {
+    start + count
+  } else {
+    entries.length().to_int64()
+  }
+  for index in start.to_int()..<end.to_int() {
+    if entries[index].allocated {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn writer_write_extensible_entry(
+  buffer : @buffer.Buffer,
+  entries : Array[EncodedChunkEntry],
+  index : Int64,
+  filtered : Bool,
+) -> Unit raise Hdf5Error {
+  let allocated = index < entries.length().to_int64() &&
+    entries[index.to_int()].allocated
+  buffer.write_uint64_le(
+    if allocated {
+      entries[index.to_int()].address
+    } else {
+      0xFFFFFFFFFFFFFFFFUL
+    },
+  )
+  if filtered {
+    let size = if allocated { entries[index.to_int()].data.length() } else { 0 }
+    guard size <= 65535 else {
+      raise InvalidField("filtered writer chunk is too large")
+    }
+    buffer.write_uint16_le(size.to_uint16())
+    buffer.write_uint_le(0U)
+  }
+}
+
+///|
+fn writer_extensible_data_block_length(
+  count : Int64,
+  entry_size : Int32,
+  page_bits : Int32,
+) -> Int64 {
+  let page_size = 1L << page_bits
+  if count <= page_size {
+    18L + count * entry_size.to_int64() + 4L
+  } else {
+    let pages = (count + page_size - 1L) / page_size
+    18L + 4L + count * entry_size.to_int64() + pages * 4L
+  }
+}
+
+///|
+fn encode_writer_extensible_data_block(
+  header_address : UInt64,
+  entries : Array[EncodedChunkEntry],
+  entry_start : Int64,
+  count : Int64,
+  block_offset : UInt64,
+  filtered : Bool,
+  page_bits : Int32,
+) -> Bytes raise Hdf5Error {
+  let page_size = 1L << page_bits
+  let paged = count > page_size
+  let block = @buffer.Buffer::Buffer()
+  writer_write_bytes(block, b"EADB")
+  block.write_byte(b'\x00')
+  block.write_byte(if filtered { b'\x01' } else { b'\x00' })
+  block.write_uint64_le(header_address)
+  block.write_uint_le(block_offset.to_uint())
+  if paged {
+    block.write_uint_le(metadata_checksum(block.to_bytes(), 0, block.length()))
+  }
+  let pages = if paged { (count + page_size - 1L) / page_size } else { 1L }
+  for page in 0..<pages.to_int() {
+    let page_start = page.to_int64() * page_size
+    let page_count = if page_start + page_size < count {
+      page_size
+    } else {
+      count - page_start
+    }
+    let page_buffer = @buffer.Buffer::Buffer()
+    for offset in 0..<page_count.to_int() {
+      writer_write_extensible_entry(
+        page_buffer,
+        entries,
+        entry_start + page_start + offset.to_int64(),
+        filtered,
+      )
+    }
+    writer_write_bytes(block, page_buffer.to_bytes())
+    if paged {
+      block.write_uint_le(
+        metadata_checksum(page_buffer.to_bytes(), 0, page_buffer.length()),
+      )
+    }
+  }
+  if !paged {
+    block.write_uint_le(metadata_checksum(block.to_bytes(), 0, block.length()))
+  }
+  block.to_bytes()
+}
+
+///|
 fn encode_extensible_array_storage(
   start : UInt64,
   dataset : WritableDataset,
@@ -2265,12 +2404,12 @@ fn encode_extensible_array_storage(
   let filtered = filters.length() > 0
   let entry_size = if filtered { 14 } else { 8 }
   let max_bits = 32
-  let index_elements = 128
-  let min_elements = 128
-  let min_pointers = 128
-  let page_bits = 14
-  let first_super = 14
-  let levels = 1 + max_bits - 7
+  let index_elements = 4
+  let min_elements = 16
+  let min_pointers = 4
+  let page_bits = 10
+  let first_super = 2 * array_log2(min_pointers)
+  let levels = 1 + max_bits - array_log2(min_elements)
   let direct_count = 2 * (min_pointers - 1)
   let header_length = 72
   let index_address = start + header_length.to_uint64()
@@ -2280,50 +2419,115 @@ fn encode_extensible_array_storage(
     4
   let direct_addresses = Array::make(direct_count, 0xFFFFFFFFFFFFFFFFUL)
   let block_addresses : Array[UInt64] = []
-  let block_starts : Array[Int32] = []
-  let block_counts : Array[Int32] = []
+  let block_starts : Array[Int64] = []
+  let block_counts : Array[Int64] = []
   let block_offsets : Array[UInt64] = []
+  let super_addresses = Array::make(levels - first_super, 0xFFFFFFFFFFFFFFFFUL)
+  let super_starts : Array[Int64] = []
+  let super_counts : Array[Int64] = []
+  let super_block_addresses : Array[Array[UInt64]] = []
+  let super_bitmaps : Array[Bytes] = []
+  let mut secondary_block_count = 0L
+  let mut secondary_block_size = 0L
+  let mut data_block_count = 0L
+  let mut data_block_size = 0L
+  let mut realized_elements = index_elements.to_int64()
   let mut metadata_end = writer_align(index_address.to_int() + index_length)
-  let mut level_start = 0
+  let mut level_start = 0L
   let mut direct_start = 0
   for level in 0..<first_super {
-    let blocks = 1 << (level / 2)
-    let count = min_elements << ((level + 1) / 2)
-    for block_index in 0..<blocks {
-      let entry_start = index_elements + level_start + block_index * count
-      if entry_start >= entries.length() {
+    let blocks = 1L << (level / 2)
+    let count = min_elements.to_int64() << ((level + 1) / 2)
+    for block_index in 0..<blocks.to_int() {
+      let entry_start = index_elements.to_int64() +
+        level_start +
+        block_index.to_int64() * count
+      if entry_start >= entries.length().to_int64() {
         break
       }
-      let entry_end = if entry_start + count < entries.length() {
-        entry_start + count
-      } else {
-        entries.length()
-      }
-      let mut allocated = false
-      for entry_index in entry_start..<entry_end {
-        if entries[entry_index].allocated {
-          allocated = true
-          break
-        }
-      }
-      if allocated {
+      if writer_extensible_range_allocated(entries, entry_start, count) {
         let block_address = metadata_end.to_uint64()
         direct_addresses[direct_start + block_index] = block_address
         block_addresses.push(block_address)
         block_starts.push(entry_start)
         block_counts.push(count)
         block_offsets.push(
-          (level_start + (direct_start + block_index) * count).to_uint64(),
+          (level_start +
+          (direct_start.to_int64() + block_index.to_int64()) * count).reinterpret_as_uint64(),
         )
-        metadata_end = writer_align(metadata_end + 18 + count * entry_size + 4)
+        let block_length = writer_extensible_data_block_length(
+          count, entry_size, page_bits,
+        )
+        data_block_count = data_block_count + 1L
+        data_block_size = data_block_size + block_length
+        realized_elements = realized_elements + count
+        metadata_end = writer_align(metadata_end + block_length.to_int())
       }
     }
     level_start = level_start + blocks * count
-    direct_start = direct_start + blocks
+    direct_start = direct_start + blocks.to_int()
   }
-  guard entries.length() <= index_elements + level_start else {
+  for level in first_super..<levels {
+    if index_elements.to_int64() + level_start >= entries.length().to_int64() {
+      break
+    }
+    let blocks = 1L << (level / 2)
+    let count = min_elements.to_int64() << ((level + 1) / 2)
+    if writer_extensible_range_allocated(
+        entries,
+        index_elements.to_int64() + level_start,
+        blocks * count,
+      ) {
+      let page_size = 1L << page_bits
+      let pages = if count > page_size { count / page_size } else { 0L }
+      let bitmap_bytes = (pages + 7L) / 8L
+      let bitmap = Array::make((blocks * bitmap_bytes).to_int(), b'\x00')
+      let addresses = Array::make(blocks.to_int(), 0xFFFFFFFFFFFFFFFFUL)
+      let super_address = metadata_end.to_uint64()
+      super_addresses[level - first_super] = super_address
+      let super_length = 18L + blocks * bitmap_bytes + blocks * 8L + 4L
+      secondary_block_count = secondary_block_count + 1L
+      secondary_block_size = secondary_block_size + super_length
+      metadata_end = writer_align(metadata_end + super_length.to_int())
+      for block_index in 0..<blocks.to_int() {
+        let entry_start = index_elements.to_int64() +
+          level_start +
+          block_index.to_int64() * count
+        if writer_extensible_range_allocated(entries, entry_start, count) {
+          addresses[block_index] = metadata_end.to_uint64()
+          if pages > 0L {
+            for page in 0..<pages.to_int() {
+              if writer_extensible_range_allocated(
+                  entries,
+                  entry_start + page.to_int64() * page_size,
+                  page_size,
+                ) {
+                let bit = block_index.to_int64() * pages + page.to_int64()
+                let byte_index = (bit / 8L).to_int()
+                bitmap[byte_index] = (bitmap[byte_index].to_int() |
+                (0x80 >> (bit % 8L).to_int())).to_byte()
+              }
+            }
+          }
+          let block_length = writer_extensible_data_block_length(
+            count, entry_size, page_bits,
+          )
+          data_block_count = data_block_count + 1L
+          data_block_size = data_block_size + block_length
+          realized_elements = realized_elements + count
+          metadata_end = writer_align(metadata_end + block_length.to_int())
+        }
+      }
+      super_starts.push(level_start)
+      super_counts.push(count)
+      super_block_addresses.push(addresses)
+      super_bitmaps.push(Bytes::from_array(bitmap))
+    }
+    level_start = level_start + blocks * count
+  }
+  guard entries.length().to_int64() <= index_elements.to_int64() + level_start else {
     raise InvalidField(
-      "writer extensible-array index exceeds direct-block capacity",
+      "writer extensible-array index exceeds configured capacity",
     )
   }
   let mut chunk_address = metadata_end
@@ -2348,11 +2552,18 @@ fn encode_extensible_array_storage(
   header.write_byte(min_elements.to_byte())
   header.write_byte(min_pointers.to_byte())
   header.write_byte(page_bits.to_byte())
-  for _ in 0..<4 {
-    header.write_uint64_le(0UL)
+  let mut maximum_set = 0UL
+  for index in 0..<entries.length() {
+    if entries[index].allocated {
+      maximum_set = (index + 1).to_uint64()
+    }
   }
-  header.write_uint64_le(entries.length().to_uint64())
-  header.write_uint64_le((index_elements + level_start).to_uint64())
+  header.write_uint64_le(secondary_block_count.reinterpret_as_uint64())
+  header.write_uint64_le(secondary_block_size.reinterpret_as_uint64())
+  header.write_uint64_le(data_block_count.reinterpret_as_uint64())
+  header.write_uint64_le(data_block_size.reinterpret_as_uint64())
+  header.write_uint64_le(maximum_set)
+  header.write_uint64_le(realized_elements.reinterpret_as_uint64())
   header.write_uint64_le(index_address)
   header.write_uint_le(metadata_checksum(header.to_bytes(), 0, header.length()))
 
@@ -2383,8 +2594,8 @@ fn encode_extensible_array_storage(
   for address in direct_addresses {
     index.write_uint64_le(address)
   }
-  for _ in first_super..<levels {
-    index.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
+  for address in super_addresses {
+    index.write_uint64_le(address)
   }
   index.write_uint_le(metadata_checksum(index.to_bytes(), 0, index.length()))
 
@@ -2396,39 +2607,70 @@ fn encode_extensible_array_storage(
       output,
       block_addresses[block_index].to_int() - start.to_int() - output.length(),
     )
-    let block = @buffer.Buffer::Buffer()
-    writer_write_bytes(block, b"EADB")
-    block.write_byte(b'\x00')
-    block.write_byte(if filtered { b'\x01' } else { b'\x00' })
-    block.write_uint64_le(start)
-    block.write_uint_le(block_offsets[block_index].to_uint())
-    let entry_start = block_starts[block_index]
-    let entry_end = entry_start + block_counts[block_index]
-    for entry_index in entry_start..<entry_end {
-      let allocated = entry_index < entries.length() &&
-        entries[entry_index].allocated
-      block.write_uint64_le(
-        if allocated {
-          entries[entry_index].address
-        } else {
-          0xFFFFFFFFFFFFFFFFUL
-        },
-      )
-      if filtered {
-        let size = if allocated {
-          entries[entry_index].data.length()
-        } else {
-          0
-        }
-        guard size <= 65535 else {
-          raise InvalidField("filtered writer chunk is too large")
-        }
-        block.write_uint16_le(size.to_uint16())
-        block.write_uint_le(0U)
-      }
+    writer_write_bytes(
+      output,
+      encode_writer_extensible_data_block(
+        start,
+        entries,
+        block_starts[block_index],
+        block_counts[block_index],
+        block_offsets[block_index],
+        filtered,
+        page_bits,
+      ),
+    )
+  }
+  let mut planned_index = 0
+  for super_index in 0..<super_addresses.length() {
+    if super_addresses[super_index] == 0xFFFFFFFFFFFFFFFFUL {
+      continue
     }
-    block.write_uint_le(metadata_checksum(block.to_bytes(), 0, block.length()))
-    writer_write_bytes(output, block.to_bytes())
+    writer_write_zeros(
+      output,
+      super_addresses[super_index].to_int() - start.to_int() - output.length(),
+    )
+    let super_block = @buffer.Buffer::Buffer()
+    writer_write_bytes(super_block, b"EASB")
+    super_block.write_byte(b'\x00')
+    super_block.write_byte(if filtered { b'\x01' } else { b'\x00' })
+    super_block.write_uint64_le(start)
+    super_block.write_uint_le(
+      super_starts[planned_index].reinterpret_as_uint64().to_uint(),
+    )
+    writer_write_bytes(super_block, super_bitmaps[planned_index])
+    for address in super_block_addresses[planned_index] {
+      super_block.write_uint64_le(address)
+    }
+    super_block.write_uint_le(
+      metadata_checksum(super_block.to_bytes(), 0, super_block.length()),
+    )
+    writer_write_bytes(output, super_block.to_bytes())
+    for block_index in 0..<super_block_addresses[planned_index].length() {
+      let address = super_block_addresses[planned_index][block_index]
+      if address == 0xFFFFFFFFFFFFFFFFUL {
+        continue
+      }
+      writer_write_zeros(
+        output,
+        address.to_int() - start.to_int() - output.length(),
+      )
+      writer_write_bytes(
+        output,
+        encode_writer_extensible_data_block(
+          start,
+          entries,
+          index_elements.to_int64() +
+          super_starts[planned_index] +
+          block_index.to_int64() * super_counts[planned_index],
+          super_counts[planned_index],
+          (super_starts[planned_index] +
+          block_index.to_int64() * super_counts[planned_index]).reinterpret_as_uint64(),
+          filtered,
+          page_bits,
+        ),
+      )
+    }
+    planned_index = planned_index + 1
   }
   for entry in entries {
     if entry.allocated {

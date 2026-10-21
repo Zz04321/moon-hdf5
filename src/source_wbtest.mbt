@@ -64,7 +64,7 @@ test "Hdf5File accepts a random-access source" {
   }
   let sources : Array[&Hdf5Source] = [source]
   let file = Hdf5File::parse_source(sources[0])
-  assert_eq(file.open_dataset_metadata("/matrix").dataspace.dimensions, [
+  assert_eq(file.read_dataset_metadata("/matrix").dataspace.dimensions, [
     2UL, 3UL,
   ])
   assert_true(source.reads > 1)
@@ -82,7 +82,7 @@ test "version 2 object headers use bounded source reads" {
   }
   let sources : Array[&Hdf5Source] = [source]
   let file = Hdf5File::parse_source(sources[0])
-  assert_eq(file.object_header_at(file.root_address()).version, 2)
+  assert_eq(file.object_header_at(file.root_address())._version, 2)
   assert_true(source.reads > 1)
   assert_true(source.largest_read < source.bytes.length())
 }
@@ -118,7 +118,7 @@ test "contiguous selections use bounded source reads" {
 }
 
 ///|
-test "open_dataset reads values without materializing the source" {
+test "read_dataset reads values without materializing the source" {
   let source = CountingSource::{
     bytes: @fs.read_file_to_bytes("testdata/basic_v0.h5"),
     reads: 0,
@@ -127,7 +127,7 @@ test "open_dataset reads values without materializing the source" {
   }
   let sources : Array[&Hdf5Source] = [source]
   let file = Hdf5File::parse_source(sources[0])
-  let dataset = file.open_dataset("/matrix")
+  let dataset = file.read_dataset("/matrix")
   match dataset.values {
     Floats(values) => assert_eq(values, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
     _ => fail("expected floating-point dataset")
@@ -426,7 +426,7 @@ test "dense attributes use bounded source reads" {
 test "random-access sources support value reads during parser migration" {
   let bytes = @fs.read_file_to_bytes("testdata/basic_v0.h5")
   let sources : Array[&Hdf5Source] = [bytes]
-  let dataset = Hdf5File::parse_source(sources[0]).open_dataset("/group/values")
+  let dataset = Hdf5File::parse_source(sources[0]).read_dataset("/group/values")
   match dataset.values {
     Integers(values) =>
       assert_eq(values, [0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L])
@@ -444,7 +444,7 @@ test "global heap values use bounded source reads" {
   }
   let sources : Array[&Hdf5Source] = [source]
   let file = Hdf5File::parse_source(sources[0])
-  assert_eq(string_values(file.open_dataset("/utf8")), ["月亮", "HDF5", ""])
+  assert_eq(string_values(file.read_dataset("/utf8")), ["月亮", "HDF5", ""])
   match
     file.read_dataset_selection("/sequences", Points([[2UL], [0UL], [2UL]])).values {
     Structured(values) =>

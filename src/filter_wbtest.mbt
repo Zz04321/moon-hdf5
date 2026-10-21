@@ -3,29 +3,29 @@ test "filter pipelines decode combinations edge chunks and skipped filters" {
   for path in ["testdata/filters_v1.h5", "testdata/filters_v2.h5"] {
     let file = Hdf5File::parse(@fs.read_file_to_bytes(path))
     for name in ["gzip", "shuffle", "fletcher", "combined"] {
-      let values = integer_values(file.open_dataset("/" + name))
+      let values = integer_values(file.read_dataset("/" + name))
       assert_eq(values.length(), 35)
       for index in 0..<35 {
         assert_eq(values[index], index.to_int64())
       }
     }
-    assert_eq(unsigned_values(file.open_dataset("/special/odd")), [
+    assert_eq(unsigned_values(file.read_dataset("/special/odd")), [
       0UL, 1UL, 2UL, 3UL, 4UL, 5UL, 6UL, 7UL, 8UL,
     ])
-    assert_eq(integer_values(file.open_dataset("/special/partial")), [
+    assert_eq(integer_values(file.read_dataset("/special/partial")), [
       42L, -7L, -7L, -7L, -7L, -7L,
     ])
-    assert_eq(integer_values(file.open_dataset("/special/skipped")), [
+    assert_eq(integer_values(file.read_dataset("/special/skipped")), [
       9L, 8L, 7L, 6L,
     ])
-    assert_eq(integer_values(file.open_dataset("/special/skip_deflate")), [
+    assert_eq(integer_values(file.read_dataset("/special/skip_deflate")), [
       9L, 8L, 7L, 6L,
     ])
-    assert_eq(float_values(file.open_dataset("/special/floats")), [
+    assert_eq(float_values(file.read_dataset("/special/floats")), [
       1.5, -2.25, 0.0, 123.5, 7.25,
     ])
     let error = try {
-      file.open_dataset("/special/corrupt") |> ignore
+      file.read_dataset("/special/corrupt") |> ignore
       None
     } catch {
       error => Some(error)
@@ -78,12 +78,7 @@ test "filter pipeline framing and masks reject invalid input" {
       b"\x01", b"\x02\x21", b"\x02\x01\x01\x00", b"\x02\x01\x01\x00\x04\x00\x00\x00",
     ] {
     let error = try {
-      parse_filters({
-        msg_type: msg_filter_pipeline,
-        flags: b'\x00',
-        data_offset: 0,
-        data,
-      })
+      parse_filters({ msg_type: msg_filter_pipeline, flags: b'\x00', data, })
       |> ignore
       None
     } catch {

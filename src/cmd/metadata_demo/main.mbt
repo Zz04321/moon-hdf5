@@ -13,6 +13,17 @@ fn dimensions_text(dimensions : Array[UInt64]) -> String {
 }
 
 ///|
+fn layout_name(layout : @lib.DatasetLayoutKind) -> String {
+  match layout {
+    Compact => "compact"
+    Contiguous => "contiguous"
+    Chunked => "chunked"
+    Virtual => "virtual"
+    Unknown => "unknown"
+  }
+}
+
+///|
 fn run(args : Array[String]) -> Int32 {
   if args.length() != 3 {
     eprintln(
@@ -28,12 +39,12 @@ fn run(args : Array[String]) -> Int32 {
   }
   try {
     let file = @lib.Hdf5File::parse(bytes)
-    let metadata = file.open_dataset_metadata(args[2])
+    let metadata = file.read_dataset_metadata(args[2])
     println("dataset: " + args[2])
     println("shape: " + dimensions_text(metadata.dataspace.dimensions))
     println("datatype class: " + metadata.datatype.class.to_string())
     println("element bytes: " + metadata.datatype.size.to_string())
-    println("layout class: " + metadata.layout.layout_class.to_string())
+    println("layout: " + layout_name(metadata.layout.kind()))
     println("attributes: " + file.attributes(args[2]).length().to_string())
     0
   } catch {

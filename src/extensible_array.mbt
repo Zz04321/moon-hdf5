@@ -354,16 +354,11 @@ fn read_source_extensible_array_chunks(
     page_bits: header.read_u8().to_int(),
   }
   let size_width = entry_size - offset_size - 4
-  guard actual == config &&
-    (
-      (client == 0 && filters.length() == 0 && entry_size == offset_size) ||
-      (
-        client == 1 &&
-        filters.length() > 0 &&
-        size_width >= 1 &&
-        size_width <= 8
-      )
-    ) else {
+  guard actual == config else {
+    raise InvalidField("extensible array configuration does not match layout")
+  }
+  guard (client == 0 && filters.length() == 0 && entry_size == offset_size) ||
+    (client == 1 && filters.length() > 0 && size_width >= 1 && size_width <= 8) else {
     raise InvalidField("invalid extensible array entry encoding")
   }
   for _ in 0..<4 {

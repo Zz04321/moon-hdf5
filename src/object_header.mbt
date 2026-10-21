@@ -1,63 +1,63 @@
 ///|
 /// HDF5 object header message types.
-pub let msg_nil : Int32 = 0x0000
+let _msg_nil : Int32 = 0x0000
 
 ///|
-pub let msg_dataspace : Int32 = 0x0001
+let msg_dataspace : Int32 = 0x0001
 
 ///|
-pub let msg_link_info : Int32 = 0x0002
+let msg_link_info : Int32 = 0x0002
 
 ///|
-pub let msg_datatype : Int32 = 0x0003
+let msg_datatype : Int32 = 0x0003
 
 ///|
-pub let msg_fill_value_old : Int32 = 0x0004
+let msg_fill_value_old : Int32 = 0x0004
 
 ///|
-pub let msg_fill_value : Int32 = 0x0005
+let msg_fill_value : Int32 = 0x0005
 
 ///|
-pub let msg_link : Int32 = 0x0006
+let msg_link : Int32 = 0x0006
 
 ///|
-pub let msg_external_data_files : Int32 = 0x0007
+let msg_external_data_files : Int32 = 0x0007
 
 ///|
-pub let msg_data_layout : Int32 = 0x0008
+let msg_data_layout : Int32 = 0x0008
 
 ///|
-pub let msg_bogus : Int32 = 0x0009
+let _msg_bogus : Int32 = 0x0009
 
 ///|
-pub let msg_group_info : Int32 = 0x000A
+let _msg_group_info : Int32 = 0x000A
 
 ///|
-pub let msg_filter_pipeline : Int32 = 0x000B
+let msg_filter_pipeline : Int32 = 0x000B
 
 ///|
-pub let msg_attribute : Int32 = 0x000C
+let msg_attribute : Int32 = 0x000C
 
 ///|
-pub let msg_object_comment : Int32 = 0x000D
+let _msg_object_comment : Int32 = 0x000D
 
 ///|
-pub let msg_shared_message_table : Int32 = 0x000F
+let _msg_shared_message_table : Int32 = 0x000F
 
 ///|
-pub let msg_object_continuation : Int32 = 0x0010
+let msg_object_continuation : Int32 = 0x0010
 
 ///|
-pub let msg_symbol_table : Int32 = 0x0011
+let msg_symbol_table : Int32 = 0x0011
 
 ///|
-pub let msg_modification_time : Int32 = 0x0012
+let _msg_modification_time : Int32 = 0x0012
 
 ///|
-pub let msg_attribute_info : Int32 = 0x0015
+let msg_attribute_info : Int32 = 0x0015
 
 ///|
-pub let msg_object_reference_count : Int32 = 0x0016
+let _msg_object_reference_count : Int32 = 0x0016
 
 ///|
 let undefined_address : UInt64 = 0xFFFFFFFFFFFFFFFFUL
@@ -79,28 +79,21 @@ fn address_to_offset(
 
 ///|
 /// One message from an object header.
-pub(all) struct HeaderMessage {
+priv struct HeaderMessage {
   msg_type : Int32
   flags : Byte
-  data_offset : Int32
   data : Bytes
-} derive(@debug.Debug)
-
-///|
-pub extend HeaderMessage with @debug.Debug::{to_repr}
+}
 
 ///|
 /// A parsed object header.
-pub(all) struct ObjectHeader {
-  version : Int32
+priv struct ObjectHeader {
+  _version : Int32
   messages : Array[HeaderMessage]
-} derive(@debug.Debug)
+}
 
 ///|
-pub extend ObjectHeader with @debug.Debug::{to_repr}
-
-///|
-pub fn ObjectHeader::find(
+fn ObjectHeader::find(
   self : ObjectHeader,
   msg_type : Int32,
 ) -> Array[HeaderMessage] {
@@ -108,10 +101,7 @@ pub fn ObjectHeader::find(
 }
 
 ///|
-pub fn ObjectHeader::first(
-  self : ObjectHeader,
-  msg_type : Int32,
-) -> HeaderMessage? {
+fn ObjectHeader::first(self : ObjectHeader, msg_type : Int32) -> HeaderMessage? {
   for message in self.messages {
     if message.msg_type == msg_type {
       return Some(message)
@@ -135,9 +125,8 @@ fn parse_v1_message_block(
     let size = block.read_u16_le().to_int()
     let flags = block.read_u8()
     block.skip(3)
-    let data_offset = block.position()
     let data = block.read_bytes(size)
-    messages.push({ msg_type, flags, data_offset, data, })
+    messages.push({ msg_type, flags, data, })
     if msg_type == msg_object_continuation {
       let continuation = Reader::new(data)
       let address = continuation.read_uint_le(offset_size)
@@ -191,7 +180,7 @@ fn parse_object_header_v1(
   parse_v1_message_block(
     bytes, block, offset_size, length_size, base_address, visited, messages,
   )
-  { version, messages, }
+  { _version: version, messages, }
 }
 
 ///|
@@ -213,9 +202,8 @@ fn parse_v2_message_block(
     if creation_order_size == 2 {
       block.skip(2)
     }
-    let data_offset = block.position()
     let data = block.read_bytes(size)
-    messages.push({ msg_type, flags, data_offset, data, })
+    messages.push({ msg_type, flags, data, })
     if msg_type == msg_object_continuation {
       let continuation = Reader::new(data)
       let address = continuation.read_uint_le(offset_size)
@@ -297,12 +285,12 @@ fn parse_object_header_v2(
     bytes, block, offset_size, length_size, base_address, creation_order_size, visited,
     messages,
   )
-  { version, messages, }
+  { _version: version, messages, }
 }
 
 ///|
 /// Parses an HDF5 object header at `address`.
-pub fn parse_object_header(
+fn parse_object_header(
   bytes : Bytes,
   address : UInt64,
   offset_size : Int32,

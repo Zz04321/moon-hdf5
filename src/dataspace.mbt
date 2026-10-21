@@ -75,7 +75,7 @@ fn parse_dataspace_data(
 }
 
 ///|
-pub fn parse_dataspace(
+fn parse_dataspace(
   message : HeaderMessage,
   length_size : Int32,
 ) -> Dataspace raise Hdf5Error {

@@ -5,7 +5,7 @@ test "extensible arrays read growing grids and swizzled unlimited dimensions" {
   )
   for group in ["raw", "filtered"] {
     for (name, count) in [("grown", 420), ("swizzled", 210)] {
-      let dataset = file.open_dataset("/" + group + "/" + name)
+      let dataset = file.read_dataset("/" + group + "/" + name)
       assert_true(dataset.layout.chunk_index is ExtensibleArray(_))
       let values = integer_values(dataset)
       assert_eq(values.length(), count)
@@ -14,14 +14,14 @@ test "extensible arrays read growing grids and swizzled unlimited dimensions" {
       }
     }
   }
-  assert_eq(integer_values(file.open_dataset("/other/skipped")), [
+  assert_eq(integer_values(file.read_dataset("/other/skipped")), [
     -3L, -3L, -3L, -3L, 0L, 1L, 2L, 3L, -3L, -3L, -3L, -3L,
   ])
   assert_eq(
-    integer_values(file.open_dataset("/other/unallocated")),
+    integer_values(file.read_dataset("/other/unallocated")),
     Array::make(8, -5L),
   )
-  assert_eq(integer_values(file.open_dataset("/other/empty")), [])
+  assert_eq(integer_values(file.read_dataset("/other/empty")), [])
 }
 
 ///|
@@ -34,7 +34,7 @@ test "extensible arrays traverse direct blocks super blocks and sparse pages" {
     131060, 133108, 199999,
   ]
   for group in ["raw", "filtered"] {
-    let values = integer_values(file.open_dataset("/" + group + "/paged"))
+    let values = integer_values(file.read_dataset("/" + group + "/paged"))
     assert_eq(values.length(), 200000)
     for index in 0..<values.length() {
       assert_eq(
@@ -53,7 +53,7 @@ test "extensible arrays traverse direct blocks super blocks and sparse pages" {
 test "extensible arrays reject damaged headers blocks and truncated pages" {
   let bytes = @fs.read_file_to_bytes("testdata/extensible_array.h5")
   let file = Hdf5File::parse(bytes)
-  let dataset = file.open_dataset("/raw/paged")
+  let dataset = file.read_dataset("/raw/paged")
   let header = dataset.layout.data_address.to_int()
   let index = Reader::at(bytes, header + 60).read_u64_le().to_int()
   let direct = Reader::at(bytes, index + 46).read_u64_le().to_int()
@@ -86,7 +86,7 @@ test "extensible arrays reject damaged headers blocks and truncated pages" {
     let corrupted = bytes.to_array()
     corrupted[position] = corrupted[position] ^ b'\x01'
     let error = try {
-      read_chunked_payload(
+      _read_chunked_payload(
         Bytes::from_array(corrupted),
         dataset.layout,
         dataset.dataspace,
@@ -110,7 +110,7 @@ test "extensible arrays reject damaged headers blocks and truncated pages" {
       paged_block + 22 + 1024 * 8 + 3,
     ] {
     let error = try {
-      read_chunked_payload(
+      _read_chunked_payload(
         bytes.get_view(start=0, end~).unwrap().to_owned(),
         dataset.layout,
         dataset.dataspace,
@@ -137,7 +137,7 @@ test "extensible arrays respect four byte file addresses" {
   assert_eq(file.superblock.offset_size, 4)
   assert_eq(file.superblock.length_size, 8)
   for name in ["raw", "filtered"] {
-    let values = integer_values(file.open_dataset("/" + name))
+    let values = integer_values(file.read_dataset("/" + name))
     assert_eq(values.length(), 1500)
     for index in 0..<1500 {
       assert_eq(values[index], index.to_int64())
@@ -162,12 +162,7 @@ test "extensible layout configuration rejects unsafe shifts and invalid powers" 
     buffer.write_uint64_le(100UL)
     let error = try {
       parse_data_layout(
-        {
-          msg_type: msg_data_layout,
-          flags: b'\x00',
-          data_offset: 0,
-          data: buffer.to_bytes(),
-        },
+        { msg_type: msg_data_layout, flags: b'\x00', data: buffer.to_bytes(), },
         8,
         8,
       )

@@ -99,13 +99,13 @@ fn datatype_name(datatype : @lib.Datatype) -> String {
 }
 
 ///|
-fn layout_name(layout : @lib.DataLayout) -> String {
-  match layout.layout_class {
-    0 => "compact"
-    1 => "contiguous"
-    2 => "chunked"
-    3 => "virtual"
-    _ => "unknown"
+fn layout_name(layout : @lib.DatasetLayoutKind) -> String {
+  match layout {
+    Compact => "compact"
+    Contiguous => "contiguous"
+    Chunked => "chunked"
+    Virtual => "virtual"
+    Unknown => "unknown"
   }
 }
 
@@ -123,13 +123,11 @@ fn print_metadata(metadata : @lib.DatasetMetadata) -> Unit {
     metadata.datatype.size.to_string() +
     " bytes)",
   )
-  println("layout: " + layout_name(metadata.layout))
-  if metadata.layout.chunk_dimensions.length() > 0 {
+  println("layout: " + layout_name(metadata.layout.kind()))
+  let chunk_shape = metadata.layout.chunk_shape()
+  if chunk_shape.length() > 0 {
     println(
-      "chunks: " +
-      dimensions_text(
-        metadata.layout.chunk_dimensions.map(value => value.to_uint64()),
-      ),
+      "chunks: " + dimensions_text(chunk_shape.map(value => value.to_uint64())),
     )
   }
 }
@@ -178,7 +176,7 @@ fn read_file(path : String) -> @lib.Hdf5File? {
 ///|
 fn inspect_file(path : String) -> Int32 {
   guard read_file(path) is Some(file) else { return 1 }
-  println(path + " (superblock v" + file.superblock.version.to_string() + ")")
+  println(path + " (superblock v" + file.superblock_version().to_string() + ")")
   let mut success = print_attributes(file, "/")
   let nodes = file.walk() catch {
     error => {
@@ -190,7 +188,7 @@ fn inspect_file(path : String) -> Int32 {
     println(node.path + "  " + kind_name(node.kind))
     if node.kind == Dataset {
       try {
-        let dataset = file.open_dataset(node.path)
+        let dataset = file.read_dataset(node.path)
         println("  " + describe_values(dataset.values))
       } catch {
         error => {
@@ -214,7 +212,7 @@ fn inspect_file(path : String) -> Int32 {
 fn metadata_command(path : String, dataset_path : String) -> Int32 {
   guard read_file(path) is Some(file) else { return 1 }
   try {
-    print_metadata(file.open_dataset_metadata(dataset_path))
+    print_metadata(file.read_dataset_metadata(dataset_path))
     0
   } catch {
     error => {
@@ -445,7 +443,7 @@ fn stats_text(values : @lib.DatasetValues) -> String {
 fn stats_command(path : String, dataset_path : String) -> Int32 {
   guard read_file(path) is Some(file) else { return 1 }
   try {
-    let dataset = file.open_dataset(dataset_path)
+    let dataset = file.read_dataset(dataset_path)
     println(stats_text(dataset.values))
     0
   } catch {

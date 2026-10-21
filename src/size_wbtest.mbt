@@ -70,7 +70,10 @@ test "selection products are bounded before generating indices" {
   } catch {
     error => Some(error)
   }
-  assert_eq(error, Some(InvalidField("selection contains too many elements")))
+  assert_eq(
+    error,
+    Some(InvalidArgument("selection contains too many elements")),
+  )
 }
 
 ///|
@@ -106,17 +109,12 @@ test "dataset byte size is checked before reading or allocating storage" {
   buffer.write_uint64_le(1073741824UL)
   let messages = original.messages.map(message => {
     if message.msg_type == msg_dataspace {
-      {
-        msg_type: msg_dataspace,
-        flags: b'\x00',
-        data_offset: 0,
-        data: buffer.to_bytes(),
-      }
+      { msg_type: msg_dataspace, flags: b'\x00', data: buffer.to_bytes(), }
     } else {
       message
     }
   })
-  let header : ObjectHeader = { version: original.version, messages, }
+  let header : ObjectHeader = { _version: original._version, messages, }
   let error = try {
     read_dataset(
       file.bytes,

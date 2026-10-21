@@ -98,7 +98,6 @@ test "local heap size cannot truncate or read beyond the input" {
       bytes: b"abc",
       data_address: address,
       data_size: size,
-      offset_to_free_list: 0UL,
     }
     let error = try {
       heap.get_string(0UL) |> ignore

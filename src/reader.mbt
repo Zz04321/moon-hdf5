@@ -1,11 +1,12 @@
 ///|
-/// Errors raised while reading an HDF5 file.
+/// Errors raised by HDF5 reading and writing operations.
 pub(all) suberror Hdf5Error {
   UnexpectedEof(Int64)
   InvalidSignature
   UnsupportedSuperblockVersion(Int32)
   UnsupportedAddressSize(Int32)
   UnsupportedFeature(String)
+  InvalidArgument(String)
   InvalidField(String)
 } derive(Eq, @debug.Debug)
 
@@ -26,25 +27,26 @@ pub fn Hdf5Error::message(self : Hdf5Error) -> String {
     UnsupportedAddressSize(size) =>
       "unsupported address size " + size.to_string()
     UnsupportedFeature(feature) => "unsupported feature: " + feature
+    InvalidArgument(reason) => "invalid argument: " + reason
     InvalidField(reason) => "invalid HDF5 data: " + reason
   }
 }
 
 ///|
 /// A bounds-checked cursor over an immutable byte buffer.
-pub(all) struct Reader {
+priv struct Reader {
   bytes : Bytes
   mut pos : Int32
   limit : Int32
 }
 
 ///|
-pub fn Reader::new(bytes : Bytes) -> Reader {
+fn Reader::new(bytes : Bytes) -> Reader {
   { bytes, pos: 0, limit: bytes.length(), }
 }
 
 ///|
-pub fn Reader::at(bytes : Bytes, offset : Int32) -> Reader raise Hdf5Error {
+fn Reader::at(bytes : Bytes, offset : Int32) -> Reader raise Hdf5Error {
   guard offset >= 0 && offset <= bytes.length() else {
     raise InvalidField("offset outside input")
   }
@@ -52,17 +54,17 @@ pub fn Reader::at(bytes : Bytes, offset : Int32) -> Reader raise Hdf5Error {
 }
 
 ///|
-pub fn Reader::position(self : Reader) -> Int32 {
+fn Reader::position(self : Reader) -> Int32 {
   self.pos
 }
 
 ///|
-pub fn Reader::remaining(self : Reader) -> Int32 {
+fn Reader::remaining(self : Reader) -> Int32 {
   self.limit - self.pos
 }
 
 ///|
-pub fn Reader::sub(
+fn Reader::sub(
   self : Reader,
   offset : Int32,
   length : Int32,
@@ -84,13 +86,13 @@ fn Reader::require(self : Reader, n : Int32) -> Unit raise Hdf5Error {
 }
 
 ///|
-pub fn Reader::skip(self : Reader, n : Int32) -> Unit raise Hdf5Error {
+fn Reader::skip(self : Reader, n : Int32) -> Unit raise Hdf5Error {
   self.require(n)
   self.pos = self.pos + n
 }
 
 ///|
-pub fn Reader::read_u8(self : Reader) -> Byte raise Hdf5Error {
+fn Reader::read_u8(self : Reader) -> Byte raise Hdf5Error {
   self.require(1)
   let value = self.bytes.unsafe_get(self.pos)
   self.pos = self.pos + 1
@@ -98,7 +100,7 @@ pub fn Reader::read_u8(self : Reader) -> Byte raise Hdf5Error {
 }
 
 ///|
-pub fn Reader::read_u16_le(self : Reader) -> UInt16 raise Hdf5Error {
+fn Reader::read_u16_le(self : Reader) -> UInt16 raise Hdf5Error {
   self.require(2)
   let value = self.bytes.unsafe_read_uint16_le(self.pos)
   self.pos = self.pos + 2
@@ -106,7 +108,7 @@ pub fn Reader::read_u16_le(self : Reader) -> UInt16 raise Hdf5Error {
 }
 
 ///|
-pub fn Reader::read_u32_le(self : Reader) -> UInt32 raise Hdf5Error {
+fn Reader::read_u32_le(self : Reader) -> UInt32 raise Hdf5Error {
   self.require(4)
   let value = self.bytes.unsafe_read_uint32_le(self.pos)
   self.pos = self.pos + 4
@@ -114,7 +116,7 @@ pub fn Reader::read_u32_le(self : Reader) -> UInt32 raise Hdf5Error {
 }
 
 ///|
-pub fn Reader::read_u64_le(self : Reader) -> UInt64 raise Hdf5Error {
+fn Reader::read_u64_le(self : Reader) -> UInt64 raise Hdf5Error {
   self.require(8)
   let value = self.bytes.unsafe_read_uint64_le(self.pos)
   self.pos = self.pos + 8
@@ -123,10 +125,7 @@ pub fn Reader::read_u64_le(self : Reader) -> UInt64 raise Hdf5Error {
 
 ///|
 /// Reads an unsigned little-endian integer of 1, 2, 4 or 8 bytes.
-pub fn Reader::read_uint_le(
-  self : Reader,
-  size : Int32,
-) -> UInt64 raise Hdf5Error {
+fn Reader::read_uint_le(self : Reader, size : Int32) -> UInt64 raise Hdf5Error {
   match size {
     1 => self.read_u8().to_uint64()
     2 => self.read_u16_le().to_uint64()
@@ -150,27 +149,12 @@ fn Reader::read_var_uint_le(
 }
 
 ///|
-pub fn Reader::read_bytes(self : Reader, n : Int32) -> Bytes raise Hdf5Error {
+fn Reader::read_bytes(self : Reader, n : Int32) -> Bytes raise Hdf5Error {
   self.require(n)
   let view = self.bytes.get_view(start=self.pos, end=self.pos + n)
   let result = match view {
     Some(view) => view.to_owned()
     None => raise UnexpectedEof(self.pos.to_int64())
-  }
-  self.pos = self.pos + n
-  result
-}
-
-///|
-/// Reads `n` bytes as a UTF-8 string and rejects invalid encoding.
-pub fn Reader::read_fixed_string(
-  self : Reader,
-  n : Int32,
-) -> String raise Hdf5Error {
-  self.require(n)
-  let view = self.bytes.get_view(start=self.pos, end=self.pos + n).unwrap()
-  let result = @utf8.decode(view) catch {
-    _ => raise InvalidField("invalid UTF-8 string")
   }
   self.pos = self.pos + n
   result

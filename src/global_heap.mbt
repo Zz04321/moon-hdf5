@@ -5,7 +5,7 @@ fn round_up_to_eight(n : Int32) -> Int32 {
 
 ///|
 /// Reads one object from an HDF5 global heap collection.
-pub fn read_global_heap_object(
+fn read_global_heap_object(
   bytes : Bytes,
   heap_address : UInt64,
   object_index : Int32,

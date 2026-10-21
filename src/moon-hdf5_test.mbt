@@ -5,11 +5,11 @@ test "public high-level API reads a file" {
   )
   let node = file.resolve("/group/values")
   assert_eq(node.kind, @moon-hdf5.Dataset)
-  let metadata = file.open_dataset_metadata("/group/values")
+  let metadata = file.read_dataset_metadata("/group/values")
   assert_eq(metadata.dataspace.dimensions, [10UL])
   assert_eq(metadata.datatype.size, 4)
-  assert_eq(metadata.layout.layout_class, 1)
-  let dataset = file.open_dataset("/group/values")
+  assert_eq(metadata.layout.kind(), @moon-hdf5.Contiguous)
+  let dataset = file.read_dataset("/group/values")
   match dataset.values {
     Integers(values) => assert_eq(values.length(), 10)
     _ => abort("expected integer values")
@@ -24,12 +24,12 @@ test "public API reads dataset metadata without values" {
   let file = @moon-hdf5.Hdf5File::parse(
     @fs.read_file_to_bytes("testdata/basic_v0.h5"),
   )
-  let metadata = file.open_dataset_metadata("/matrix")
+  let metadata = file.read_dataset_metadata("/matrix")
   assert_eq(metadata.dataspace.dimensions, [2UL, 3UL])
   assert_eq(metadata.datatype.size, 4)
-  assert_eq(metadata.layout.layout_class, 1)
+  assert_eq(metadata.layout.kind(), @moon-hdf5.Contiguous)
   let error = try {
-    file.open_dataset_metadata("/group") |> ignore
+    file.read_dataset_metadata("/group") |> ignore
     None
   } catch {
     error => Some(error)
@@ -91,7 +91,7 @@ test "dataset selections validate bounds and allow empty results" {
     } catch {
       error => Some(error)
     }
-    assert_true(error is Some(@moon-hdf5.InvalidField(_)))
+    assert_true(error is Some(@moon-hdf5.InvalidArgument(_)))
   }
 }
 
@@ -126,7 +126,7 @@ test "dataset selections handle scalar empty and null dataspaces" {
   } catch {
     error => Some(error)
   }
-  assert_true(error is Some(@moon-hdf5.InvalidField(_)))
+  assert_true(error is Some(@moon-hdf5.InvalidArgument(_)))
 }
 
 ///|

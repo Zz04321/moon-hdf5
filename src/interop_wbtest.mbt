@@ -49,14 +49,14 @@ fn assert_matrix_groups(file : Hdf5File) -> Unit raise {
   assert_eq(file.resolve("/group_dense_ordered").kind, Group)
   for index in 0..<2 {
     let values = integer_values(
-      file.open_dataset("/group_compact/" + matrix_link_name(index)),
+      file.read_dataset("/group_compact/" + matrix_link_name(index)),
     )
     assert_eq(values, [index.to_int64(), (index + 100).to_int64()])
   }
   for group in ["/group_dense", "/group_dense_ordered"] {
     for index in 0..<12 {
       let values = integer_values(
-        file.open_dataset(group + "/" + matrix_link_name(index)),
+        file.read_dataset(group + "/" + matrix_link_name(index)),
       )
       assert_eq(values, [index.to_int64(), (index + 100).to_int64()])
     }
@@ -65,17 +65,17 @@ fn assert_matrix_groups(file : Hdf5File) -> Unit raise {
 
 ///|
 fn assert_matrix_values(file : Hdf5File) -> Unit raise {
-  assert_eq(integer_values(file.open_dataset("/data/compact")), [30L, 40L])
-  assert_eq(integer_values(file.open_dataset("/data/contiguous")), [10L, 20L])
+  assert_eq(integer_values(file.read_dataset("/data/compact")), [30L, 40L])
+  assert_eq(integer_values(file.read_dataset("/data/contiguous")), [10L, 20L])
   assert_eq(
-    integer_values(file.open_dataset("/data/chunked_raw")),
+    integer_values(file.read_dataset("/data/chunked_raw")),
     matrix_range(0L, 35),
   )
   assert_eq(
-    integer_values(file.open_dataset("/data/chunked_filtered")),
+    integer_values(file.read_dataset("/data/chunked_filtered")),
     matrix_range(100L, 35),
   )
-  let sparse = integer_values(file.open_dataset("/data/chunked_sparse"))
+  let sparse = integer_values(file.read_dataset("/data/chunked_sparse"))
   assert_eq(sparse.length(), 63)
   for index in 0..<63 {
     assert_eq(
@@ -91,30 +91,30 @@ fn assert_matrix_values(file : Hdf5File) -> Unit raise {
   }
   for name in ["unlimited_one", "unlimited_one_filtered"] {
     assert_eq(
-      integer_values(file.open_dataset("/data/" + name)),
+      integer_values(file.read_dataset("/data/" + name)),
       matrix_range(0L, 35),
     )
   }
   for name in ["unlimited_two", "unlimited_two_filtered"] {
     assert_eq(
-      integer_values(file.open_dataset("/data/" + name)),
+      integer_values(file.read_dataset("/data/" + name)),
       matrix_range(0L, 100),
     )
   }
   for name in ["single_raw", "single_filtered"] {
     assert_eq(
-      integer_values(file.open_dataset("/data/" + name)),
+      integer_values(file.read_dataset("/data/" + name)),
       matrix_range(0L, 12),
     )
   }
-  assert_eq(integer_values(file.open_dataset("/data/skipped")), [
+  assert_eq(integer_values(file.read_dataset("/data/skipped")), [
     0L, 1L, 2L, 3L, -3L, -3L, -3L, -3L,
   ])
   for
     name in [
       "compact_attrs", "compact_attrs_ordered", "dense_attrs", "dense_attrs_ordered",
     ] {
-    assert_eq(integer_values(file.open_dataset("/data/" + name)), [42L])
+    assert_eq(integer_values(file.read_dataset("/data/" + name)), [42L])
   }
   assert_matrix_attributes(file, "/data/compact_attrs", 2)
   assert_matrix_attributes(file, "/data/compact_attrs_ordered", 2)
@@ -145,7 +145,7 @@ test "h5py interop matrix exercises each supported chunk index" {
     name in [
       "chunked_raw", "chunked_filtered", "unlimited_one_filtered", "unlimited_two_filtered",
     ] {
-    let index = v110.open_dataset("/data/" + name).layout.chunk_index
+    let index = v110.read_dataset("/data/" + name).layout.chunk_index
     if name == "chunked_raw" || name == "chunked_filtered" {
       assert_true(index is FixedArray(_))
     } else if name == "unlimited_one_filtered" {
@@ -155,7 +155,7 @@ test "h5py interop matrix exercises each supported chunk index" {
     }
   }
   for name in ["single_raw", "single_filtered"] {
-    let index = v110.open_dataset("/data/" + name).layout.chunk_index
+    let index = v110.read_dataset("/data/" + name).layout.chunk_index
     assert_true(index is Single(_, _))
   }
   for path in ["testdata/interop_earliest.h5", "testdata/interop_v108.h5"] {
@@ -165,7 +165,7 @@ test "h5py interop matrix exercises each supported chunk index" {
         "chunked_raw", "chunked_filtered", "unlimited_one_filtered", "unlimited_two_filtered",
         "single_raw",
       ] {
-      let index = file.open_dataset("/data/" + name).layout.chunk_index
+      let index = file.read_dataset("/data/" + name).layout.chunk_index
       assert_true(index is BTreeV1)
     }
   }
@@ -176,9 +176,9 @@ test "h5py interop matrix reads 4-byte addresses" {
   let file = Hdf5File::parse(@fs.read_file_to_bytes("testdata/interop_32.h5"))
   assert_eq(file.superblock.version, 3)
   assert_eq(file.superblock.offset_size, 4)
-  assert_eq(integer_values(file.open_dataset("/raw")), matrix_range(0L, 35))
+  assert_eq(integer_values(file.read_dataset("/raw")), matrix_range(0L, 35))
   assert_eq(
-    integer_values(file.open_dataset("/filtered")),
+    integer_values(file.read_dataset("/filtered")),
     matrix_range(100L, 35),
   )
 }

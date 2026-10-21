@@ -33,21 +33,23 @@ fn coordinate_linear_index(
   dimensions : Array[UInt64],
 ) -> UInt64 raise Hdf5Error {
   guard coordinate.length() == dimensions.length() else {
-    raise InvalidField("selection coordinate rank does not match dataset rank")
+    raise InvalidArgument(
+      "selection coordinate rank does not match dataset rank",
+    )
   }
   let mut linear = 0UL
   for axis in 0..<dimensions.length() {
     let dimension = dimensions[axis]
     let value = coordinate[axis]
     guard value < dimension else {
-      raise InvalidField("selection coordinate is outside the dataset")
+      raise InvalidArgument("selection coordinate is outside the dataset")
     }
     guard dimension == 0UL || linear <= 0xFFFFFFFFFFFFFFFFUL / dimension else {
-      raise InvalidField("selection coordinate overflow")
+      raise InvalidArgument("selection coordinate overflow")
     }
     linear = linear * dimension
     guard linear <= 0xFFFFFFFFFFFFFFFFUL - value else {
-      raise InvalidField("selection coordinate overflow")
+      raise InvalidArgument("selection coordinate overflow")
     }
     linear = linear + value
   }
@@ -65,32 +67,32 @@ fn hyperslab_indices(
   guard start.length() == rank &&
     count.length() == rank &&
     stride.length() == rank else {
-    raise InvalidField("hyperslab rank does not match dataset rank")
+    raise InvalidArgument("hyperslab rank does not match dataset rank")
   }
   for axis in 0..<rank {
     guard stride[axis] > 0UL else {
-      raise InvalidField("hyperslab stride must be positive")
+      raise InvalidArgument("hyperslab stride must be positive")
     }
     if count[axis] == 0UL {
       guard start[axis] <= dimensions[axis] else {
-        raise InvalidField("hyperslab start is outside the dataset")
+        raise InvalidArgument("hyperslab start is outside the dataset")
       }
     } else {
       guard start[axis] < dimensions[axis] else {
-        raise InvalidField("hyperslab start is outside the dataset")
+        raise InvalidArgument("hyperslab start is outside the dataset")
       }
       let steps = count[axis] - 1UL
       guard steps <= (0xFFFFFFFFFFFFFFFFUL - start[axis]) / stride[axis] else {
-        raise InvalidField("hyperslab coordinate overflow")
+        raise InvalidArgument("hyperslab coordinate overflow")
       }
       guard start[axis] + steps * stride[axis] < dimensions[axis] else {
-        raise InvalidField("hyperslab extends outside the dataset")
+        raise InvalidArgument("hyperslab extends outside the dataset")
       }
     }
   }
   let total = selection_element_count(count)
   guard total <= 0x7FFFFFFFL else {
-    raise InvalidField("selection contains too many elements")
+    raise InvalidArgument("selection contains too many elements")
   }
   let indices : Array[UInt64] = []
   if total == 0L {
@@ -125,6 +127,9 @@ fn selection_indices(
     Hyperslab(start, count, stride) =>
       hyperslab_indices(dataspace.dimensions, start, count, stride)
     Points(points) => {
+      if dataspace.kind == Null && points.length() > 0 {
+        raise InvalidArgument("null dataspaces have no selectable points")
+      }
       let indices : Array[UInt64] = []
       for point in points {
         indices.push(coordinate_linear_index(point, dataspace.dimensions))
@@ -361,7 +366,7 @@ fn read_source_dataset_selection(
 
 ///|
 /// Reads selected values from a dataset.
-pub fn read_dataset_selection(
+fn read_dataset_selection(
   bytes : Bytes,
   header : ObjectHeader,
   metadata : DatasetMetadata,

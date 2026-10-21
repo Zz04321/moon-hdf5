@@ -17,7 +17,7 @@ fn signature_at(bytes : Bytes, offset : Int32) -> Bool {
 /// HDF5 places the superblock at byte 0 or at a power-of-two offset of at
 /// least 512 bytes. The scan stops after 1 MiB, matching libhdf5's practical
 /// user-block limit.
-pub fn find_superblock_offset(bytes : Bytes) -> Int32 raise Hdf5Error {
+fn find_superblock_offset(bytes : Bytes) -> Int32 raise Hdf5Error {
   if signature_at(bytes, 0) {
     return 0
   }
@@ -33,8 +33,8 @@ pub fn find_superblock_offset(bytes : Bytes) -> Int32 raise Hdf5Error {
 
 ///|
 /// Parsed HDF5 superblock.
-pub(all) struct Superblock {
-  superblock_offset : Int32
+priv struct Superblock {
+  _superblock_offset : Int32
   superblock_end : Int32
   version : Int32
   offset_size : Int32
@@ -50,13 +50,7 @@ pub(all) struct Superblock {
   group_leaf_node_k : UInt16
   group_internal_node_k : UInt16
   superblock_checksum : UInt32
-} derive(Eq, @debug.Debug)
-
-///|
-pub extend Superblock with Eq::{not_equal, equal}
-
-///|
-pub extend Superblock with @debug.Debug::{to_repr}
+}
 
 ///|
 fn validate_address_sizes(
@@ -98,7 +92,7 @@ fn parse_superblock_v0(
   let _root_reserved = reader.read_u32_le()
   let _root_scratch = reader.read_bytes(16)
   {
-    superblock_offset: offset,
+    _superblock_offset: offset,
     superblock_end: reader.position(),
     version,
     offset_size,
@@ -139,7 +133,7 @@ fn parse_superblock_v2(
     "superblock",
   )
   {
-    superblock_offset: offset,
+    _superblock_offset: offset,
     superblock_end: reader.position(),
     version,
     offset_size,
@@ -160,7 +154,7 @@ fn parse_superblock_v2(
 
 ///|
 /// Parses the HDF5 superblock, including a leading user block if present.
-pub fn parse_superblock(bytes : Bytes) -> Superblock raise Hdf5Error {
+fn parse_superblock(bytes : Bytes) -> Superblock raise Hdf5Error {
   let offset = find_superblock_offset(bytes)
   let reader = Reader::at(bytes, offset)
   let _signature = reader.read_bytes(8)

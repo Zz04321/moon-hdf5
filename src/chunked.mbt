@@ -526,7 +526,7 @@ fn read_source_chunked_with_filters(
 
 ///|
 /// Reconstructs an unfiltered chunked dataset into a contiguous buffer.
-pub fn read_chunked_payload(
+fn _read_chunked_payload(
   bytes : Bytes,
   layout : DataLayout,
   dataspace : Dataspace,

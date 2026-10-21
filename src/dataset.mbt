@@ -602,7 +602,7 @@ fn message_first(
 ///|
 /// Parses the dataspace, datatype and storage layout from a dataset object
 /// header without reading the stored values.
-pub fn read_dataset_metadata(
+fn read_dataset_metadata(
   header : ObjectHeader,
   offset_size : Int32,
   length_size : Int32,
@@ -696,7 +696,7 @@ fn read_dataset_values(
 ///|
 /// Parses a dataset object header and decodes compact, contiguous or
 /// chunked data with supported indexes and filters.
-pub fn read_dataset(
+fn read_dataset(
   bytes : Bytes,
   header : ObjectHeader,
   offset_size : Int32,

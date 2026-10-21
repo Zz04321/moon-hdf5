@@ -78,10 +78,10 @@ test "lookup3 matches a stored superblock checksum" {
   let bytes = @fs.read_file_to_bytes("testdata/latest_v3.h5")
   let superblock = parse_superblock(bytes)
   let covered = superblock.superblock_end -
-    superblock.superblock_offset -
+    superblock._superblock_offset -
     metadata_checksum_size
   assert_eq(
     superblock.superblock_checksum,
-    metadata_checksum(bytes, superblock.superblock_offset, covered),
+    metadata_checksum(bytes, superblock._superblock_offset, covered),
   )
 }

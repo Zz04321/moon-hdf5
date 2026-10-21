@@ -10,7 +10,7 @@ test "modern object header continuations preserve all root links" {
       "signed", "big_endian", "floating", "text", "unallocated", "default", "partial_default",
     ] {
     assert_true(nodes.any(node => node.path == "/" + name))
-    assert_eq(integer_values(file.open_dataset("/" + name)), [42L])
+    assert_eq(integer_values(file.read_dataset("/" + name)), [42L])
   }
 }
 
@@ -65,7 +65,7 @@ test "continuation checksum and short gaps are excluded from messages" {
       let bytes = continuation_fixture(gap, ordered)
       let header = parse_object_header(bytes, 0UL, 8, 8, 0UL)
       assert_eq(header.messages.length(), 2)
-      assert_eq(header.messages[1].msg_type, msg_nil)
+      assert_eq(header.messages[1].msg_type, _msg_nil)
       assert_eq(header.messages[1].data.length(), 0)
       let truncated = bytes
         .get_view(start=0, end=bytes.length() - 1)
@@ -90,7 +90,7 @@ test "initial chunk includes a complete final empty message" {
   let bytes = buffer.to_bytes()
   let header = parse_object_header(bytes, 0UL, 8, 8, 0UL)
   assert_eq(header.messages.length(), 1)
-  assert_eq(header.messages[0].msg_type, msg_nil)
+  assert_eq(header.messages[0].msg_type, _msg_nil)
   let error = try {
     let truncated = bytes
       .get_view(start=0, end=bytes.length() - 1)

@@ -1,5 +1,5 @@
 ///|
-pub(all) enum ChunkIndex {
+priv enum ChunkIndex {
   BTreeV1
   Single(UInt64?, UInt32)
   Implicit
@@ -9,17 +9,30 @@ pub(all) enum ChunkIndex {
 } derive(@debug.Debug)
 
 ///|
-pub(all) struct BTreeV2Config {
+/// The storage strategy used for a dataset payload.
+pub(all) enum DatasetLayoutKind {
+  Compact
+  Contiguous
+  Chunked
+  Virtual
+  Unknown
+} derive(Eq, @debug.Debug)
+
+///|
+pub extend DatasetLayoutKind with Eq::{not_equal, equal}
+
+///|
+pub extend DatasetLayoutKind with @debug.Debug::{to_repr}
+
+///|
+priv struct BTreeV2Config {
   node_size : Int32
   split_percent : Int32
   merge_percent : Int32
 } derive(@debug.Debug)
 
 ///|
-pub extend BTreeV2Config with @debug.Debug::{to_repr}
-
-///|
-pub(all) struct ExtensibleArrayConfig {
+priv struct ExtensibleArrayConfig {
   max_bits : Int32
   index_elements : Int32
   min_pointers : Int32
@@ -28,31 +41,40 @@ pub(all) struct ExtensibleArrayConfig {
 } derive(Eq, @debug.Debug)
 
 ///|
-pub extend ExtensibleArrayConfig with Eq::{not_equal, equal}
-
-///|
-pub extend ExtensibleArrayConfig with @debug.Debug::{to_repr}
-
-///|
-pub extend ChunkIndex with @debug.Debug::{to_repr}
-
-///|
-pub(all) struct DataLayout {
-  version : Int32
-  layout_class : Int32
-  data_address : UInt64
-  data_size : UInt64
-  chunk_dimensions : Array[UInt32]
-  element_size : Int32
-  compact_data : Bytes
-  chunk_index : ChunkIndex
+pub struct DataLayout {
+  priv version : Int32
+  priv layout_class : Int32
+  priv data_address : UInt64
+  priv data_size : UInt64
+  priv chunk_dimensions : Array[UInt32]
+  priv element_size : Int32
+  priv compact_data : Bytes
+  priv chunk_index : ChunkIndex
 } derive(@debug.Debug)
 
 ///|
 pub extend DataLayout with @debug.Debug::{to_repr}
 
 ///|
-pub fn parse_data_layout(
+/// Returns the dataset's storage strategy.
+pub fn DataLayout::kind(self : DataLayout) -> DatasetLayoutKind {
+  match self.layout_class {
+    0 => Compact
+    1 => Contiguous
+    2 => Chunked
+    3 => Virtual
+    _ => Unknown
+  }
+}
+
+///|
+/// Returns the chunk shape, or an empty array for non-chunked datasets.
+pub fn DataLayout::chunk_shape(self : DataLayout) -> Array[UInt32] {
+  self.chunk_dimensions.copy()
+}
+
+///|
+fn parse_data_layout(
   message : HeaderMessage,
   offset_size : Int32,
   length_size : Int32,

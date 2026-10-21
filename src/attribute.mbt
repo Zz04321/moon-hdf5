@@ -131,7 +131,7 @@ fn read_source_attribute_message(
 
 ///|
 /// Parses all attributes attached to an object header.
-pub fn read_attributes(
+fn read_attributes(
   bytes : Bytes,
   header : ObjectHeader,
   offset_size : Int32,

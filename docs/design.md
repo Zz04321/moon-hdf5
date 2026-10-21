@@ -17,8 +17,8 @@ their global heap objects on demand. Source-backed file addresses remain
 | Writing | writer | New-file encoding for groups, datasets and attributes |
 
 Dataset metadata parsing is separate from storage reads and value decoding.
-`open_dataset_metadata` returns the dataspace, datatype and layout without
-loading contiguous or chunked payloads; `open_dataset` reuses that metadata
+`read_dataset_metadata` returns the dataspace, datatype and layout without
+loading contiguous or chunked payloads; `read_dataset` reuses that metadata
 path before decoding all values. Dataset selections validate their rank and
 bounds, preserve point order and duplicates, and read only the selected elements
 from compact or contiguous storage. For chunked storage, every supported index
@@ -34,11 +34,11 @@ leaf/internal v2 B-tree nodes are bounds checked. Filtered heaps decode each
 direct block and huge object through the heap's stored pipeline before
 validating direct-block checksums. Indirect huge records are located through
 the heap's v2 B-tree. Chunked reads initialize the output with fill bytes before copying
-allocated chunks. The low-level `read_chunked_payload` defaults to zeros; the
-high-level reader supplies parsed fill values. Unallocated contiguous data uses
+allocated chunks. Unallocated contiguous data uses
 the same fill initialization; empty/null data does not dereference addresses.
 Allocated storage is read as stored, and external dataset storage is explicitly
-rejected.
+rejected. Byte cursors, object headers, message constants and chunk-index
+records remain internal implementation details.
 
 The high-level reader parses filter-pipeline messages v1/v2 and reverses active
 filters for each v1 B-tree chunk. Masked-out filters are skipped, including
@@ -46,7 +46,6 @@ unknown optional filters. Deflate uses a zlib wrapper (not a gzip container),
 Adler-32 verification and an output limit derived from chunk dimensions.
 Shuffle restores byte planes; Fletcher32 verifies and removes its trailer.
 Decoded chunks must exactly match the full chunk shape, including edge padding.
-The public low-level `read_chunked_payload` remains for unfiltered payloads.
 
 Layout v4 compact/contiguous storage follows the v3 encoding. Single-chunk
 indexes store a direct address and, when filtered, a byte length and mask.
@@ -69,14 +68,9 @@ nodes, including datasets with multiple unlimited dimensions. Child-pointer
 widths follow each level's capacity. Traversal validates subtree counts, node
 bounds and strictly increasing chunk coordinates, with bounded depth. Missing
 chunks retain fill values. Header and node checksums are verified.
-For array indexes, low-level `read_chunked_payload` accepts an optional
-`length_size` (default 8); pass the superblock's value for other length widths.
-
-`DataLayout` exposes `chunk_index : ChunkIndex` (`BTreeV1`, `Single`,
-`Implicit`, `FixedArray`, `ExtensibleArray`, or `BTreeV2`). Array and B-tree
-configuration structs expose their layout creation parameters.
-Callers constructing this public struct directly must supply that
-field; callers using `parse_data_layout` need no changes.
+`DataLayout` exposes a stable `DatasetLayoutKind` and a copied chunk shape.
+Format-specific index records and their creation parameters remain private so
+the public API does not depend on HDF5's on-disk index encodings.
 
 V2 continuation lengths include the OCHK signature and trailing checksum;
 both are excluded from message parsing. Message prefixes are four bytes, or
@@ -87,6 +81,9 @@ Recognized unsupported features raise `UnsupportedFeature`; malformed fields
 normally raise `InvalidField` or `UnexpectedEof`. Unsupported attribute values
 can be represented as `None`. Detection is incomplete: not all unsupported
 inputs are rejected. See [audit.md](audit.md).
+
+Invalid selections and writer inputs raise `InvalidArgument`, keeping caller
+errors distinct from malformed file metadata.
 
 Numeric metadata is checked before decoding: integers require full-width bits
 with zero offset; floats require standard IEEE binary32/binary64 fields.
@@ -148,11 +145,13 @@ base, and arrays can recursively contain any supported fixed-size writer type.
 Finite chunked datasets use v4 layouts and fixed-array indexes. Large fixed
 arrays use paged data blocks with allocation bitmaps and per-page checksums.
 Datasets with one unlimited dimension use a v4 extensible-array index with
-inline entries followed by direct data blocks. Fixed dimensions use their
-maximum extents when mapping chunk coordinates, so indexes remain stable as the
-current shape changes. Fill-only chunks retain undefined addresses; allocated
-chunks can run through shuffle, zlib-wrapped deflate and Fletcher32 before their
-stored sizes are indexed.
+inline entries, direct data blocks, super blocks and paged data blocks. Page
+allocation bitmaps and metadata checksums follow the HDF5 extensible-array
+layout. Header statistics describe the allocated blocks and realized element
+capacity. Fixed dimensions use their maximum extents when mapping chunk
+coordinates, so indexes remain stable as the current shape changes. Fill-only
+chunks retain undefined addresses; allocated chunks can run through shuffle,
+zlib-wrapped deflate and Fletcher32 before their stored sizes are indexed.
 
 `resize_dataset` rebuilds the row-major value array while preserving the
 overlapping coordinate region. `append_dataset` grows the unlimited dimension

@@ -179,5 +179,30 @@ Source-backed object, heap, index and payload addresses now remain `UInt64`,
 with a sparse-source regression covering an object above the 2 GiB boundary.
 Writer regressions now cover fixed arrays spanning multiple checksummed pages
 and filtered extensible arrays that continue from inline entries into direct
-data blocks. The former 1024-chunk and 128-slot writer guards were removed.
-Publication remains gated on proposal approval.
+data blocks, super blocks and paged data blocks. The h5py verification reads a
+134200-chunk extensible dataset across each boundary and confirms its filters,
+values and unlimited shape. The former 1024-chunk and 128-slot writer guards
+were removed. Publication remains gated on proposal approval.
+
+## Release-readiness review — 2026-10-21
+
+Wasm and native builds complete with the current package metadata. The metadata,
+selection and writer examples run from their documented commands; the writer
+output passes the h5py verifier. Local links in the README, design, audit,
+compatibility, prior-art and fixture documents resolve. The primary reader and
+writer entry points now have API documentation, and `moon doc` generates it
+successfully. The inspected package archive retains its reproducible fixtures
+and scripts while excluding repository-local instructions and drafts.
+`README.md` intentionally remains a symlink to the Mooncakes source document
+`README.mbt.md`, so the two entry points cannot drift. Publication remains
+deferred until the proposal is approved.
+
+The public API review removed byte cursors, object headers, parser helpers,
+message constants and format-specific chunk-index records from the generated
+interface. Dataset reads now consistently use the `read_dataset*` prefix;
+storage metadata exposes `DatasetLayoutKind` and a copied chunk shape instead
+of raw addresses and index records. `Hdf5File` internals are private, with a
+dedicated superblock-version accessor. Invalid selections and writer inputs now
+raise `InvalidArgument`, distinct from malformed file metadata. A separate
+MoonBit workspace imports the module through its generated interface and
+successfully writes, parses and reads a dataset without private symbols.

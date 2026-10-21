@@ -2,7 +2,7 @@
 test "v4 single chunk indexes support filters masks and unallocated fills" {
   let file = Hdf5File::parse(@fs.read_file_to_bytes("testdata/layout_v4.h5"))
   for name in ["raw", "filtered"] {
-    let dataset = file.open_dataset("/single/" + name)
+    let dataset = file.read_dataset("/single/" + name)
     assert_eq(dataset.layout.version, 4)
     assert_true(dataset.layout.chunk_index is Single(_, _))
     let values = integer_values(dataset)
@@ -12,10 +12,10 @@ test "v4 single chunk indexes support filters masks and unallocated fills" {
     }
   }
   assert_eq(
-    integer_values(file.open_dataset("/single/unallocated")),
+    integer_values(file.read_dataset("/single/unallocated")),
     Array::make(12, -7L),
   )
-  assert_eq(integer_values(file.open_dataset("/single/skipped")), [
+  assert_eq(integer_values(file.read_dataset("/single/skipped")), [
     1L, 2L, 3L, 4L,
   ])
 }
@@ -24,7 +24,7 @@ test "v4 single chunk indexes support filters masks and unallocated fills" {
 test "v4 implicit indexes map chunk grids using maximum dimensions" {
   let file = Hdf5File::parse(@fs.read_file_to_bytes("testdata/layout_v4.h5"))
   for (name, count) in [("edge", 35), ("resizable", 12)] {
-    let dataset = file.open_dataset("/implicit/" + name)
+    let dataset = file.read_dataset("/implicit/" + name)
     assert_true(dataset.layout.chunk_index is Implicit)
     let values = integer_values(dataset)
     assert_eq(values.length(), count)
@@ -32,18 +32,18 @@ test "v4 implicit indexes map chunk grids using maximum dimensions" {
       assert_eq(values[index], index.to_int64())
     }
   }
-  assert_eq(integer_values(file.open_dataset("/contiguous")), [10L, 20L])
-  assert_eq(integer_values(file.open_dataset("/compact")), [30L, 40L])
+  assert_eq(integer_values(file.read_dataset("/contiguous")), [10L, 20L])
+  assert_eq(integer_values(file.read_dataset("/compact")), [30L, 40L])
 }
 
 ///|
 test "v4 fixed array and direct chunk payload bounds" {
   let file = Hdf5File::parse(@fs.read_file_to_bytes("testdata/layout_v4.h5"))
-  assert_eq(integer_values(file.open_dataset("/fixed_array")), [
+  assert_eq(integer_values(file.read_dataset("/fixed_array")), [
     0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L,
   ])
   for path in ["/single/raw", "/implicit/edge"] {
-    let dataset = file.open_dataset(path)
+    let dataset = file.read_dataset(path)
     let error = try {
       read_direct_chunks(
         b"",
@@ -83,7 +83,7 @@ test "v4 dimension widths and truncated metadata are validated" {
     buffer.write_uint64_le(100UL)
     let data = buffer.to_bytes()
     let layout = parse_data_layout(
-      { msg_type: msg_data_layout, flags: b'\x00', data_offset: 0, data, },
+      { msg_type: msg_data_layout, flags: b'\x00', data, },
       8,
       8,
     )
@@ -94,12 +94,7 @@ test "v4 dimension widths and truncated metadata are validated" {
       let truncated = data.get_view(start=0, end=length).unwrap().to_owned()
       let error = try {
         parse_data_layout(
-          {
-            msg_type: msg_data_layout,
-            flags: b'\x00',
-            data_offset: 0,
-            data: truncated,
-          },
+          { msg_type: msg_data_layout, flags: b'\x00', data: truncated, },
           8,
           8,
         )

@@ -1,15 +1,12 @@
 ///|
 /// The two addresses stored in a symbol table message.
-pub(all) struct SymbolTableInfo {
+priv struct SymbolTableInfo {
   btree_address : UInt64
   heap_address : UInt64
-} derive(@debug.Debug)
+}
 
 ///|
-pub extend SymbolTableInfo with @debug.Debug::{to_repr}
-
-///|
-pub fn parse_symbol_table_message(
+fn parse_symbol_table_message(
   message : HeaderMessage,
   offset_size : Int32,
   _length_size : Int32,
@@ -25,15 +22,12 @@ pub fn parse_symbol_table_message(
 
 ///|
 /// A hard or soft link found in a version 1 group.
-pub(all) struct GroupLink {
+priv struct GroupLink {
   name : String
   object_header_address : UInt64
   cache_type : UInt32
   link_target : String?
-} derive(@debug.Debug)
-
-///|
-pub extend GroupLink with @debug.Debug::{to_repr}
+}
 
 ///|
 fn read_symbol_table_node(
@@ -133,7 +127,7 @@ fn read_group_btree_node(
 
 ///|
 /// Reads all links from a version 1 group (symbol table message).
-pub fn read_group_links_v1(
+fn read_group_links_v1(
   bytes : Bytes,
   btree_address : UInt64,
   heap_address : UInt64,

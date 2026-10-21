@@ -77,7 +77,7 @@ fn parse_source_superblock(source : &Hdf5Source) -> Superblock raise Hdf5Error {
   let bytes = source_read_available(source, offset, 96)
   let parsed = parse_superblock(bytes)
   {
-    superblock_offset: offset.to_int(),
+    _superblock_offset: offset.to_int(),
     superblock_end: offset.to_int() + parsed.superblock_end,
     version: parsed.version,
     offset_size: parsed.offset_size,
@@ -135,7 +135,7 @@ fn parse_source_object_header(
         [absolute],
         messages,
       )
-      { version: 1, messages, }
+      { _version: 1, messages, }
     }
     b'O' => {
       guard reader.read_bytes(3) == b"HDR" else {
@@ -179,7 +179,7 @@ fn parse_source_object_header(
         [absolute],
         messages,
       )
-      { version: 2, messages, }
+      { _version: 2, messages, }
     }
     _ => raise InvalidField("unknown object header version")
   }
@@ -200,9 +200,8 @@ fn parse_source_v1_messages(
     let size = block.read_u16_le().to_int()
     let flags = block.read_u8()
     block.skip(3)
-    let data_offset = block.position()
     let data = block.read_bytes(size)
-    messages.push({ msg_type, flags, data_offset, data, })
+    messages.push({ msg_type, flags, data, })
     if msg_type == msg_object_continuation {
       let continuation = Reader::new(data)
       let continuation_address = continuation.read_uint_le(offset_size)
@@ -250,9 +249,8 @@ fn parse_source_v2_messages(
     if creation_order_size == 2 {
       block.skip(2)
     }
-    let data_offset = block.position()
     let data = block.read_bytes(size)
-    messages.push({ msg_type, flags, data_offset, data, })
+    messages.push({ msg_type, flags, data, })
     if msg_type == msg_object_continuation {
       let continuation = Reader::new(data)
       let continuation_address = continuation.read_uint_le(offset_size)

@@ -43,7 +43,7 @@ test "parse v0 superblock" {
   assert_eq(superblock.group_leaf_node_k, 4)
   assert_eq(superblock.end_of_file_address, 256UL)
   assert_eq(superblock.root_group_object_header, 0x40UL)
-  assert_eq(superblock.superblock_offset, 0)
+  assert_eq(superblock._superblock_offset, 0)
   assert_eq(superblock.superblock_end, 96)
 }
 
@@ -100,7 +100,7 @@ test "find superblock after user block" {
   }
   write_v0_superblock(buf)
   let superblock = parse_superblock(buf.to_bytes())
-  assert_eq(superblock.superblock_offset, 512)
+  assert_eq(superblock._superblock_offset, 512)
   assert_eq(superblock.root_group_object_header, 0x40UL)
 }
 
@@ -155,7 +155,7 @@ test "parse v1 object header symbol table message" {
   let buf = @buffer.Buffer::Buffer(size_hint=64)
   write_v1_object_header(buf)
   let header = parse_object_header(buf.to_bytes(), 0UL, 8, 8, 0UL)
-  assert_eq(header.version, 1)
+  assert_eq(header._version, 1)
   assert_eq(header.messages.length(), 1)
   let message = header.messages[0]
   assert_eq(message.msg_type, msg_symbol_table)
@@ -180,7 +180,7 @@ test "parse v2 object header link message" {
   buf.write_uint64_le(0x30UL)
   buf.write_uint_le(metadata_checksum(buf.to_bytes(), 0, buf.length()))
   let header = parse_object_header(buf.to_bytes(), 0UL, 8, 8, 0UL)
-  assert_eq(header.version, 2)
+  assert_eq(header._version, 2)
   assert_eq(header.messages.length(), 1)
   assert_eq(header.messages[0].msg_type, msg_link)
   assert_eq(header.messages[0].data.length(), 8)
@@ -233,7 +233,7 @@ test "parse real v0 superblock and root object header" {
     superblock.length_size,
     superblock.base_address,
   )
-  assert_eq(header.version, 1)
+  assert_eq(header._version, 1)
   assert_true(header.first(msg_symbol_table) is Some(_))
 }
 
@@ -241,7 +241,7 @@ test "parse real v0 superblock and root object header" {
 test "parse real user-block file" {
   let bytes = @fs.read_file_to_bytes("testdata/userblock.h5")
   let superblock = parse_superblock(bytes)
-  assert_eq(superblock.superblock_offset, 512)
+  assert_eq(superblock._superblock_offset, 512)
   assert_eq(superblock.base_address, 512UL)
   let header = parse_object_header(
     bytes,
@@ -250,7 +250,7 @@ test "parse real user-block file" {
     superblock.length_size,
     superblock.base_address,
   )
-  assert_eq(header.version, 1)
+  assert_eq(header._version, 1)
 }
 
 ///|
@@ -265,7 +265,7 @@ test "parse real v3 superblock and v2 object header" {
     superblock.length_size,
     superblock.base_address,
   )
-  assert_eq(header.version, 2)
+  assert_eq(header._version, 2)
   assert_true(header.messages.length() > 0)
 }
 
@@ -414,7 +414,7 @@ fn open_root_link(bytes : Bytes, name : String) -> GroupLink raise Hdf5Error {
     superblock.length_size,
     superblock.base_address,
   )
-  let links = if root.version == 1 {
+  let links = if root._version == 1 {
     let symbol_table = parse_symbol_table_message(
       root.first(msg_symbol_table).unwrap(),
       superblock.offset_size,
@@ -450,7 +450,7 @@ fn open_link(
   name : String,
 ) -> GroupLink raise Hdf5Error {
   let superblock = parse_superblock(bytes)
-  let links = if header.version == 1 {
+  let links = if header._version == 1 {
     let symbol_table = parse_symbol_table_message(
       header.first(msg_symbol_table).unwrap(),
       superblock.offset_size,
@@ -632,7 +632,7 @@ test "read v3 contiguous dataset" {
 test "read uncompressed chunked dataset" {
   let bytes = @fs.read_file_to_bytes("testdata/compressed.h5")
   let file = Hdf5File::parse(bytes)
-  let dataset = file.open_dataset("/chunked")
+  let dataset = file.read_dataset("/chunked")
   let values = integer_values(dataset)
   assert_eq(values.length(), 120)
   assert_eq(values[0], 0L)
@@ -644,7 +644,7 @@ test "read uncompressed chunked dataset" {
 ///|
 test "chunked edge chunks are decoded correctly" {
   let file = Hdf5File::parse(@fs.read_file_to_bytes("testdata/chunked_edge.h5"))
-  let dataset = file.open_dataset("/edge")
+  let dataset = file.read_dataset("/edge")
   let values = integer_values(dataset)
   assert_eq(values.length(), 35)
   for i in 0..<35 {
@@ -656,7 +656,7 @@ test "chunked edge chunks are decoded correctly" {
 test "deflate chunked datasets are decoded" {
   let bytes = @fs.read_file_to_bytes("testdata/compressed.h5")
   let file = Hdf5File::parse(bytes)
-  let values = integer_values(file.open_dataset("/gzip"))
+  let values = integer_values(file.read_dataset("/gzip"))
   assert_eq(values.length(), 256)
   for index in 0..<256 {
     assert_eq(values[index], index.to_int64())
@@ -738,7 +738,7 @@ test "high-level file API resolves paths and walks groups" {
   assert_eq(file.resolve("/").kind, Group)
   assert_eq(file.resolve("/group").kind, Group)
   assert_eq(file.resolve("/group/values").kind, Dataset)
-  let dataset = file.open_dataset("/group/values")
+  let dataset = file.read_dataset("/group/values")
   assert_eq(integer_values(dataset), [0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L])
   let root_attributes = file.attributes("/")
   assert_eq(find_attribute(root_attributes, "title").name, "title")
@@ -754,9 +754,9 @@ test "high-level API works with user block and v3 files" {
   let userblock = Hdf5File::parse(
     @fs.read_file_to_bytes("testdata/userblock.h5"),
   )
-  assert_eq(integer_values(userblock.open_dataset("/x")), [0L, 1L, 2L, 3L])
+  assert_eq(integer_values(userblock.read_dataset("/x")), [0L, 1L, 2L, 3L])
   let latest = Hdf5File::parse(@fs.read_file_to_bytes("testdata/latest_v3.h5"))
-  assert_eq(integer_values(latest.open_dataset("/group/values")), [
+  assert_eq(integer_values(latest.read_dataset("/group/values")), [
     0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L,
   ])
 }
@@ -766,7 +766,7 @@ test "high-level API follows soft links and rejects external links" {
   let file = Hdf5File::parse(@fs.read_file_to_bytes("testdata/links.h5"))
   let alias_node = file.resolve("/alias")
   assert_eq(alias_node.kind, Group)
-  assert_eq(integer_values(file.open_dataset("/alias/values")), [0L, 1L, 2L])
+  assert_eq(integer_values(file.read_dataset("/alias/values")), [0L, 1L, 2L])
   let nodes = file.walk()
   let external = nodes.search_by(node => node.path == "/external").unwrap()
   assert_eq(nodes[external].kind, Unknown)
@@ -790,8 +790,8 @@ test "compact and empty groups remain readable" {
     let node = file.resolve(path)
     let links = file.links(file.object_header_at(node.address))
     assert_eq(links.map(link => link.name), ["value_00", "value_01"])
-    assert_eq(integer_values(file.open_dataset(path + "/value_00")), [0L, 100L])
-    assert_eq(integer_values(file.open_dataset(path + "/value_01")), [1L, 101L])
+    assert_eq(integer_values(file.read_dataset(path + "/value_00")), [0L, 100L])
+    assert_eq(integer_values(file.read_dataset(path + "/value_01")), [1L, 101L])
   }
 }
 
@@ -810,7 +810,7 @@ test "read dense groups through fractal heaps and v2 B-trees" {
     let links = file.links(file.object_header_at(node.address))
     assert_eq(links.map(link => link.name), names)
     for index in 0..<names.length() {
-      assert_eq(integer_values(file.open_dataset(path + "/" + names[index])), [
+      assert_eq(integer_values(file.read_dataset(path + "/" + names[index])), [
         index.to_int64(),
         (100 + index).to_int64(),
       ])
@@ -849,12 +849,11 @@ test "link info uses address-width-specific undefined addresses" {
           }
         }
         let header : ObjectHeader = {
-          version: 2,
+          _version: 2,
           messages: [
             {
               msg_type: msg_link_info,
               flags: b'\x00',
-              data_offset: 0,
               data: buffer.to_bytes(),
             },
           ],
@@ -891,10 +890,8 @@ test "invalid link info is not treated as an empty group" {
       b"\x00", b"\x00\x00\xff", b"\x00\x01", b"\x00\x02", b"\x00\x04", b"\x01\x00",
     ] {
     let header : ObjectHeader = {
-      version: 2,
-      messages: [
-        { msg_type: msg_link_info, flags: b'\x00', data_offset: 0, data, },
-      ],
+      _version: 2,
+      messages: [{ msg_type: msg_link_info, flags: b'\x00', data, }],
     }
     let error = try {
       read_group_links_v2(b"", header, 8, 8, 0UL) |> ignore
@@ -918,7 +915,7 @@ test "read latest-format attributes" {
     values_strings(find_attribute(attributes, "title").values.unwrap()),
     ["modern"],
   )
-  assert_eq(integer_values(file.open_dataset("/data")), [0L, 1L, 2L])
+  assert_eq(integer_values(file.read_dataset("/data")), [0L, 1L, 2L])
   let data_attributes = file.attributes("/data")
   let scale = match find_attribute(data_attributes, "scale").values.unwrap() {
     Floats(values) => values

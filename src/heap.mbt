@@ -1,17 +1,13 @@
 ///|
 /// A parsed HDF5 local heap.
-pub(all) struct LocalHeap {
+priv struct LocalHeap {
   bytes : Bytes
   data_address : Int32
   data_size : Int32
-  offset_to_free_list : UInt64
-} derive(@debug.Debug)
+}
 
 ///|
-pub extend LocalHeap with @debug.Debug::{to_repr}
-
-///|
-pub fn parse_local_heap(
+fn parse_local_heap(
   bytes : Bytes,
   address : UInt64,
   offset_size : Int32,
@@ -34,18 +30,18 @@ pub fn parse_local_heap(
     raise InvalidField("local heap size is too large")
   }
   let data_size = stored_size.to_int()
-  let offset_to_free_list = reader.read_uint_le(length_size)
+  let _offset_to_free_list = reader.read_uint_le(length_size)
   let data_address = address_to_offset(
     reader.read_uint_le(offset_size),
     base_address,
   )
   Reader::new(bytes).sub(data_address, data_size) |> ignore
-  { bytes, data_address, data_size, offset_to_free_list, }
+  { bytes, data_address, data_size, }
 }
 
 ///|
 /// Reads a null-terminated UTF-8 string from the local heap data segment.
-pub fn LocalHeap::get_string(
+fn LocalHeap::get_string(
   self : LocalHeap,
   offset : UInt64,
 ) -> String raise Hdf5Error {

@@ -475,7 +475,7 @@ fn parse_datatype_data(data : Bytes) -> Datatype raise Hdf5Error {
 }
 
 ///|
-pub fn parse_datatype(message : HeaderMessage) -> Datatype raise Hdf5Error {
+fn parse_datatype(message : HeaderMessage) -> Datatype raise Hdf5Error {
   guard message.msg_type == msg_datatype else {
     raise InvalidField("message is not a datatype message")
   }

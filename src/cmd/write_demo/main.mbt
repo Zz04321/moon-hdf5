@@ -54,6 +54,22 @@ fn run(args : Array[String]) -> Int32 {
       Int64Values([30L, 31L]),
     )
     writer.resize_dataset("/experiment/series", [4UL, 2UL])
+    let paged = Array::make(134200, 0U)
+    paged[0] = 1U
+    paged[243] = 2U
+    paged[244] = 3U
+    paged[131059] = 4U
+    paged[131060] = 5U
+    paged[132100] = 6U
+    paged[134199] = 7U
+    writer.add_extensible_dataset(
+      "/experiment/paged_series",
+      [134200UL],
+      [None],
+      [1U],
+      UInt8Values(paged),
+      filters=[Deflate(6), Fletcher32],
+    )
     writer.add_dataset(
       "/experiment/names",
       [4UL],

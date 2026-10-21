@@ -41,7 +41,7 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | File framing | Superblock v3 and object headers v2 | Writer does not select older format versions |
 | Groups | Nested groups and compact hard links | Dense link creation and soft/external link writing are absent |
 | Attributes | Inline numeric, fixed/vlen string and structured attributes | Dense attribute writing is absent |
-| Dataset layouts | Contiguous, paged fixed-array chunked and extensible-array chunked with inline/direct blocks | Extensible-array super-block output is absent |
+| Dataset layouts | Contiguous, paged fixed-array chunked and extensible-array chunked with inline, direct, super and paged data blocks | External and virtual dataset storage are absent |
 | Numeric values | Little-endian int/uint8–64 and IEEE float32/64 | Big-endian and nonstandard numeric output are absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Variable-length sequence output is absent |
 | Structured values | Packed compound, enum and fixed array values | Reference, bitfield, opaque, time and complex output are absent |
@@ -49,8 +49,9 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | Fill values | Default and custom fixed-size fills, including structured fills | Custom variable-length fills are rejected |
 | Extensible datasets | One unlimited axis, in-memory resize and append | MoonBit does not modify an existing file in place |
 
-The h5py verification also checks that generated extensible datasets expose the
-expected maximum shape and can subsequently be resized and written by h5py.
+The h5py verification also checks extensible-array super blocks and paged data
+blocks across 134200 chunks. Generated extensible datasets expose the expected
+maximum shape and can subsequently be resized and written by h5py.
 
 ## Reproduce
 

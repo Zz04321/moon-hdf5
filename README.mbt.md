@@ -19,7 +19,8 @@ and [audit report](docs/audit.md) for verification history.
 - Provides metadata-only access, hyperslab selection and ordered point
   selection.
 - Creates new files with groups, attributes, contiguous or chunked datasets,
-  filters, fill values and one extensible dimension.
+  filters, fill values and one extensible dimension. Large chunk indexes use
+  fixed-array pages or extensible-array super blocks and data pages.
 
 ## Quick Start
 
@@ -52,10 +53,10 @@ import {
 let file = @lib.Hdf5File::parse(@fs.read_file_to_bytes("data.h5"))
 
 ///|
-let metadata = file.open_dataset_metadata("/group/values")
+let metadata = file.read_dataset_metadata("/group/values")
 
 ///|
-let dataset = file.open_dataset("/group/values")
+let dataset = file.read_dataset("/group/values")
 
 ///|
 let selected = file.read_dataset_selection(
@@ -74,7 +75,7 @@ Simple values are returned as `Integers`, `UnsignedIntegers`, `Floats`,
 `Strings` or `Enums`. Other datatype classes use recursive `Structured` values.
 References are returned as encoded bytes and are not dereferenced.
 
-`open_dataset_metadata` does not load dataset values. Selection reads support
+`read_dataset_metadata` does not load dataset values. Selection reads support
 compact, contiguous and chunked datasets; chunked reads decode only intersecting
 allocated chunks.
 
@@ -136,7 +137,8 @@ Use `add_chunked_dataset` for a finite chunked dataset. Use
 `add_extensible_dataset`, `resize_dataset` and `append_dataset` for a dataset
 with one unlimited dimension. `Datatype::write_integer`, `write_float`,
 `write_fixed_string`, `write_enum`, `write_array` and `write_compound` construct
-supported structured writer types.
+supported structured writer types. The writer demo includes an extensible array
+large enough to exercise direct blocks, super blocks and paged data blocks.
 
 Run the complete writer example and verify its output independently with h5py:
 
@@ -172,7 +174,8 @@ Focused examples are available in `src/cmd/metadata_demo`,
 
 Version support does not imply support for every structure in that version.
 Unsupported structures raise `UnsupportedFeature`; malformed data normally
-raises `InvalidField` or `UnexpectedEof`.
+raises `InvalidField` or `UnexpectedEof`. Invalid selections and writer inputs
+raise `InvalidArgument`.
 
 ## Development
 

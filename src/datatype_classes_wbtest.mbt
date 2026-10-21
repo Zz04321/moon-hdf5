@@ -38,7 +38,7 @@ test "compound array and variable-length datatypes decode recursively" {
   let file = Hdf5File::parse(
     @fs.read_file_to_bytes("testdata/datatypes_v200.h5"),
   )
-  let compound = file.open_dataset("/compound")
+  let compound = file.read_dataset("/compound")
   assert_eq(compound.datatype.class, 6)
   assert_eq(compound.datatype.version, 5)
   assert_eq(compound.datatype.compound_members.length(), 5)
@@ -53,7 +53,7 @@ test "compound array and variable-length datatypes decode recursively" {
     compound_value(99L, 0.0, "z", 5L, 6L, [30UL, 31UL, 32UL, 33UL]),
   ])
 
-  let array = file.open_dataset("/array")
+  let array = file.read_dataset("/array")
   assert_eq(array.datatype.class, 10)
   assert_eq(array.datatype.version, 5)
   assert_eq(array.datatype.array_dimensions, [2UL, 3UL])
@@ -76,12 +76,12 @@ test "compound array and variable-length datatypes decode recursively" {
     ]),
   ])
 
-  assert_eq(structured_values(file.open_dataset("/sequences")), [
+  assert_eq(structured_values(file.read_dataset("/sequences")), [
     Sequence([SignedInteger(1L), SignedInteger(-2L), SignedInteger(3L)]),
     Sequence([]),
     Sequence([SignedInteger(300L), SignedInteger(400L)]),
   ])
-  assert_eq(string_values(file.open_dataset("/utf8")), ["月亮", "HDF5", ""])
+  assert_eq(string_values(file.read_dataset("/utf8")), ["月亮", "HDF5", ""])
 }
 
 ///|
@@ -89,7 +89,7 @@ test "bitfield opaque time reference and complex datatypes decode" {
   let file = Hdf5File::parse(
     @fs.read_file_to_bytes("testdata/datatypes_v200.h5"),
   )
-  let bitfield = file.open_dataset("/bitfield")
+  let bitfield = file.read_dataset("/bitfield")
   assert_eq(bitfield.datatype.class, 4)
   assert_eq(bitfield.datatype.bit_precision, 16)
   assert_eq(structured_values(bitfield), [
@@ -98,7 +98,7 @@ test "bitfield opaque time reference and complex datatypes decode" {
     Bitfield(42330UL),
   ])
 
-  let opaque_dataset = file.open_dataset("/opaque")
+  let opaque_dataset = file.read_dataset("/opaque")
   assert_eq(opaque_dataset.datatype.class, 5)
   assert_eq(opaque_dataset.datatype.opaque_tag, "NUMPY:|V4")
   assert_eq(structured_values(opaque_dataset), [
@@ -106,11 +106,11 @@ test "bitfield opaque time reference and complex datatypes decode" {
     Opaque(b"MOON"),
   ])
 
-  let time = file.open_dataset("/time")
+  let time = file.read_dataset("/time")
   assert_eq(time.datatype.class, 2)
   assert_eq(structured_values(time), [Time(0UL), Time(1700000000UL)])
 
-  let object_refs = structured_values(file.open_dataset("/object_refs"))
+  let object_refs = structured_values(file.read_dataset("/object_refs"))
   assert_eq(object_refs.length(), 2)
   match (object_refs[0], object_refs[1]) {
     (Reference(first), Reference(second)) => {
@@ -119,17 +119,17 @@ test "bitfield opaque time reference and complex datatypes decode" {
     }
     _ => abort("expected object references")
   }
-  let region_refs = structured_values(file.open_dataset("/region_refs"))
+  let region_refs = structured_values(file.read_dataset("/region_refs"))
   match region_refs[0] {
     Reference(value) => assert_eq(value.length(), 12)
     _ => abort("expected region reference")
   }
 
-  assert_eq(structured_values(file.open_dataset("/complex64")), [
+  assert_eq(structured_values(file.read_dataset("/complex64")), [
     Complex(1.0, 2.0),
     Complex(-3.5, 0.25),
   ])
-  assert_eq(structured_values(file.open_dataset("/complex128_be")), [
+  assert_eq(structured_values(file.read_dataset("/complex128_be")), [
     Complex(2.0, -4.0),
   ])
 }
@@ -139,7 +139,7 @@ test "structured values work in fills selections and attributes" {
   let file = Hdf5File::parse(
     @fs.read_file_to_bytes("testdata/datatypes_v200.h5"),
   )
-  let filled = structured_values(file.open_dataset("/compound_fill"))
+  let filled = structured_values(file.read_dataset("/compound_fill"))
   let expected = compound_value(-2L, -2.25, "xy", 3L, 4L, [
     20UL, 21UL, 22UL, 23UL,
   ])

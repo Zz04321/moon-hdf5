@@ -28,16 +28,14 @@ pub extend Hdf5Node with @debug.Debug::{to_repr}
 
 ///|
 /// A parsed HDF5 file backed by bytes or a random-access source.
-pub(all) struct Hdf5File {
-  bytes : Bytes
-  superblock : Superblock
-  source : &Hdf5Source?
-} derive(@debug.Debug)
+pub struct Hdf5File {
+  priv bytes : Bytes
+  priv superblock : Superblock
+  priv source : &Hdf5Source?
+}
 
 ///|
-pub extend Hdf5File with @debug.Debug::{to_repr}
-
-///|
+/// Parses an HDF5 file from in-memory bytes.
 pub fn Hdf5File::parse(bytes : Bytes) -> Hdf5File raise Hdf5Error {
   { bytes, superblock: parse_superblock(bytes), source: None, }
 }
@@ -54,12 +52,20 @@ pub fn Hdf5File::parse_source(source : &Hdf5Source) -> Hdf5File raise Hdf5Error 
 }
 
 ///|
-pub fn Hdf5File::root_address(self : Hdf5File) -> UInt64 {
+/// Returns the parsed HDF5 superblock version.
+pub fn Hdf5File::superblock_version(self : Hdf5File) -> Int32 {
+  self.superblock.version
+}
+
+///|
+/// Returns the file address of the root group object header.
+fn Hdf5File::root_address(self : Hdf5File) -> UInt64 {
   self.superblock.root_group_object_header
 }
 
 ///|
-pub fn Hdf5File::object_header_at(
+/// Reads an object header at a file address.
+fn Hdf5File::object_header_at(
   self : Hdf5File,
   address : UInt64,
 ) -> ObjectHeader raise Hdf5Error {
@@ -101,7 +107,7 @@ fn object_kind(header : ObjectHeader) -> Hdf5ObjectKind {
 ///|
 /// Reads the links stored in a group object header, supporting both the
 /// symbol-table (v1) and link-message (v2) group encodings.
-pub fn Hdf5File::links(
+fn Hdf5File::links(
   self : Hdf5File,
   header : ObjectHeader,
 ) -> Array[GroupLink] raise Hdf5Error {
@@ -177,6 +183,7 @@ fn join_path(parent : String, name : String) -> String {
 }
 
 ///|
+/// Resolves an absolute or root-relative object path.
 pub fn Hdf5File::resolve(
   self : Hdf5File,
   path : String,
@@ -250,7 +257,8 @@ fn Hdf5File::resolve_from(
 }
 
 ///|
-pub fn Hdf5File::open_dataset(
+/// Reads a dataset and decodes all of its values.
+pub fn Hdf5File::read_dataset(
   self : Hdf5File,
   path : String,
 ) -> Dataset raise Hdf5Error {
@@ -299,7 +307,7 @@ pub fn Hdf5File::open_dataset(
 ///|
 /// Reads a dataset's shape, datatype and storage layout without loading its
 /// values.
-pub fn Hdf5File::open_dataset_metadata(
+pub fn Hdf5File::read_dataset_metadata(
   self : Hdf5File,
   path : String,
 ) -> DatasetMetadata raise Hdf5Error {
@@ -357,6 +365,7 @@ pub fn Hdf5File::read_dataset_selection(
 }
 
 ///|
+/// Reads the attributes attached to an object path.
 pub fn Hdf5File::attributes(
   self : Hdf5File,
   path : String,

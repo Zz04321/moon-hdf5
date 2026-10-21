@@ -498,7 +498,6 @@ fn parse_source_fractal_heap(
     parse_filters({
       msg_type: msg_filter_pipeline,
       flags: b'\x00',
-      data_offset: 0,
       data: encoded_filters,
     })
   } else {

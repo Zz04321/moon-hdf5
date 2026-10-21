@@ -5,7 +5,7 @@ test "nonstandard numeric layouts are explicitly rejected" {
   )
   for name in ["offset", "precision", "custom_float"] {
     let error = try {
-      file.open_dataset("/" + name) |> ignore
+      file.read_dataset("/" + name) |> ignore
       None
     } catch {
       error => Some(error)
@@ -63,12 +63,11 @@ test "attribute info validates address widths and index flags" {
           }
         }
         let header : ObjectHeader = {
-          version: 2,
+          _version: 2,
           messages: [
             {
               msg_type: msg_attribute_info,
               flags: b'\x00',
-              data_offset: 0,
               data: buffer.to_bytes(),
             },
           ],
@@ -103,10 +102,8 @@ test "attribute info validates address widths and index flags" {
 test "malformed attribute info cannot masquerade as empty attributes" {
   for data in [b"\x00", b"\x00\x01", b"\x00\x00\xff", b"\x00\x02", b"\x00\x04"] {
     let header : ObjectHeader = {
-      version: 2,
-      messages: [
-        { msg_type: msg_attribute_info, flags: b'\x00', data_offset: 0, data, },
-      ],
+      _version: 2,
+      messages: [{ msg_type: msg_attribute_info, flags: b'\x00', data, }],
     }
     let error = try {
       read_attributes(b"", header, 8, 8, 0UL) |> ignore
@@ -129,20 +126,20 @@ test "standard numeric widths and byte orders remain readable" {
     for width in [1, 2, 4, 8] {
       assert_eq(
         integer_values(
-          file.open_dataset("/" + endian + "_i" + width.to_string()),
+          file.read_dataset("/" + endian + "_i" + width.to_string()),
         ),
         [1L, 42L],
       )
       assert_eq(
         unsigned_values(
-          file.open_dataset("/" + endian + "_u" + width.to_string()),
+          file.read_dataset("/" + endian + "_u" + width.to_string()),
         ),
         [1UL, 42UL],
       )
     }
     for width in [4, 8] {
       assert_eq(
-        float_values(file.open_dataset("/" + endian + "_f" + width.to_string())),
+        float_values(file.read_dataset("/" + endian + "_f" + width.to_string())),
         [1.0, 42.0],
       )
     }

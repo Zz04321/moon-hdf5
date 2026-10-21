@@ -74,7 +74,7 @@ fn exercise_bytes(source : Bytes) -> Unit {
       _ => ()
     }
     if node.kind == Dataset {
-      try file.open_dataset(node.path) |> ignore catch {
+      try file.read_dataset(node.path) |> ignore catch {
         _ => ()
       }
     }

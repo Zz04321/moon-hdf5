@@ -23,7 +23,7 @@ fn enum_member_value(
 test "enum datasets decode signed unsigned and big-endian members" {
   for path in ["testdata/enums_v108.h5", "testdata/enums_v110.h5"] {
     let file = Hdf5File::parse(@fs.read_file_to_bytes(path))
-    let colors = file.open_dataset("/colors")
+    let colors = file.read_dataset("/colors")
     assert_eq(colors.datatype.class, 8)
     assert_eq(colors.datatype.enum_members.length(), 4)
     assert_eq(enum_values(colors), ["RED", "LONG_NAME_XYZ", "GREEN", "EIGHTCHR"])
@@ -36,7 +36,7 @@ test "enum datasets decode signed unsigned and big-endian members" {
       EnumValue::Signed(3L),
     )
 
-    let unsigned = file.open_dataset("/unsigned")
+    let unsigned = file.read_dataset("/unsigned")
     assert_eq(unsigned.datatype.signed, false)
     assert_eq(enum_values(unsigned), ["LONG_NAME_XYZ", "ZERO"])
     assert_eq(
@@ -44,7 +44,7 @@ test "enum datasets decode signed unsigned and big-endian members" {
       EnumValue::Unsigned(0UL),
     )
 
-    let big_endian = file.open_dataset("/big_endian")
+    let big_endian = file.read_dataset("/big_endian")
     assert_eq(big_endian.datatype.signed, true)
     assert_eq(big_endian.datatype.little_endian, false)
     assert_eq(enum_values(big_endian), ["HIGH", "LOW"])
