@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 import h5py
 import numpy as np
@@ -152,6 +153,103 @@ def generate(destination: Path) -> None:
     )
 
 
+def generate_v114(destination: Path, libver: str | None = None) -> None:
+    if h5py.version.hdf5_version != "1.14.6":
+        raise SystemExit(
+            "datatypes_v114.h5 requires HDF5 1.14.6, found "
+            + h5py.version.hdf5_version
+        )
+    state_type = h5py.enum_dtype(
+        {"UNKNOWN": 0, "OPEN": 1, "CLOSED": 2},
+        basetype=np.dtype("<u1"),
+    )
+    sample_type = np.dtype(("<i2", (2, 2)))
+    record_type = np.dtype(
+        [
+            ("id", "<i4"),
+            ("state", state_type),
+            ("samples", sample_type),
+            ("label", "S6"),
+        ]
+    )
+    records = np.zeros(3, dtype=record_type)
+    records["id"] = [7, -2, 99]
+    records["state"] = [1, 0, 2]
+    records["samples"] = [
+        [[1, 2], [3, 4]],
+        [[-1, -2], [-3, -4]],
+        [[10, 20], [30, 40]],
+    ]
+    records["label"] = [b"alpha", b"xy", b"z"]
+    vectors = np.array([[1.5, -2.0], [3.25, 4.5]], dtype="<f4")
+    sequence_type = np.dtype([("id", "<i4"), ("value", "<f4")])
+    sequences = np.empty(2, dtype=object)
+    sequences[0] = np.array([(1, 1.5), (2, 2.5)], dtype=sequence_type)
+    sequences[1] = np.array([(3, 3.5)], dtype=sequence_type)
+
+    options = {} if libver is None else {"libver": libver}
+    with h5py.File(destination, "w", **options) as handle:
+        dataset = handle.create_dataset(
+            "records", shape=records.shape, dtype=record_type, track_times=False
+        )
+        dataset[...] = records
+        dataset.attrs.create("prototype", records[0], dtype=record_type)
+        states = handle.create_dataset(
+            "states",
+            shape=(3,),
+            dtype=state_type,
+            track_times=False,
+        )
+        states[...] = np.array([1, 2, 0], dtype="<u1")
+        vectors_dataset = handle.create_dataset(
+            "vectors",
+            shape=(2,),
+            dtype=np.dtype(("<f4", (2,))),
+            track_times=False,
+        )
+        vectors_dataset[...] = vectors
+        sequences_dataset = handle.create_dataset(
+            "sequences",
+            shape=(2,),
+            dtype=h5py.vlen_dtype(sequence_type),
+            track_times=False,
+        )
+        sequences_dataset[...] = sequences
+        names = handle.create_dataset(
+            "names",
+            shape=(3,),
+            dtype=h5py.string_dtype("utf-8"),
+            track_times=False,
+        )
+        names[...] = np.array(["月亮", "HDF5", ""], dtype=object)
+
+    with h5py.File(destination, "r") as handle:
+        np.testing.assert_array_equal(handle["records"][:], records)
+        np.testing.assert_array_equal(handle["states"][:], [1, 2, 0])
+        np.testing.assert_array_equal(handle["vectors"][:], vectors)
+        for actual, expected in zip(handle["sequences"][:], sequences):
+            np.testing.assert_array_equal(actual, expected)
+        assert handle["names"].asstr()[:].tolist() == ["月亮", "HDF5", ""]
+        prototype = handle["records"].attrs["prototype"]
+        assert prototype["id"] == 7
+        assert prototype["state"] == 1
+        np.testing.assert_array_equal(prototype["samples"], [[1, 2], [3, 4]])
+        assert prototype["label"] == b"alpha"
+    print(
+        f"Verified {destination.name} with h5py {h5py.__version__} "
+        f"and HDF5 {h5py.version.hdf5_version}"
+    )
+
+
 if __name__ == "__main__":
     directory = Path(__file__).resolve().parents[1] / "testdata"
-    generate(directory / "datatypes_v200.h5")
+    mode = sys.argv[1] if len(sys.argv) > 1 else "v200"
+    if mode == "v200":
+        generate(directory / "datatypes_v200.h5")
+    elif mode == "v114":
+        generate_v114(directory / "datatypes_v114.h5", libver="latest")
+        generate_v114(directory / "datatypes_v114_default.h5")
+    else:
+        raise SystemExit(
+            "usage: generate_datatype_fixtures.py [v200|v114]"
+        )

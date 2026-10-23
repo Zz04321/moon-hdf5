@@ -1074,11 +1074,17 @@ test "writer round-trips variable-length UTF-8 strings" {
     VariableStringValues(["月亮", "HDF5", "", "月亮"]),
   )
   writer.add_chunked_dataset(
-    "/filtered_names",
+    "/chunked_names",
     [5UL],
     [2U],
     VariableStringValues(["alpha", "", "数据", "alpha", ""]),
-    filters=[Deflate(6), Fletcher32],
+  )
+  writer.add_extensible_dataset(
+    "/bounded_names",
+    [1UL, 2UL],
+    [None, Some(4UL)],
+    [1U, 2U],
+    VariableStringValues(["a", "b"]),
   )
   writer.add_extensible_dataset(
     "/events",
@@ -1101,17 +1107,69 @@ test "writer round-trips variable-length UTF-8 strings" {
   )
 
   let file = Hdf5File::parse(writer.encode())
+  let names = file.read_dataset("/names")
+  assert_eq(names.datatype.class, 9)
+  assert_eq(names.datatype.version, 1)
+  assert_eq(names.datatype.base_types.length(), 1)
+  assert_eq(names.datatype.base_types[0].class, 0)
+  assert_eq(names.datatype.base_types[0].size, 1)
   assert_eq(string_values(file.read_dataset("/names")), [
     "月亮", "HDF5", "", "月亮",
   ])
-  assert_eq(string_values(file.read_dataset("/filtered_names")), [
+  assert_eq(string_values(file.read_dataset("/chunked_names")), [
     "alpha", "", "数据", "alpha", "",
   ])
+  assert_eq(string_values(file.read_dataset("/bounded_names")), ["a", "b"])
   assert_eq(string_values(file.read_dataset("/events")), ["start", "结束", ""])
   match file.attributes("/names")[0].values {
     Some(Strings(values)) => assert_eq(values, ["UTF-8 标签"])
     _ => abort("expected variable-length string attribute")
   }
+}
+
+///|
+test "writer rejects filters for variable-length datasets" {
+  let chunked = try {
+    Hdf5Writer::new().add_chunked_dataset(
+      "/strings",
+      [2UL],
+      [1U],
+      VariableStringValues(["alpha", ""]),
+      filters=[Deflate(6), Fletcher32],
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    chunked,
+    Some(
+      UnsupportedFeature(
+        "filters are not supported for variable-length datasets",
+      ),
+    ),
+  )
+  let extensible = try {
+    Hdf5Writer::new().add_extensible_dataset(
+      "/strings",
+      [0UL],
+      [None],
+      [1U],
+      VariableStringValues([]),
+      filters=[Shuffle],
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    extensible,
+    Some(
+      UnsupportedFeature(
+        "filters are not supported for variable-length datasets",
+      ),
+    ),
+  )
 }
 
 ///|

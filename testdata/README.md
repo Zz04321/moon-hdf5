@@ -28,6 +28,16 @@ python3 -m venv /tmp/moon-hdf5-fixtures
 Run from the repository root. Scripts reopen files and verify values with h5py.
 Timestamps can vary; tests compare semantics, not binary hashes.
 
+The HDF5 1.14.6 baseline fixture uses its own pinned environment:
+
+```sh
+python3 -m venv /tmp/moon-hdf5-hdf5-1.14.6
+/tmp/moon-hdf5-hdf5-1.14.6/bin/pip install h5py==3.13.0 numpy==2.4.4
+/tmp/moon-hdf5-hdf5-1.14.6/bin/python scripts/generate_datatype_fixtures.py v114
+```
+
+The generator refuses to produce the v114 fixtures from any other HDF5 version.
+
 | File | Cases |
 | --- | --- |
 | group_storage.h5 | Empty, compact (2 links), dense (12 links); with/without creation-order indexing |
@@ -47,6 +57,8 @@ Timestamps can vary; tests compare semantics, not binary hashes.
 | interop_32.h5 | Raw and filtered fixed-array chunks with 4-byte addresses and 8-byte lengths |
 | fractal_heap_advanced.h5 | Filtered dense group with 1200 links plus filtered/raw long-name huge objects; indirect heap blocks and huge v2 B-trees |
 | enums_v108.h5, enums_v110.h5 | Signed/unsigned/big-endian enum datasets and enum attributes; v1/v2 padded names under v108 bounds and v3 unpadded names under v110 bounds |
+| datatypes_v114.h5 | HDF5 1.14.6 `latest` bounds; v4 compound, enum, fixed array and vlen-compound types, including a compound attribute |
+| datatypes_v114_default.h5 | HDF5 1.14.6 default bounds with the same datatype matrix using earlier datatype-message versions |
 | datatypes_v200.h5 | Nested compound and array types, vlen sequences and UTF-8 strings, bitfield, opaque, time, object/region references, HDF5 2.0 complex types, structured attributes and fills |
 
 Group datasets `value_NN` contain `[NN, NN + 100]`. Compact groups must read
@@ -83,3 +95,7 @@ attributes on `/colors`. `EIGHTCHR` exercises the eight-byte name boundary;
 exercise datatype-message v5. Structured values are also covered through point
 selections. Reference values are checked as encoded bytes by MoonBit and
 dereferenced by the generator's h5py validation.
+
+`datatypes_v114.h5` and `datatypes_v114_default.h5` exercise HDF5 1.14.6
+datatype messages under both `latest` (version 4) and default (earlier
+versions) bounds, independently of the HDF5 2.0 fixtures.

@@ -146,6 +146,8 @@ Supported values are little-endian signed/unsigned integers at 8, 16, 32 and 64
 bits, IEEE float32/64, and fixed-width or variable-length UTF-8 strings. Variable
 strings use 16-byte descriptors and a shared global heap collection; empty
 strings use the zero descriptor and repeated strings share one heap object.
+Filters remain limited to fixed-size writer values because HDF5 1.14.6 rejects
+filter pipelines on variable-length datasets.
 Narrow integer constructors validate every value before truncating it to the
 encoded width. Structured values reuse the reader's recursive `Datatype` and
 `DatasetValue` model. The writer encodes version-three compound, enum and array
@@ -160,8 +162,10 @@ allocation bitmaps and metadata checksums follow the HDF5 extensible-array
 layout. Header statistics describe the allocated blocks and realized element
 capacity. Fixed dimensions use their maximum extents when mapping chunk
 coordinates, so indexes remain stable as the current shape changes. Fill-only
-chunks retain undefined addresses; allocated chunks can run through shuffle,
-zlib-wrapped deflate and Fletcher32 before their stored sizes are indexed.
+chunks retain undefined addresses, except that variable-length datasets
+allocate every in-shape chunk so empty strings never rely on undefined vlen
+fill storage. Allocated chunks can run through shuffle, zlib-wrapped deflate and
+Fletcher32 before their stored sizes are indexed.
 
 `resize_dataset` rebuilds the row-major value array while preserving the
 overlapping coordinate region. `append_dataset` grows the unlimited dimension

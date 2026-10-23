@@ -1058,6 +1058,57 @@ fn validate_write_filters(
 }
 
 ///|
+fn writer_values_contain_vlen(values : Hdf5WriteValues) -> Bool {
+  match values {
+    VariableStringValues(_) => true
+    StructuredValues(datatype, _) => datatype_contains_vlen(datatype)
+    _ => false
+  }
+}
+
+///|
+fn validate_writer_filters_for_values(
+  values : Hdf5WriteValues,
+  filters : Array[Hdf5WriteFilter],
+) -> Unit raise Hdf5Error {
+  guard filters.length() == 0 || !writer_values_contain_vlen(values) else {
+    raise UnsupportedFeature(
+      "filters are not supported for variable-length datasets",
+    )
+  }
+}
+
+///|
+fn writer_chunk_intersects_shape(
+  index : Int32,
+  grid : Array[Int32],
+  order : Array[Int32],
+  dimensions : Array[UInt64],
+  chunk_dimensions : Array[UInt32],
+) -> Bool {
+  let coordinates : Array[Int32] = Array::make(grid.length(), 0)
+  let mut remaining = index
+  let mut order_index = order.length()
+  while order_index > 0 {
+    order_index = order_index - 1
+    let axis = order[order_index]
+    let count = grid[axis]
+    if count <= 0 {
+      return false
+    }
+    coordinates[axis] = remaining % count
+    remaining = remaining / count
+  }
+  for axis in 0..<dimensions.length() {
+    if coordinates[axis].to_uint64() * chunk_dimensions[axis].to_uint64() >=
+      dimensions[axis] {
+      return false
+    }
+  }
+  true
+}
+
+///|
 fn validate_writer_chunk_size(
   chunk_dimensions : Array[UInt32],
   element_size : Int32,
@@ -1133,6 +1184,7 @@ pub fn Hdf5Writer::add_chunked_dataset(
     encode_write_values(values).element_size,
   )
   validate_write_filters(filters)
+  validate_writer_filters_for_values(values, filters)
   let copied_fill = validated_write_fill(values, fill_value)
   self.ensure_groups(writer_parent_path(normalized))
   self.datasets.push({
@@ -1237,6 +1289,7 @@ pub fn Hdf5Writer::add_extensible_dataset(
     encode_write_values(values).element_size,
   )
   validate_write_filters(filters)
+  validate_writer_filters_for_values(values, filters)
   let copied_fill = validated_write_fill(values, fill_value)
   let grid_dimensions = dimensions.copy()
   for axis in 0..<grid_dimensions.length() {
@@ -1866,12 +1919,12 @@ fn encode_string_datatype(width : Int32) -> Bytes {
 ///|
 fn encode_variable_string_datatype() -> Bytes {
   let buffer = @buffer.Buffer::Buffer(size_hint=16)
-  buffer.write_byte(b'\x39')
+  buffer.write_byte(b'\x19')
   buffer.write_byte(b'\x01')
   buffer.write_byte(b'\x01')
   buffer.write_byte(b'\x00')
   buffer.write_uint_le(16U)
-  writer_write_bytes(buffer, encode_string_datatype(1))
+  writer_write_bytes(buffer, encode_integer_datatype(false, 1))
   buffer.to_bytes()
 }
 
@@ -2287,6 +2340,7 @@ fn encode_dataset_chunks(
   let chunk_size = (chunk_elements * encoded.element_size.to_int64()).to_int()
   let chunk_buffers : Array[FixedArray[Byte]] = []
   let allocated = Array::make(chunk_count, false)
+  let always_allocate = writer_values_contain_vlen(dataset.values)
   for _ in 0..<chunk_count {
     let chunk = FixedArray::make(chunk_size, b'\x00')
     write_repeated_element(chunk, fill)
@@ -2326,6 +2380,19 @@ fn encode_dataset_chunks(
     )
     if element_differs(encoded.payload, source_offset, fill) {
       allocated[chunk_index] = true
+    }
+  }
+  if always_allocate {
+    for index in 0..<chunk_count {
+      if writer_chunk_intersects_shape(
+          index,
+          grid,
+          order,
+          dataset.dimensions,
+          chunk_dimensions,
+        ) {
+        allocated[index] = true
+      }
     }
   }
   let entries : Array[EncodedChunkEntry] = []

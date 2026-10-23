@@ -9,11 +9,12 @@ def verify(path: Path) -> None:
     with h5py.File(path, "r") as handle:
         assert list(handle) == ["experiment", "metadata", "structured", "types"]
         assert sorted(handle["experiment"]) == [
+            "bounded_names",
             "chunked",
+            "chunked_names",
             "counts",
             "events",
             "external",
-            "filtered_names",
             "labels",
             "latest",
             "metrics",
@@ -72,21 +73,29 @@ def verify(path: Path) -> None:
         assert h5py.check_string_dtype(names.dtype).encoding == "utf-8"
         assert names.asstr()[:].tolist() == ["月亮", "HDF5", "", "月亮"]
         assert names.attrs["description"] == "UTF-8 标签"
-        filtered_names = handle["experiment/filtered_names"]
-        assert filtered_names.asstr()[:].tolist() == [
+        chunked_names = handle["experiment/chunked_names"]
+        assert chunked_names.asstr()[:].tolist() == [
             "alpha",
             "",
             "数据",
             "alpha",
             "",
         ]
-        assert filtered_names.chunks == (2,)
-        assert filtered_names.compression == "gzip"
-        assert filtered_names.fletcher32
+        assert chunked_names.chunks == (2,)
+        assert chunked_names.compression is None
+        assert not chunked_names.fletcher32
+        assert chunked_names.id.get_num_chunks() == 3
+        bounded_names = handle["experiment/bounded_names"]
+        assert bounded_names.shape == (1, 2)
+        assert bounded_names.maxshape == (None, 4)
+        assert bounded_names.chunks == (1, 2)
+        assert bounded_names.id.get_num_chunks() == 1
+        assert bounded_names.asstr()[:].tolist() == [["a", "b"]]
         events = handle["experiment/events"]
         assert events.asstr()[:].tolist() == ["start", "结束", ""]
         assert events.maxshape == (None,)
         assert events.chunks == (2,)
+        assert events.id.get_num_chunks() == 2
         unit = handle["experiment/counts"].attrs["unit"]
         assert unit.decode("utf-8").rstrip("\0") == "items"
         assert len(handle["experiment/counts"].attrs) == 1

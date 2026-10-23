@@ -1,12 +1,14 @@
 # moon-hdf5
 
 moon-hdf5 is a pure MoonBit implementation for reading HDF5 files and creating
-new HDF5 files. It has no native HDF5 dependency and supports both wasm and
-native targets.
+new HDF5 files. It targets the HDF5 1.14.6 common-file profile, has no native
+HDF5 dependency and supports both wasm and native targets.
 
 The project is under active development and implements a documented subset of
-HDF5. See the [compatibility matrix](docs/compatibility.md) for exact coverage
-and [audit report](docs/audit.md) for verification history.
+HDF5. The v1.0 delivery profile in the
+[compatibility matrix](docs/compatibility.md) is the release boundary and not
+a claim of complete HDF5 support. See the
+[audit report](docs/audit.md) for verification history.
 
 ## Read/write status
 
@@ -14,8 +16,8 @@ This is not a read-only library.
 
 - `Hdf5File` reads existing files without modifying them.
 - `Hdf5Writer` creates a complete new HDF5 file in memory and writes groups,
-  datasets, attributes, soft and external links, filters, fill values and one
-  extensible dimension.
+  datasets, attributes, soft and external links, fixed-size-value filters, fill
+  values and one extensible dimension.
 - In-place editing of an existing file is not implemented. The reader also
   parses external-link metadata but does not open or resolve the target file.
 
@@ -208,6 +210,8 @@ Focused examples are available in `src/cmd/metadata_demo`,
   are not resolved by the reader; external dataset storage is not supported.
 - Custom variable-length fill values, additional writer filters and reference
   writing are not supported.
+- Variable-length writer datasets cannot use filters; HDF5 1.14.6 rejects this
+  combination natively.
 
 Version support does not imply support for every structure in that version.
 Unsupported structures raise `UnsupportedFeature`; malformed data normally
@@ -228,6 +232,11 @@ Run `scripts/release_check.sh` to include interface and formatting checks,
 documentation generation, package contents, the writer demo and independent
 h5py verification. Set `H5PY_PYTHON` when h5py is installed in a specific
 environment, or `SKIP_H5PY=1` to omit only the interoperability check.
+
+The v1.0 release gate runs the writer demo and verifies its output with h5py
+3.13.0/HDF5 1.14.6. The HDF5 1.14.6 default and `latest` datatype fixtures use
+the pinned environment documented in [testdata/README.md](testdata/README.md);
+fixture tests compare decoded semantics because binary hashes are not stable.
 
 GitHub Actions CI is manual and runs checks, builds and wasm/native tests.
 Fixture generation is documented in

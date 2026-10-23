@@ -272,7 +272,7 @@ fn parse_datatype_reader(
       }
     }
   } else if class == 6 {
-    guard version >= 1 && (version <= 3 || version == 5) && bit_field_2 == 0 else {
+    guard version >= 1 && (version <= 4 || version == 5) && bit_field_2 == 0 else {
       raise UnsupportedFeature("unsupported compound datatype version")
     }
     let member_count = bit_field_0 | (bit_field_1 << 8)
@@ -345,7 +345,7 @@ fn parse_datatype_reader(
       }
     }
   } else if class == 8 {
-    guard version >= 1 && version <= 3 && bit_field_2 == 0 else {
+    guard version >= 1 && version <= 4 && bit_field_2 == 0 else {
       raise UnsupportedFeature("unsupported enum datatype version")
     }
     let member_count = bit_field_0 | (bit_field_1 << 8)
@@ -390,7 +390,7 @@ fn parse_datatype_reader(
     string_padding = (bit_field_0 >> 4) & 0x0F
     string_charset = bit_field_1 & 0x0F
     guard version >= 1 &&
-      version <= 3 &&
+      version <= 4 &&
       (kind == 0 || kind == 1) &&
       (bit_field_1 & 0xF0) == 0 &&
       bit_field_2 == 0 &&
@@ -402,7 +402,8 @@ fn parse_datatype_reader(
     }
     base_types.push(parse_datatype_reader(reader, depth + 1))
   } else if class == 10 {
-    guard (version == 2 || version == 3 || version == 5) &&
+    guard version >= 2 &&
+      version <= 5 &&
       bit_field_0 == 0 &&
       bit_field_1 == 0 &&
       bit_field_2 == 0 else {

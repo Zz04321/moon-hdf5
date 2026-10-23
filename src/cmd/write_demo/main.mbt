@@ -80,11 +80,17 @@ fn run(args : Array[String]) -> Int32 {
       VariableStringValues(["月亮", "HDF5", "", "月亮"]),
     )
     writer.add_chunked_dataset(
-      "/experiment/filtered_names",
+      "/experiment/chunked_names",
       [5UL],
       [2U],
       VariableStringValues(["alpha", "", "数据", "alpha", ""]),
-      filters=[Deflate(6), Fletcher32],
+    )
+    writer.add_extensible_dataset(
+      "/experiment/bounded_names",
+      [1UL, 2UL],
+      [None, Some(4UL)],
+      [1U, 2U],
+      VariableStringValues(["a", "b"]),
     )
     writer.add_extensible_dataset(
       "/experiment/events",
