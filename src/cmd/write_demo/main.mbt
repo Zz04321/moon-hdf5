@@ -292,6 +292,12 @@ fn run(args : Array[String]) -> Int32 {
         UInt64Values([(index + 100).to_uint64()]),
       )
     }
+    writer.add_attribute(
+      "/metadata/dense",
+      "dense_text",
+      [],
+      VariableStringValues(["密集属性"]),
+    )
     writer.add_dataset("/metadata/continued", [], UInt64Values([0UL]))
     let continued_value = "c".repeat(9000)
     for index in 0..<8 {
@@ -309,6 +315,16 @@ fn run(args : Array[String]) -> Int32 {
         "/metadata/continued_links",
         "link_" + index.to_string(),
         continued_target,
+      )
+    }
+    writer.add_dataset("/metadata/continued_multi", [], UInt64Values([1UL]))
+    let multi_value = "m".repeat(60000)
+    for index in 0..<20 {
+      writer.add_attribute(
+        "/metadata/continued_multi",
+        "multi_" + index.to_string(),
+        [],
+        FixedStringValues([multi_value], 60000),
       )
     }
     @fs.write_bytes_to_file(args[1], writer.encode())

@@ -137,10 +137,11 @@ def verify(path: Path) -> None:
             assert dense_values.attrs[f"attr_{index}"] == np.uint64(index)
         dense = handle["metadata/dense"]
         assert len(dense) == 12
-        assert len(dense.attrs) == 12
+        assert len(dense.attrs) == 13
         for index in (0, 5, 11):
             assert dense[f"value_{index}"][()] == np.uint64(index)
             assert dense.attrs[f"dense_attr_{index}"] == np.uint64(index + 100)
+        assert dense.attrs["dense_text"] == "密集属性"
         continued = handle["metadata/continued"]
         assert len(continued.attrs) == 8
         assert (
@@ -152,6 +153,12 @@ def verify(path: Path) -> None:
         )
         assert isinstance(continued_link, h5py.SoftLink)
         assert continued_link.path == "/" + "t" * 9000
+        multi = handle["metadata/continued_multi"]
+        assert len(multi.attrs) == 20
+        for index in (0, 10, 19):
+            assert multi.attrs[f"multi_{index}"].decode("utf-8").rstrip("\0") == (
+                "m" * 60000
+            )
         records = handle["structured/records"]
         assert records.dtype.names == ("id", "state", "samples", "label")
         assert records.dtype.itemsize == 19

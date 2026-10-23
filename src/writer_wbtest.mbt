@@ -63,6 +63,12 @@ test "writer uses dense links and attributes above the compact threshold" {
     )
   }
   writer.add_external_link("/dense", "external", "target.h5", "/value_0")
+  writer.add_attribute(
+    "/dense",
+    "dense_text",
+    [],
+    VariableStringValues(["密集属性"]),
+  )
   let bytes = writer.encode()
   let file = Hdf5File::parse(bytes)
   let header = parse_object_header(
@@ -73,7 +79,16 @@ test "writer uses dense links and attributes above the compact threshold" {
     0UL,
   )
   assert_eq(file.links(header).length(), 10)
-  assert_eq(file.attributes("/dense").length(), 9)
+  let attributes = file.attributes("/dense")
+  assert_eq(attributes.length(), 10)
+  match attributes.search_by(attribute => attribute.name == "dense_text") {
+    Some(index) =>
+      match attributes[index].values {
+        Some(Strings(values)) => assert_eq(values, ["密集属性"])
+        _ => abort("expected dense variable-length string attribute")
+      }
+    None => abort("expected dense_text attribute")
+  }
   assert_eq(unsigned_values(file.read_dataset("/dense/value_8")), [8UL])
   for message_type in [msg_link_info, msg_attribute_info] {
     let info = header.find(message_type)[0]
@@ -110,6 +125,33 @@ test "writer uses dense links and attributes above the compact threshold" {
   info_reader.skip(2)
   assert_eq(info_reader.read_uint_le(8), 0xFFFFFFFFFFFFFFFFUL)
   assert_eq(info_reader.read_uint_le(8), 0xFFFFFFFFFFFFFFFFUL)
+}
+
+///|
+test "writer enforces exact dense metadata limits" {
+  let entry = { name: "item", hash: 0U, data: b"", }
+  assert_true(!writer_dense_entries_fit(Array::make(8, entry)))
+  assert_true(writer_dense_entries_fit(Array::make(9, entry)))
+  assert_true(writer_dense_entries_fit(Array::make(65535, entry)))
+  assert_true(!writer_dense_entries_fit(Array::make(65536, entry)))
+
+  let at_limit = {
+    name: "item",
+    hash: 0U,
+    data: Bytes::makei(4096, _ => b'\x00'),
+  }
+  let over_limit = {
+    name: "item",
+    hash: 0U,
+    data: Bytes::makei(4097, _ => b'\x00'),
+  }
+  assert_true(writer_dense_entries_fit(Array::make(9, at_limit)))
+  assert_true(!writer_dense_entries_fit(Array::make(9, over_limit)))
+
+  let btree_header = encode_writer_dense_btree_header(8, 1024, 17, 0UL, 65535)
+  let reader = Reader::new(btree_header)
+  reader.skip(24)
+  assert_eq(reader.read_u16_le(), 65535)
 }
 
 ///|
@@ -179,6 +221,38 @@ test "writer continues oversized compact links and attributes" {
       message.msg_type == msg_object_continuation
     }),
   )
+}
+
+///|
+test "writer chains object header continuations" {
+  let writer = Hdf5Writer::new()
+  let value = "m".repeat(60000)
+  writer.add_dataset("/multi_continuation", [], UInt64Values([1UL]))
+  for index in 0..<20 {
+    writer.add_attribute(
+      "/multi_continuation",
+      "multi_" + index.to_string(),
+      [],
+      FixedStringValues([value], 60000),
+    )
+  }
+
+  let bytes = writer.encode()
+  let file = Hdf5File::parse(bytes)
+  let attributes = file.attributes("/multi_continuation")
+  assert_eq(attributes.length(), 20)
+  match attributes[19].values {
+    Some(Strings(values)) => assert_eq(values, [value])
+    _ => abort("expected last chained continuation attribute")
+  }
+  let header = parse_object_header(
+    bytes,
+    file.resolve("/multi_continuation").address,
+    8,
+    8,
+    0UL,
+  )
+  assert_eq(header.find(msg_object_continuation).length(), 2)
 }
 
 ///|
