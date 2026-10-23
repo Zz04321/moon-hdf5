@@ -38,6 +38,20 @@ python3 -m venv /tmp/moon-hdf5-hdf5-1.14.6
 
 The generator refuses to produce the v114 fixtures from any other HDF5 version.
 
+The NetCDF-4 interoperability fixture uses a separate producer environment:
+
+```sh
+python3 -m venv /tmp/moon-hdf5-netcf
+/tmp/moon-hdf5-netcf/bin/pip install netCDF4==1.7.5 numpy==2.5.4
+/tmp/moon-hdf5-netcf/bin/python scripts/generate_netcdf4_fixture.py
+/tmp/moon-hdf5-hdf5-1.14.6/bin/python \
+  scripts/verify_netcdf4_fixture.py testdata/netcdf4_1_7_5.h5
+```
+
+The file is written by netCDF4 1.7.5 with libnetcdf 4.10.1 and HDF5 2.2.0.
+The independent verifier uses h5py 3.13.0 with HDF5 1.14.6. Regeneration is
+not part of the release gate.
+
 | File | Cases |
 | --- | --- |
 | group_storage.h5 | Empty, compact (2 links), dense (12 links); with/without creation-order indexing |
@@ -60,6 +74,7 @@ The generator refuses to produce the v114 fixtures from any other HDF5 version.
 | datatypes_v114.h5 | HDF5 1.14.6 `latest` bounds; v4 compound, enum, fixed array and vlen-compound types, including a compound attribute |
 | datatypes_v114_default.h5 | HDF5 1.14.6 default bounds with the same datatype matrix using earlier datatype-message versions |
 | datatypes_v200.h5 | Nested compound and array types, vlen sequences and UTF-8 strings, bitfield, opaque, time, object/region references, HDF5 2.0 complex types, structured attributes and fills |
+| netcdf4_1_7_5.h5 | Real netCDF4 1.7.5/libnetcdf 4.10.1/HDF5 2.2.0 output: groups, dimension variables, shuffled/deflated chunks with a v1 B-tree index, UTF-8 strings, numeric values and NetCDF dimension-reference attributes |
 
 Group datasets `value_NN` contain `[NN, NN + 100]`. Compact groups must read
 normally. Dense groups are indexed by fractal heaps and metadata v2 B-trees;
@@ -99,3 +114,9 @@ dereferenced by the generator's h5py validation.
 `datatypes_v114.h5` and `datatypes_v114_default.h5` exercise HDF5 1.14.6
 datatype messages under both `latest` (version 4) and default (earlier
 versions) bounds, independently of the HDF5 2.0 fixtures.
+
+`netcdf4_1_7_5.h5` is a producer-interoperability fixture, not a complete
+netCDF data-model implementation test. `/temperature` is a `(4, 3, 5)` float
+variable with `(2, 2, 3)` chunks, shuffle and deflate filters, and a v1 B-tree
+chunk index. The MoonBit test also checks a hyperslab, UTF-8 station names,
+groups, scalar attributes and NetCDF dimension-reference attributes.

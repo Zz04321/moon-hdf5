@@ -220,8 +220,9 @@ name index. The writer does not emit dense indirect or huge heap blocks,
 creation-order indexes or a free-space manager. Metadata outside those bounds
 remains compact and is split across checksummed OCHK continuation chunks. The
 writer demo includes a 2500-attribute object, a group with both dense links and
-dense attributes, and exactly eight oversized links and attributes that exercise
-compact OCHK continuations.
+dense attributes including a variable-length string attribute, exactly eight
+oversized links and attributes that exercise compact OCHK continuations, and a
+20-attribute object spanning multiple continuation chunks.
 
 Run the complete writer example and verify its output independently with h5py:
 
@@ -282,13 +283,16 @@ moon test --target native
 
 Run `scripts/release_check.sh` to include interface and formatting checks,
 documentation generation, package contents, the writer demo and independent
-h5py verification. Set `H5PY_PYTHON` when h5py is installed in a specific
-environment, or `SKIP_H5PY=1` to omit only the interoperability check.
+h5py verification, including the committed NetCDF-4 producer fixture. Set
+`H5PY_PYTHON` when h5py is installed in a specific environment, or
+`SKIP_H5PY=1` to omit the Python interoperability checks.
 
 The v1.0 release gate runs the writer demo and verifies its output with h5py
-3.13.0/HDF5 1.14.6. The HDF5 1.14.6 default and `latest` datatype fixtures use
-the pinned environment documented in [testdata/README.md](testdata/README.md);
-fixture tests compare decoded semantics because binary hashes are not stable.
+3.13.0/HDF5 1.14.6, then verifies the NetCDF-4 fixture produced by netCDF4
+1.7.5/libnetcdf 4.10.1/HDF5 2.2.0. The HDF5 1.14.6 default and `latest`
+datatype fixtures use the pinned environment documented in
+[testdata/README.md](testdata/README.md); fixture tests compare decoded
+semantics because binary hashes are not stable.
 
 GitHub Actions CI is manual and runs checks, builds and wasm/native tests.
 Fixture generation is documented in

@@ -86,7 +86,7 @@ fn robustness_fixtures() -> Array[String] {
   [
     "testdata/basic_v0.h5", "testdata/latest_v3.h5", "testdata/attribute_storage.h5",
     "testdata/group_storage.h5", "testdata/fixed_array.h5", "testdata/extensible_array.h5",
-    "testdata/btree_v2.h5", "testdata/layout_v4.h5",
+    "testdata/btree_v2.h5", "testdata/layout_v4.h5", "testdata/netcdf4_1_7_5.h5",
   ]
 }
 
