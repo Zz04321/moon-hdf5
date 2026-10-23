@@ -41,9 +41,9 @@ an executable example.
 - Reads datasets through a bounded-memory chunk iterator for edge-clipped tiles
   and early termination.
 - Creates new files with groups, attributes, hard, soft and external links,
-  contiguous or chunked datasets, filters, fill values and one extensible
-  dimension. Large chunk indexes use fixed-array pages or extensible-array
-  super blocks and data pages.
+  compact or dense metadata, contiguous or chunked datasets, filters, fill
+  values and one extensible dimension. Large chunk indexes use fixed-array
+  pages or extensible-array super blocks and data pages.
 
 ## Quick Start
 
@@ -204,19 +204,24 @@ let bytes = writer.encode()
 
 Use `add_chunked_dataset` for a finite chunked dataset. Use
 `add_extensible_dataset`, `resize_dataset` and `append_dataset` for a dataset
-with one unlimited dimension. `add_soft_link` attaches a compact link to an
-absolute target or a target relative to the containing group; dangling links are
-allowed. `add_external_link` records a target file and object path. HDF5 readers
-resolve them, and `Hdf5Resolver` resolves them when the target source is
-registered; `Hdf5File` alone leaves the link unresolved. The
+with one unlimited dimension. `add_soft_link` attaches a link to an absolute
+target or a target relative to the containing group; dangling links are allowed.
+`add_external_link` records a target file and object path. HDF5 readers resolve
+them, and `Hdf5Resolver` resolves them when the target source is registered;
+`Hdf5File` alone leaves the link unresolved. The
 writer rejects link messages whose encoded metadata exceeds HDF5's 16-bit message
 size. `Datatype::write_integer`, `write_float`, `write_fixed_string`,
 `write_enum`, `write_array` and `write_compound` construct supported structured
-writer types. Large compact group and attribute metadata is split across
-checksummed object-header continuation chunks, so a single object is no longer
-limited to 64 KiB of messages. The writer demo includes an extensible array
-large enough to exercise direct blocks, super blocks and paged data blocks, plus
-an object with enough attributes to exercise header continuations.
+writer types. Groups and objects with attributes use dense storage when they
+contain 9–65,535 links or attributes and every encoded heap object is at most
+4 KiB. Dense groups use an FRHP fractal heap with one FHDB direct block and a
+BTHD/BTLF name index; dense attributes use the same heap layout and their own
+name index. The writer does not emit dense indirect or huge heap blocks,
+creation-order indexes or a free-space manager. Metadata outside those bounds
+remains compact and is split across checksummed OCHK continuation chunks. The
+writer demo includes a 2500-attribute object, a group with both dense links and
+dense attributes, and exactly eight oversized links and attributes that exercise
+compact OCHK continuations.
 
 Run the complete writer example and verify its output independently with h5py:
 
@@ -248,9 +253,13 @@ Focused examples are available in `src/cmd/metadata_demo`,
   when the input uses random access.
 - Use `chunk_iterator` when the complete dataset is too large for memory.
 - The writer creates complete new files and does not edit existing files.
-- Dense link and dense attribute storage are not written; large compact metadata
-  uses object-header continuations instead. External dataset storage is not
-  supported; `Hdf5Resolver` resolves external links, not external raw data.
+- Dense metadata writing is limited to 9–65,535 links or attributes with each
+  encoded heap object at most 4 KiB. It uses one FHDB direct block and one
+  BTHD/BTLF leaf index per collection; dense indirect/huge blocks,
+  creation-order indexes and a free-space manager are not written. Larger sets
+  fall back to compact OCHK continuation storage.
+- External dataset storage is not supported; `Hdf5Resolver` resolves external
+  links, not external raw data.
 - Custom variable-length fill values, additional writer filters and reference
   writing are not supported.
 - Variable-length writer datasets cannot use filters; HDF5 1.14.6 rejects this

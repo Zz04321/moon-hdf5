@@ -233,10 +233,12 @@ demo and h5py interoperability for releases while GitHub Actions remains manual.
 The writer now splits objects larger than one 64 KiB header chunk on complete
 message boundaries. The initial OHDR chunk links to checksummed OCHK
 continuations, which can themselves continue, so large compact groups and
-attribute sets no longer fail at `encode`. Regression tests force both a
-2500-attribute dataset and a 2500-link group through continuation chunks.
-Independent h5py verification reports the expected 2500-attribute count and
-reads attributes at the start, middle and end of the continued object.
+attribute sets no longer fail at `encode`. At that stage, regression tests forced
+both a 2500-attribute dataset and a 2500-link group through continuation chunks.
+Those cases now exercise dense storage; compact OCHK fallback is covered by the
+dense-writer review below. Independent h5py verification at that stage reported
+the expected 2500-attribute count and read attributes at the start, middle and
+end of the continued object.
 
 While adding continuation coverage, h5py exposed a separate interoperability
 defect: named attribute reads worked, but `len(object.attrs)` returned zero for
@@ -277,6 +279,29 @@ retaining the existing v5 path for HDF5 2.0. `datatypes_v114.h5` and
 fixed arrays, vlen compound sequences and compound attributes. The same
 verification environment reads the writer demo output and checks every stored
 value and metadata field.
+
+## Dense metadata writer review — 2026-10-23
+
+The writer now selects dense link and attribute storage above eight records and
+up to 65,535 records when every encoded heap object is at most 4 KiB. The
+address planner allocates a separate FRHP/FHDB collection and BTHD/BTLF name
+index for each applicable group-link and attribute set before object headers are
+encoded. Link records use B-tree type 5 with an 11-byte `lookup3` hash and
+7-byte heap-ID layout; attribute records use type 8 with an 8-byte heap ID,
+flags, undefined creation order and `lookup3` name hash. Records outside these
+limits fall back to compact messages and OCHK continuation chunks.
+
+The implementation writes one checksummed direct heap block and one leaf index
+per collection. It does not emit dense indirect or huge heap blocks, a
+creation-order index or a free-space manager. Regression tests cover the compact
+threshold, 2500 dense links, 2500 dense attributes, a group using both dense
+collections, and exactly eight oversized compact links and attributes that force
+OCHK continuations. The writer demo contains the same dense and compact fallback
+cases. Opening its output with h5py 3.13.0/HDF5 1.14.6 exposed an address-planning
+defect when one group used dense links and dense attributes together; the two
+collections had shared the wrong address. Separate kind-aware address tracking
+fixes the defect, and the final output passes h5py and `h5dump`/`h5ls`
+verification.
 
 ## v1.0 delivery-profile review — 2026-10-23
 

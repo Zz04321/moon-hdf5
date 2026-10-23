@@ -278,6 +278,39 @@ fn run(args : Array[String]) -> Int32 {
         UInt64Values([index.to_uint64()]),
       )
     }
+    writer.add_group("/metadata/dense")
+    for index in 0..<12 {
+      writer.add_dataset(
+        "/metadata/dense/value_" + index.to_string(),
+        [],
+        UInt64Values([index.to_uint64()]),
+      )
+      writer.add_attribute(
+        "/metadata/dense",
+        "dense_attr_" + index.to_string(),
+        [],
+        UInt64Values([(index + 100).to_uint64()]),
+      )
+    }
+    writer.add_dataset("/metadata/continued", [], UInt64Values([0UL]))
+    let continued_value = "c".repeat(9000)
+    for index in 0..<8 {
+      writer.add_attribute(
+        "/metadata/continued",
+        "continued_" + index.to_string(),
+        [],
+        FixedStringValues([continued_value], 9000),
+      )
+    }
+    writer.add_group("/metadata/continued_links")
+    let continued_target = "/" + "t".repeat(9000)
+    for index in 0..<8 {
+      writer.add_soft_link(
+        "/metadata/continued_links",
+        "link_" + index.to_string(),
+        continued_target,
+      )
+    }
     @fs.write_bytes_to_file(args[1], writer.encode())
     println("wrote " + args[1])
     0

@@ -45,7 +45,7 @@ MoonBit tests.
 | Area | Verified input | Current boundary |
 | --- | --- | --- |
 | File framing | Superblocks v0–v3, user blocks, 4-byte and 8-byte addresses | Other address/length combinations are not comprehensively tested |
-| Groups | Symbol-table groups, compact links, dense links, creation-order indexes and soft links | Dense link creation is not available in the writer |
+| Groups | Symbol-table groups, compact links, dense links, creation-order indexes and soft links | Dense and creation-order indexes are read; unsupported index variants are rejected |
 | Cross-file links | `Hdf5Resolver` follows external links across registered `Hdf5Source` values, including chained links and relative target names | `Hdf5File` alone does not open external targets; external data storage is separate |
 | Attributes | Inline messages v1–v3 and dense attributes | Unsupported attribute datatypes may be reported without values |
 | Dataset layouts | Compact, contiguous and chunked | External and virtual dataset storage are rejected |
@@ -76,8 +76,9 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | Area | Verified output | Current boundary |
 | --- | --- | --- |
 | File framing | Superblock v3 and object headers v2 with OCHK continuations | Writer does not select older format versions |
-| Groups | Nested groups, compact hard, soft and external links, and continued headers | Dense link creation is absent |
-| Attributes | Inline numeric, fixed/vlen string and structured attributes with compact attribute-info messages | Dense attribute writing is absent |
+| Groups | Nested groups, compact hard, soft and external links, dense links, and continued compact headers | Dense links use the dense-metadata limits below |
+| Attributes | Inline numeric, fixed/vlen string and structured attributes, plus dense attributes with a name index | Dense attributes use the dense-metadata limits below |
+| Dense metadata | Automatic dense link and attribute storage for 9–65,535 records when each encoded heap object is at most 4 KiB; FRHP/FHDB direct block and BTHD/BTLF name index | One direct block and one leaf index per collection; no indirect/huge heap blocks, creation-order index or free-space manager; out-of-bound sets use compact OCHK continuations |
 | Dataset layouts | Contiguous, paged fixed-array chunked and extensible-array chunked with inline, direct, super and paged data blocks | External and virtual dataset storage are absent |
 | Numeric values | Little-endian int/uint8–64 and IEEE float32/64 | Big-endian and nonstandard numeric output are absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Variable-length sequence output is absent |

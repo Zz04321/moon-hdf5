@@ -46,6 +46,142 @@ test "writer round-trips groups datasets and attributes" {
 }
 
 ///|
+test "writer uses dense links and attributes above the compact threshold" {
+  let writer = Hdf5Writer::new()
+  writer.add_group("/dense")
+  for index in 0..<9 {
+    writer.add_dataset(
+      "/dense/value_" + index.to_string(),
+      [],
+      UInt64Values([index.to_uint64()]),
+    )
+    writer.add_attribute(
+      "/dense",
+      "dense_attr_" + index.to_string(),
+      [],
+      UInt64Values([(index + 10).to_uint64()]),
+    )
+  }
+  writer.add_external_link("/dense", "external", "target.h5", "/value_0")
+  let bytes = writer.encode()
+  let file = Hdf5File::parse(bytes)
+  let header = parse_object_header(
+    bytes,
+    file.resolve("/dense").address,
+    8,
+    8,
+    0UL,
+  )
+  assert_eq(file.links(header).length(), 10)
+  assert_eq(file.attributes("/dense").length(), 9)
+  assert_eq(unsigned_values(file.read_dataset("/dense/value_8")), [8UL])
+  for message_type in [msg_link_info, msg_attribute_info] {
+    let info = header.find(message_type)[0]
+    let reader = Reader::new(info.data)
+    reader.skip(2)
+    assert_true(reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
+    assert_true(reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
+  }
+  assert_true(!header.messages.any(message => message.msg_type == msg_link))
+  assert_true(
+    !header.messages.any(message => message.msg_type == msg_attribute),
+  )
+
+  let compact = Hdf5Writer::new()
+  compact.add_group("/compact")
+  for index in 0..<8 {
+    compact.add_dataset(
+      "/compact/value_" + index.to_string(),
+      [],
+      UInt64Values([index.to_uint64()]),
+    )
+  }
+  let compact_bytes = compact.encode()
+  let compact_file = Hdf5File::parse(compact_bytes)
+  let compact_header = parse_object_header(
+    compact_bytes,
+    compact_file.resolve("/compact").address,
+    8,
+    8,
+    0UL,
+  )
+  let info = compact_header.find(msg_link_info)[0]
+  let info_reader = Reader::new(info.data)
+  info_reader.skip(2)
+  assert_eq(info_reader.read_uint_le(8), 0xFFFFFFFFFFFFFFFFUL)
+  assert_eq(info_reader.read_uint_le(8), 0xFFFFFFFFFFFFFFFFUL)
+}
+
+///|
+test "writer continues oversized compact links and attributes" {
+  let writer = Hdf5Writer::new()
+  let value = "v".repeat(9000)
+  writer.add_dataset("/continued", [], UInt64Values([7UL]))
+  for index in 0..<8 {
+    writer.add_attribute(
+      "/continued",
+      "large_" + index.to_string(),
+      [],
+      FixedStringValues([value], 9000),
+    )
+  }
+  writer.add_group("/continued_links")
+  let target = "/" + "t".repeat(9000)
+  for index in 0..<8 {
+    writer.add_soft_link(
+      "/continued_links",
+      "link_" + index.to_string(),
+      target,
+    )
+  }
+
+  let bytes = writer.encode()
+  let file = Hdf5File::parse(bytes)
+  let attributes = file.attributes("/continued")
+  assert_eq(attributes.length(), 8)
+  match attributes[0].values {
+    Some(Strings(values)) => assert_eq(values, [value])
+    _ => abort("expected initial fixed-string attribute")
+  }
+  match attributes[7].values {
+    Some(Strings(values)) => {
+      assert_eq(values.length(), 1)
+      assert_eq(values[0], value)
+    }
+    _ => abort("expected continued fixed-string attribute")
+  }
+  let attribute_header = parse_object_header(
+    bytes,
+    file.resolve("/continued").address,
+    8,
+    8,
+    0UL,
+  )
+  assert_true(
+    attribute_header.messages.any(message => {
+      message.msg_type == msg_object_continuation
+    }),
+  )
+
+  let links_header = parse_object_header(
+    bytes,
+    file.resolve("/continued_links").address,
+    8,
+    8,
+    0UL,
+  )
+  let links = file.links(links_header)
+  assert_eq(links.length(), 8)
+  assert_eq(links[7].name, "link_7")
+  assert_eq(links[7].link_target, Some(target))
+  assert_true(
+    links_header.messages.any(message => {
+      message.msg_type == msg_object_continuation
+    }),
+  )
+}
+
+///|
 test "writer round-trips absolute relative and dangling soft links" {
   let writer = Hdf5Writer::new()
   writer.add_dataset("/experiment/counts", [3UL], Int64Values([1L, 2L, 3L]))
@@ -366,7 +502,7 @@ test "writer rejects invalid and conflicting soft links" {
 }
 
 ///|
-test "writer continues attribute and link object headers" {
+test "writer stores large metadata in dense storage" {
   let writer = Hdf5Writer::new()
   writer.add_dataset("/many_attributes", [], UInt64Values([0UL]))
   for index in 0..<2500 {
@@ -391,11 +527,11 @@ test "writer continues attribute and link object headers" {
   assert_eq(attributes.length(), 2500)
   match attributes[0].values {
     Some(UnsignedIntegers(values)) => assert_eq(values, [0UL])
-    _ => abort("expected first continued attribute")
+    _ => abort("expected first dense attribute")
   }
   match attributes[2499].values {
     Some(UnsignedIntegers(values)) => assert_eq(values, [2499UL])
-    _ => abort("expected last continued attribute")
+    _ => abort("expected last dense attribute")
   }
   let header = parse_object_header(
     bytes,
@@ -404,8 +540,13 @@ test "writer continues attribute and link object headers" {
     8,
     0UL,
   )
+  let attribute_info = header.find(msg_attribute_info)[0]
+  let attribute_reader = Reader::new(attribute_info.data)
+  attribute_reader.skip(2)
+  assert_true(attribute_reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
+  assert_true(attribute_reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
   assert_true(
-    header.messages.any(message => message.msg_type == msg_object_continuation),
+    !header.messages.any(message => message.msg_type == msg_attribute),
   )
   assert_eq(file.resolve("/many_links/link_2499").path, "/many_attributes")
   let links_header = parse_object_header(
@@ -415,10 +556,13 @@ test "writer continues attribute and link object headers" {
     8,
     0UL,
   )
+  let link_info = links_header.find(msg_link_info)[0]
+  let link_reader = Reader::new(link_info.data)
+  link_reader.skip(2)
+  assert_true(link_reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
+  assert_true(link_reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
   assert_true(
-    links_header.messages.any(message => {
-      message.msg_type == msg_object_continuation
-    }),
+    !links_header.messages.any(message => message.msg_type == msg_link),
   )
 }
 

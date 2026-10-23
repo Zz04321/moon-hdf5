@@ -246,9 +246,31 @@ priv struct WritableGlobalHeap {
 }
 
 ///|
+priv enum WritableDenseKind {
+  WritableDenseLinks
+  WritableDenseAttributes
+} derive(Eq)
+
+///|
+priv struct WritableDenseMetadata {
+  path : String
+  kind : WritableDenseKind
+  heap_address : UInt64
+  index_address : UInt64
+}
+
+///|
+priv struct WritableDenseHeapEntry {
+  name : String
+  hash : UInt32
+  data : Bytes
+}
+
+///|
 priv struct WritableLayout {
   objects : Array[WritableObject]
   heap : WritableGlobalHeap
+  dense : Array[WritableDenseMetadata]
 }
 
 ///|
@@ -3055,6 +3077,404 @@ fn encode_compact_attribute_info() -> Bytes {
 }
 
 ///|
+let writer_dense_threshold : Int32 = 8
+
+///|
+let writer_dense_max_managed_size : Int32 = 4096
+
+///|
+let writer_dense_max_records : Int32 = 65535
+
+///|
+fn encode_dense_storage_info(
+  heap_address : UInt64,
+  index_address : UInt64,
+) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=18)
+  buffer.write_byte(b'\x00')
+  buffer.write_byte(b'\x00')
+  buffer.write_uint64_le(heap_address)
+  buffer.write_uint64_le(index_address)
+  buffer.to_bytes()
+}
+
+///|
+fn writer_name_hash(name : String) -> UInt32 {
+  let encoded = @utf8.encode(name)
+  metadata_checksum(encoded, 0, encoded.length())
+}
+
+///|
+fn Hdf5Writer::dense_link_entries(
+  self : Hdf5Writer,
+  object : WritableObject,
+  objects : Array[WritableObject],
+) -> Array[WritableDenseHeapEntry] raise Hdf5Error {
+  let entries : Array[WritableDenseHeapEntry] = []
+  for child in objects {
+    if child.path != "/" && writer_parent_path(child.path) == object.path {
+      let name = writer_basename(child.path)
+      entries.push({
+        name,
+        hash: writer_name_hash(name),
+        data: encode_hard_link(name, child.address),
+      })
+    }
+  }
+  for link in self.soft_links {
+    if link.parent_path == object.path {
+      entries.push({
+        name: link.name,
+        hash: writer_name_hash(link.name),
+        data: encode_soft_link(link.name, link.target),
+      })
+    }
+  }
+  for link in self.external_links {
+    if link.parent_path == object.path {
+      entries.push({
+        name: link.name,
+        hash: writer_name_hash(link.name),
+        data: encode_external_link(
+          link.name,
+          link.target_file,
+          link.target_path,
+        ),
+      })
+    }
+  }
+  entries
+}
+
+///|
+fn Hdf5Writer::dense_attribute_entries(
+  self : Hdf5Writer,
+  path : String,
+  heap : WritableGlobalHeap,
+) -> Array[WritableDenseHeapEntry] raise Hdf5Error {
+  let entries : Array[WritableDenseHeapEntry] = []
+  for attribute in self.object_attributes(path) {
+    entries.push({
+      name: attribute.name,
+      hash: writer_name_hash(attribute.name),
+      data: encode_attribute(attribute, heap),
+    })
+  }
+  entries
+}
+
+///|
+fn writer_dense_entries_fit(entries : Array[WritableDenseHeapEntry]) -> Bool {
+  if entries.length() <= writer_dense_threshold ||
+    entries.length() > writer_dense_max_records {
+    return false
+  }
+  for entry in entries {
+    if entry.data.length() > writer_dense_max_managed_size {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn writer_sort_dense_entries(entries : Array[WritableDenseHeapEntry]) -> Unit {
+  entries.sort_by((left, right) => {
+    if left.hash < right.hash {
+      -1
+    } else if left.hash > right.hash {
+      1
+    } else if left.name < right.name {
+      -1
+    } else if left.name > right.name {
+      1
+    } else {
+      0
+    }
+  })
+}
+
+///|
+fn writer_next_power_of_two(
+  value : Int32,
+  minimum : Int32,
+) -> Int32 raise Hdf5Error {
+  let mut result = minimum
+  while result < value {
+    guard result <= 0x3FFFFFFF else {
+      raise InvalidField("writer dense metadata is too large")
+    }
+    result = result * 2
+  }
+  result
+}
+
+///|
+fn encode_writer_dense_heap_header(
+  root_address : UInt64,
+  id_length : Int32,
+  block_size : Int32,
+  max_direct_size : Int32,
+  max_heap_bits : Int32,
+  record_count : Int32,
+  table_width : Int32,
+) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=146)
+  writer_write_bytes(buffer, b"FRHP")
+  buffer.write_byte(b'\x00')
+  buffer.write_uint16_le(id_length.to_uint16())
+  buffer.write_uint16_le(0)
+  buffer.write_byte(b'\x02')
+  buffer.write_uint_le(writer_dense_max_managed_size.reinterpret_as_uint())
+  buffer.write_uint64_le(0UL)
+  buffer.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
+  buffer.write_uint64_le(0UL)
+  buffer.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
+  buffer.write_uint64_le(block_size.to_uint64())
+  buffer.write_uint64_le(block_size.to_uint64())
+  buffer.write_uint64_le(0UL)
+  buffer.write_uint64_le(record_count.to_uint64())
+  buffer.write_uint64_le(0UL)
+  buffer.write_uint64_le(0UL)
+  buffer.write_uint64_le(0UL)
+  buffer.write_uint64_le(0UL)
+  buffer.write_uint16_le(table_width.to_uint16())
+  buffer.write_uint64_le(block_size.to_uint64())
+  buffer.write_uint64_le(max_direct_size.to_uint64())
+  buffer.write_uint16_le(max_heap_bits.to_uint16())
+  buffer.write_uint16_le(1)
+  buffer.write_uint64_le(root_address)
+  buffer.write_uint16_le(0)
+  buffer.write_uint_le(metadata_checksum(buffer.to_bytes(), 0, buffer.length()))
+  buffer.to_bytes()
+}
+
+///|
+fn patched_zeroed_checksum(bytes : Bytes, checksum_offset : Int32) -> Bytes {
+  let checksum = checksum_lookup3(
+    bytes,
+    0,
+    bytes.length(),
+    checksum_offset,
+    metadata_checksum_size,
+    0U,
+  )
+  let output = @buffer.Buffer::Buffer(size_hint=bytes.length())
+  output.write_bytes(bytes.get_view(start=0, end=checksum_offset).unwrap())
+  output.write_uint_le(checksum)
+  output.write_bytes(
+    bytes
+    .get_view(
+      start=checksum_offset + metadata_checksum_size,
+      end=bytes.length(),
+    )
+    .unwrap(),
+  )
+  output.to_bytes()
+}
+
+///|
+fn encode_writer_dense_direct_block(
+  heap_address : UInt64,
+  block_size : Int32,
+  heap_offset_size : Int32,
+  entries : Array[WritableDenseHeapEntry],
+) -> (Bytes, Array[Bytes]) raise Hdf5Error {
+  let buffer = @buffer.Buffer::Buffer(size_hint=block_size)
+  writer_write_bytes(buffer, b"FHDB")
+  buffer.write_byte(b'\x00')
+  buffer.write_uint64_le(heap_address)
+  write_uint_width(buffer, 0UL, heap_offset_size)
+  let checksum_offset = buffer.length()
+  buffer.write_uint_le(0U)
+  let ids : Array[Bytes] = []
+  for entry in entries {
+    let offset = buffer.length()
+    guard offset.to_uint64() <= 0xFFFFFFFFUL &&
+      entry.data.length().to_uint64() <= 0xFFFFUL else {
+      raise InvalidField("writer dense heap object exceeds its identifier")
+    }
+    let id = @buffer.Buffer::Buffer(size_hint=1 + heap_offset_size + 2)
+    id.write_byte(b'\x00')
+    write_uint_width(id, offset.to_uint64(), heap_offset_size)
+    id.write_uint16_le(entry.data.length().to_uint16())
+    ids.push(id.to_bytes())
+    writer_write_bytes(buffer, entry.data)
+  }
+  guard buffer.length() <= block_size else {
+    raise InvalidField("writer dense heap block is too small")
+  }
+  writer_write_zeros(buffer, block_size - buffer.length())
+  (patched_zeroed_checksum(buffer.to_bytes(), checksum_offset), ids)
+}
+
+///|
+fn encode_writer_dense_btree_header(
+  node_type : Int32,
+  node_size : Int32,
+  record_size : Int32,
+  root_address : UInt64,
+  record_count : Int32,
+) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=38)
+  writer_write_bytes(buffer, b"BTHD")
+  buffer.write_byte(b'\x00')
+  buffer.write_byte(node_type.to_byte())
+  buffer.write_uint_le(node_size.reinterpret_as_uint())
+  buffer.write_uint16_le(record_size.to_uint16())
+  buffer.write_uint16_le(0)
+  buffer.write_byte(b'\x64')
+  buffer.write_byte(b'\x28')
+  buffer.write_uint64_le(root_address)
+  buffer.write_uint16_le(record_count.to_uint16())
+  buffer.write_uint64_le(record_count.to_uint64())
+  buffer.write_uint_le(metadata_checksum(buffer.to_bytes(), 0, buffer.length()))
+  buffer.to_bytes()
+}
+
+///|
+fn encode_writer_dense_btree_node(
+  node_type : Int32,
+  node_size : Int32,
+  record_size : Int32,
+  records : Array[Bytes],
+) -> Bytes raise Hdf5Error {
+  let buffer = @buffer.Buffer::Buffer(size_hint=node_size)
+  writer_write_bytes(buffer, b"BTLF")
+  buffer.write_byte(b'\x00')
+  buffer.write_byte(node_type.to_byte())
+  for record in records {
+    guard record.length() == record_size else {
+      raise InvalidField("writer dense B-tree record size mismatch")
+    }
+    writer_write_bytes(buffer, record)
+  }
+  guard buffer.length() + metadata_checksum_size <= node_size else {
+    raise InvalidField("writer dense B-tree node is too small")
+  }
+  buffer.write_uint_le(metadata_checksum(buffer.to_bytes(), 0, buffer.length()))
+  writer_write_zeros(buffer, node_size - buffer.length())
+  buffer.to_bytes()
+}
+
+///|
+fn Hdf5Writer::encode_dense_metadata(
+  self : Hdf5Writer,
+  object : WritableObject,
+  objects : Array[WritableObject],
+  heap : WritableGlobalHeap,
+  heap_address : UInt64,
+  kind : WritableDenseKind,
+) -> (Bytes, Bytes) raise Hdf5Error {
+  let group = match kind {
+    WritableDenseLinks => true
+    WritableDenseAttributes => false
+  }
+  let entries = if group {
+    self.dense_link_entries(object, objects)
+  } else {
+    self.dense_attribute_entries(object.path, heap)
+  }
+  guard writer_dense_entries_fit(entries) else {
+    raise InvalidField("dense metadata is not available for this object")
+  }
+  writer_sort_dense_entries(entries)
+  let record_size = if group { 11 } else { 17 }
+  let heap_offset_size = if group { 4 } else { 5 }
+  let max_heap_bits = if group { 32 } else { 40 }
+  let id_length = if group { 7 } else { 8 }
+  let minimum_block_size = if group { 512 } else { 1024 }
+  let direct_overhead = 4 + 1 + 8 + heap_offset_size + metadata_checksum_size
+  let mut data_size = direct_overhead
+  for entry in entries {
+    data_size = data_size + entry.data.length()
+  }
+  let block_size = writer_next_power_of_two(data_size, minimum_block_size)
+  let max_direct_size = writer_next_power_of_two(block_size, 65536)
+  let root_address = heap_address + 146UL
+  let index_address = root_address + block_size.to_uint64()
+  let heap_header = encode_writer_dense_heap_header(
+    root_address,
+    id_length,
+    block_size,
+    max_direct_size,
+    max_heap_bits,
+    entries.length(),
+    4,
+  )
+  let (direct_block, ids) = encode_writer_dense_direct_block(
+    heap_address, block_size, heap_offset_size, entries,
+  )
+  let records : Array[Bytes] = []
+  for index in 0..<entries.length() {
+    let record = @buffer.Buffer::Buffer(size_hint=record_size)
+    if group {
+      record.write_uint_le(entries[index].hash)
+      writer_write_bytes(record, ids[index])
+    } else {
+      writer_write_bytes(record, ids[index])
+      record.write_byte(b'\x00')
+      record.write_uint_le(0xFFFFU)
+      record.write_uint_le(entries[index].hash)
+    }
+    guard record.length() == record_size else {
+      raise InvalidField("writer dense B-tree record size mismatch")
+    }
+    records.push(record.to_bytes())
+  }
+  let node_size = writer_next_power_of_two(
+    10 + records.length() * record_size,
+    512,
+  )
+  let node_address = index_address + 38UL
+  let btree_header = encode_writer_dense_btree_header(
+    if group {
+      5
+    } else {
+      8
+    },
+    node_size,
+    record_size,
+    node_address,
+    records.length(),
+  )
+  let btree_node = encode_writer_dense_btree_node(
+    if group {
+      5
+    } else {
+      8
+    },
+    node_size,
+    record_size,
+    records,
+  )
+  let heap_bytes = @buffer.Buffer::Buffer(
+    size_hint=heap_header.length() + direct_block.length(),
+  )
+  writer_write_bytes(heap_bytes, heap_header)
+  writer_write_bytes(heap_bytes, direct_block)
+  let index_bytes = @buffer.Buffer::Buffer(
+    size_hint=btree_header.length() + btree_node.length(),
+  )
+  writer_write_bytes(index_bytes, btree_header)
+  writer_write_bytes(index_bytes, btree_node)
+  (heap_bytes.to_bytes(), index_bytes.to_bytes())
+}
+
+///|
+fn writer_dense_addresses(
+  dense : Array[WritableDenseMetadata],
+  path : String,
+  kind : WritableDenseKind,
+) -> (UInt64, UInt64) {
+  match
+    dense.search_by(metadata => metadata.path == path && metadata.kind == kind) {
+    Some(index) => (dense[index].heap_address, dense[index].index_address)
+    None => (0xFFFFFFFFFFFFFFFFUL, 0xFFFFFFFFFFFFFFFFUL)
+  }
+}
+
+///|
 fn write_header_message(
   buffer : @buffer.Buffer,
   message_type : Int32,
@@ -3242,36 +3662,27 @@ fn Hdf5Writer::object_payload(
   object : WritableObject,
   objects : Array[WritableObject],
   heap : WritableGlobalHeap,
+  dense : Array[WritableDenseMetadata],
 ) -> Bytes raise Hdf5Error {
   let buffer = @buffer.Buffer::Buffer()
   match object.kind {
     WritableGroup => {
-      write_header_message(buffer, msg_link_info, encode_link_info())
-      for child in objects {
-        if child.path != "/" && writer_parent_path(child.path) == object.path {
-          write_header_message(
-            buffer,
-            msg_link,
-            encode_hard_link(writer_basename(child.path), child.address),
-          )
-        }
-      }
-      for link in self.soft_links {
-        if link.parent_path == object.path {
-          write_header_message(
-            buffer,
-            msg_link,
-            encode_soft_link(link.name, link.target),
-          )
-        }
-      }
-      for link in self.external_links {
-        if link.parent_path == object.path {
-          write_header_message(
-            buffer,
-            msg_link,
-            encode_external_link(link.name, link.target_file, link.target_path),
-          )
+      let entries = self.dense_link_entries(object, objects)
+      if writer_dense_entries_fit(entries) {
+        let (heap_address, index_address) = writer_dense_addresses(
+          dense,
+          object.path,
+          WritableDenseLinks,
+        )
+        write_header_message(
+          buffer,
+          msg_link_info,
+          encode_dense_storage_info(heap_address, index_address),
+        )
+      } else {
+        write_header_message(buffer, msg_link_info, encode_link_info())
+        for entry in entries {
+          write_header_message(buffer, msg_link, entry.data)
         }
       }
     }
@@ -3351,18 +3762,28 @@ fn Hdf5Writer::object_payload(
   }
   let attributes = self.object_attributes(object.path)
   if attributes.length() > 0 {
-    write_header_message(
-      buffer,
-      msg_attribute_info,
-      encode_compact_attribute_info(),
-    )
-  }
-  for attribute in attributes {
-    write_header_message(
-      buffer,
-      msg_attribute,
-      encode_attribute(attribute, heap),
-    )
+    let entries = self.dense_attribute_entries(object.path, heap)
+    if writer_dense_entries_fit(entries) {
+      let (heap_address, index_address) = writer_dense_addresses(
+        dense,
+        object.path,
+        WritableDenseAttributes,
+      )
+      write_header_message(
+        buffer,
+        msg_attribute_info,
+        encode_dense_storage_info(heap_address, index_address),
+      )
+    } else {
+      write_header_message(
+        buffer,
+        msg_attribute_info,
+        encode_compact_attribute_info(),
+      )
+      for entry in entries {
+        write_header_message(buffer, msg_attribute, entry.data)
+      }
+    }
   }
   buffer.to_bytes()
 }
@@ -3475,7 +3896,7 @@ fn assign_writable_addresses(
   for object in templates {
     lengths.push(
       encode_object_header(
-        writer.object_payload(object, templates, empty_heap),
+        writer.object_payload(object, templates, empty_heap, []),
         0UL,
       ).length(),
     )
@@ -3503,6 +3924,40 @@ fn assign_writable_addresses(
   }
   if heap.strings.length() > 0 {
     offset = writer_align(offset + encode_global_heap(heap).length())
+  }
+  let dense : Array[WritableDenseMetadata] = []
+  for object in objects {
+    let candidates : Array[(WritableDenseKind, Array[WritableDenseHeapEntry])] = []
+    match object.kind {
+      WritableGroup =>
+        candidates.push(
+          (WritableDenseLinks, writer.dense_link_entries(object, objects)),
+        )
+      WritableDatasetObject(_) => ()
+    }
+    candidates.push(
+      (
+        WritableDenseAttributes,
+        writer.dense_attribute_entries(object.path, heap),
+      ),
+    )
+    for (kind, dense_entries) in candidates {
+      if writer_dense_entries_fit(dense_entries) {
+        let (placeholder_heap, placeholder_index) = writer.encode_dense_metadata(
+          object, objects, heap, 0UL, kind,
+        )
+        let heap_address = offset.to_uint64()
+        dense.push({
+          path: object.path,
+          kind,
+          heap_address,
+          index_address: heap_address + placeholder_heap.length().to_uint64(),
+        })
+        offset = writer_align(
+          offset + placeholder_heap.length() + placeholder_index.length(),
+        )
+      }
+    }
   }
   for index in 0..<objects.length() {
     match objects[index].kind {
@@ -3547,7 +4002,7 @@ fn assign_writable_addresses(
       WritableGroup => ()
     }
   }
-  { objects, heap, }
+  { objects, heap, dense, }
 }
 
 ///|
@@ -3575,7 +4030,7 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
   let mut eof = 48
   for object in objects {
     let header = encode_object_header(
-      self.object_payload(object, objects, layout.heap),
+      self.object_payload(object, objects, layout.heap, layout.dense),
       object.address,
     )
     encoded_headers.push(header)
@@ -3584,6 +4039,24 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
   let heap_payload = encode_global_heap(layout.heap)
   if heap_payload.length() > 0 {
     eof = writer_align(layout.heap.address.to_int() + heap_payload.length())
+  }
+  let dense_payloads : Array[(UInt64, Bytes)] = []
+  for metadata in layout.dense {
+    let object = find_writable_object(objects, metadata.path)
+    let (heap_bytes, index_bytes) = self.encode_dense_metadata(
+      object,
+      objects,
+      layout.heap,
+      metadata.heap_address,
+      metadata.kind,
+    )
+    guard heap_bytes.length().to_uint64() ==
+      metadata.index_address - metadata.heap_address else {
+      raise InvalidField("dense metadata address changed during encoding")
+    }
+    dense_payloads.push((metadata.heap_address, heap_bytes))
+    dense_payloads.push((metadata.index_address, index_bytes))
+    eof = writer_align(metadata.index_address.to_int() + index_bytes.length())
   }
   let raw_payloads : Array[(UInt64, Bytes)] = []
   for object in objects {
@@ -3628,6 +4101,10 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
   if heap_payload.length() > 0 {
     writer_write_zeros(output, layout.heap.address.to_int() - output.length())
     writer_write_bytes(output, heap_payload)
+  }
+  for (address, payload) in dense_payloads {
+    writer_write_zeros(output, address.to_int() - output.length())
+    writer_write_bytes(output, payload)
   }
   for (address, payload) in raw_payloads {
     writer_write_zeros(output, address.to_int() - output.length())

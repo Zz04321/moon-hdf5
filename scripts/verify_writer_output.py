@@ -131,10 +131,27 @@ def verify(path: Path) -> None:
         assert growing_f32.shuffle
         assert growing_f32.compression == "gzip"
         assert growing_f32.fletcher32
-        continued = handle["metadata/values"]
-        assert len(continued.attrs) == 2500
+        dense_values = handle["metadata/values"]
+        assert len(dense_values.attrs) == 2500
         for index in (0, 1250, 2499):
-            assert continued.attrs[f"attr_{index}"] == np.uint64(index)
+            assert dense_values.attrs[f"attr_{index}"] == np.uint64(index)
+        dense = handle["metadata/dense"]
+        assert len(dense) == 12
+        assert len(dense.attrs) == 12
+        for index in (0, 5, 11):
+            assert dense[f"value_{index}"][()] == np.uint64(index)
+            assert dense.attrs[f"dense_attr_{index}"] == np.uint64(index + 100)
+        continued = handle["metadata/continued"]
+        assert len(continued.attrs) == 8
+        assert (
+            continued.attrs["continued_7"].decode("utf-8").rstrip("\0")
+            == "c" * 9000
+        )
+        continued_link = handle.get(
+            "metadata/continued_links/link_7", getlink=True
+        )
+        assert isinstance(continued_link, h5py.SoftLink)
+        assert continued_link.path == "/" + "t" * 9000
         records = handle["structured/records"]
         assert records.dtype.names == ("id", "state", "samples", "label")
         assert records.dtype.itemsize == 19

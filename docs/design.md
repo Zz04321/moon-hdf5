@@ -144,17 +144,30 @@ The inspector writes diagnostics to stderr and returns 0/1/2 for success,
 data errors and usage errors respectively. Per-dataset failures do not prevent
 other datasets from being inspected, but make the overall result unsuccessful.
 
-The new-file writer emits a superblock v3, object headers v2, compact hard, soft
-and external-link messages, contiguous or chunked dataset layouts and inline
-attributes.
+The new-file writer emits a superblock v3, object headers v2, compact or dense
+hard, soft and external-link metadata, contiguous or chunked dataset layouts and
+compact or dense attributes.
 Object headers are split on complete message boundaries: the initial OHDR chunk
 uses a 16-bit size, and additional messages continue through checksummed OCHK
-chunks referenced by continuation messages. Objects with attributes include a
+chunks referenced by continuation messages. Small attribute sets include a
 compact attribute-info message with undefined dense-storage addresses, allowing
-HDF5 readers to report attribute counts correctly. The writer calculates all
-object, continuation and raw-data addresses before encoding checksummed
-metadata. Soft links may use absolute targets or targets relative to their
-containing group and may remain dangling. External links use HDF5's version-zero
+HDF5 readers to report attribute counts correctly.
+
+Groups and objects with attributes use dense storage for 9–65,535 links or
+attributes when every encoded heap object is at most 4 KiB. Each collection has
+one FRHP header, one checksummed FHDB direct block, one BTHD header and one BTLF
+name index. Dense link records contain a `lookup3` name hash and a 7-byte heap
+ID; dense attribute records contain an 8-byte heap ID, flags, an undefined
+creation-order value and a `lookup3` name hash. Link and attribute collections
+are planned separately, so a group can use both. The writer does not emit dense
+indirect or huge heap blocks, a creation-order index or a free-space manager.
+Sets outside those bounds retain link or attribute messages in compact form and
+use OCHK continuations when the object header exceeds one chunk.
+
+The writer calculates all object, continuation, dense-metadata, global-heap and
+raw-data addresses before encoding checksummed metadata. Soft links may use
+absolute targets or targets relative to their containing group and may remain
+dangling. External links use HDF5's version-zero
 external-link information block with null-terminated target file and object-path
 strings; `Hdf5File` parses those fields, while `Hdf5Resolver` opens registered
 targets. The public
@@ -193,7 +206,8 @@ helpers perform both operations for every writer datatype. Both operations
 mutate the in-memory builder before complete-file encoding; modifying an
 existing file in place remains separate work.
 
-Structured datasets, fills and inline attributes share one recursive encoder.
+Structured datasets, fills and compact or dense attributes share one recursive
+encoder.
 Validation checks nesting depth, member names and order, integer widths, enum
 names and values, array element counts, compound bounds and exact encoded sizes
 before address assignment. Caller-owned datatype and value arrays are copied
