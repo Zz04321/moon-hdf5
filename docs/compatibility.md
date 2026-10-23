@@ -25,9 +25,11 @@ evidence and are not part of the HDF5 1.14.6 v1.0 baseline.
 
 The following are outside the v1.0 profile: virtual datasets, external data
 storage, SWMR, parallel HDF5, third-party filters, in-place editing, external
-link dereferencing, reference target resolution, nonstandard numeric layouts,
-and producer-specific MATLAB/NetCDF-4 semantics. These are not v1.0
-compatibility promises.
+link dereferencing in `Hdf5File` itself, reference target resolution,
+nonstandard numeric layouts, and producer-specific MATLAB/NetCDF-4 semantics.
+External-link dereferencing is available through `Hdf5Resolver` and is listed
+as a verified reader capability below. These exclusions remain outside the
+v1.0 compatibility promise.
 
 The release gate is `scripts/release_check.sh`. It runs the interface, format,
 documentation and package checks, wasm/native tests, writes a demo file and
@@ -43,7 +45,8 @@ MoonBit tests.
 | Area | Verified input | Current boundary |
 | --- | --- | --- |
 | File framing | Superblocks v0–v3, user blocks, 4-byte and 8-byte addresses | Other address/length combinations are not comprehensively tested |
-| Groups | Symbol-table groups, compact links, dense links, creation-order indexes, soft links and external-link metadata | External links are parsed but not dereferenced |
+| Groups | Symbol-table groups, compact links, dense links, creation-order indexes and soft links | Dense link creation is not available in the writer |
+| Cross-file links | `Hdf5Resolver` follows external links across registered `Hdf5Source` values, including chained links and relative target names | `Hdf5File` alone does not open external targets; external data storage is separate |
 | Attributes | Inline messages v1–v3 and dense attributes | Unsupported attribute datatypes may be reported without values |
 | Dataset layouts | Compact, contiguous and chunked | External and virtual dataset storage are rejected |
 | Chunk indexes | V1 B-tree, single chunk, implicit, fixed array, extensible array and v2 B-tree | Unsupported index variants are rejected |
@@ -52,7 +55,7 @@ MoonBit tests.
 | Strings | Fixed strings with supported padding and ASCII/UTF-8, plus variable-length UTF-8 | Other character encodings are rejected |
 | Structured values | Compound, enum, fixed array, vlen sequence, bitfield, opaque, time, reference and HDF5 2.0 complex; datatype messages v1–v5 including HDF5 1.14.6 v4 types | References are returned as encoded bytes and are not resolved |
 | Fill values | Default and fixed-size fills for unallocated contiguous or chunked storage | Undefined/disabled policies and custom vlen fills are rejected when decoding requires them |
-| Selections | Hyperslabs and ordered points across supported layouts and chunk indexes | Inputs and selected values remain memory resident |
+| Selections | Hyperslabs and ordered points across supported layouts and chunk indexes; `DatasetChunkIterator` reads edge-clipped tiles with early termination | A single selection result is memory resident; streaming memory is bounded by one tile plus intersecting storage chunks |
 | Dense metadata | Managed/tiny/direct-huge/indirect-huge fractal-heap objects and metadata v2 B-trees | Broader non-matrix interoperability remains to be tested |
 
 The cross-version object matrix is stored in `interop_earliest.h5`,
@@ -86,8 +89,10 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 The h5py verification also checks extensible-array super blocks and paged data
 blocks across 134200 chunks. Generated extensible datasets expose the expected
 maximum shape and can subsequently be resized and written by h5py. External-link
-output is checked for its link class, target filename and object path; the
-reader intentionally leaves external targets unresolved.
+output is checked for its link class, target filename and object path. MoonBit
+tests additionally resolve writer-produced external links through
+`Hdf5Resolver`; `Hdf5File` itself intentionally leaves external targets
+unresolved.
 
 ## Reproduce
 

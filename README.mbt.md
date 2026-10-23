@@ -18,10 +18,11 @@ This is not a read-only library.
 - `Hdf5Writer` creates a complete new HDF5 file in memory and writes groups,
   datasets, attributes, soft and external links, fixed-size-value filters, fill
   values and one extensible dimension.
-- In-place editing of an existing file is not implemented. The reader also
-  parses external-link metadata but does not open or resolve the target file.
+- In-place editing of an existing file is not implemented. `Hdf5File` parses
+  external-link metadata without opening another file; `Hdf5Resolver` resolves
+  those links when the target sources are registered.
 
-The public writer entry points are listed in
+The public reader and writer entry points are listed in
 [`src/pkg.generated.mbti`](src/pkg.generated.mbti); see [Writing](#writing) for
 an executable example.
 
@@ -35,6 +36,10 @@ an executable example.
 - Applies deflate, shuffle and Fletcher32 filters, including per-chunk masks.
 - Provides metadata-only access, hyperslab selection and ordered point
   selection.
+- Resolves chained soft and external links across registered sources, with
+  cycle and indirection limits.
+- Reads datasets through a bounded-memory chunk iterator for edge-clipped tiles
+  and early termination.
 - Creates new files with groups, attributes, hard, soft and external links,
   contiguous or chunked datasets, filters, fill values and one extensible
   dimension. Large chunk indexes use fixed-array pages or extensible-array
@@ -87,6 +92,27 @@ let attributes = file.attributes("/group/values")
 
 ///|
 let nodes = file.walk()
+
+///|
+let resolver = @lib.Hdf5Resolver::new(
+  @fs.read_file_to_bytes("data.h5"),
+)
+resolver.add_source(
+  "other-file.h5",
+  @fs.read_file_to_bytes("other-file.h5"),
+)
+let remote = resolver.read_dataset("/experiment/remote_counts")
+let remote_chunks = resolver.chunk_iterator(
+  "/experiment/remote_counts",
+  [1UL, 2UL],
+)
+
+///|
+let chunks = file.chunk_iterator("/matrix", [1UL, 2UL])
+while chunks.next() is Some(chunk) {
+  chunk.offset |> ignore
+  chunk.values |> ignore
+}
 ```
 
 Simple values are returned as `Integers`, `UnsignedIntegers`, `Floats`,
@@ -96,6 +122,20 @@ References are returned as encoded bytes and are not dereferenced.
 `read_dataset_metadata` does not load dataset values. Selection reads support
 compact, contiguous and chunked datasets; chunked reads decode only intersecting
 allocated chunks.
+
+`Hdf5Resolver` maintains a registry of named `Hdf5Source` values. The source passed
+to `Hdf5Resolver::new` is named `<root>`; `add_source` registers external-link
+targets. Path resolution follows hard, soft and external links, supports chained
+links, rejects cycles, and reports an unregistered target explicitly. The
+returned `Hdf5ResolvedNode` records the target source name, canonical path,
+address and object kind.
+
+`chunk_iterator` splits a dataset into caller-selected tiles. Each `next` call
+returns the tile origin, its edge-clipped shape and decoded values. Memory is
+bounded by one tile plus any intersecting storage chunk, and callers may stop
+early by no longer calling `next`. This API does not change the selection or
+storage formats supported by the reader. `Hdf5Resolver::chunk_iterator` applies
+the same behavior after resolving an external-link target.
 
 `Hdf5File::parse_source` also accepts an implementation of the random-access
 `Hdf5Source` interface. Superblock parsing, object headers and group navigation
@@ -166,8 +206,9 @@ Use `add_chunked_dataset` for a finite chunked dataset. Use
 `add_extensible_dataset`, `resize_dataset` and `append_dataset` for a dataset
 with one unlimited dimension. `add_soft_link` attaches a compact link to an
 absolute target or a target relative to the containing group; dangling links are
-allowed. `add_external_link` records a target file and object path; HDF5 readers
-resolve them, while this library reports external links as unresolved. The
+allowed. `add_external_link` records a target file and object path. HDF5 readers
+resolve them, and `Hdf5Resolver` resolves them when the target source is
+registered; `Hdf5File` alone leaves the link unresolved. The
 writer rejects link messages whose encoded metadata exceeds HDF5's 16-bit message
 size. `Datatype::write_integer`, `write_float`, `write_fixed_string`,
 `write_enum`, `write_array` and `write_compound` construct supported structured
@@ -203,11 +244,13 @@ Focused examples are available in `src/cmd/metadata_demo`,
 
 ## Limitations
 
-- Decoded values remain in memory even when the input uses random access.
+- Whole-dataset reads and single selection results remain memory resident even
+  when the input uses random access.
+- Use `chunk_iterator` when the complete dataset is too large for memory.
 - The writer creates complete new files and does not edit existing files.
 - Dense link and dense attribute storage are not written; large compact metadata
-  uses object-header continuations instead. External links can be written but
-  are not resolved by the reader; external dataset storage is not supported.
+  uses object-header continuations instead. External dataset storage is not
+  supported; `Hdf5Resolver` resolves external links, not external raw data.
 - Custom variable-length fill values, additional writer filters and reference
   writing are not supported.
 - Variable-length writer datasets cannot use filters; HDF5 1.14.6 rejects this

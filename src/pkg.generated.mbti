@@ -61,6 +61,18 @@ pub(all) struct Dataset {
 } derive(@debug.Debug)
 pub fn Dataset::to_repr(Self) -> @debug.Repr
 
+pub(all) struct DatasetChunk {
+  offset : Array[UInt64]
+  dimensions : Array[UInt64]
+  values : DatasetValues
+} derive(@debug.Debug)
+pub fn DatasetChunk::to_repr(Self) -> @debug.Repr
+
+pub struct DatasetChunkIterator {
+  // private fields
+}
+pub fn DatasetChunkIterator::next(Self) -> DatasetChunk? raise Hdf5Error
+
 pub(all) enum DatasetLayoutKind {
   Compact
   Contiguous
@@ -182,6 +194,7 @@ pub struct Hdf5File {
   // private fields
 }
 pub fn Hdf5File::attributes(Self, String) -> Array[Attribute] raise Hdf5Error
+pub fn Hdf5File::chunk_iterator(Self, String, Array[UInt64]) -> DatasetChunkIterator raise Hdf5Error
 pub fn Hdf5File::parse(Bytes) -> Self raise Hdf5Error
 pub fn Hdf5File::parse_source(&Hdf5Source) -> Self raise Hdf5Error
 pub fn Hdf5File::read_dataset(Self, String) -> Dataset raise Hdf5Error
@@ -208,6 +221,29 @@ pub(all) enum Hdf5ObjectKind {
 pub fn Hdf5ObjectKind::equal(Self, Self) -> Bool
 pub fn Hdf5ObjectKind::not_equal(Self, Self) -> Bool
 pub fn Hdf5ObjectKind::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Hdf5ResolvedNode {
+  file : String
+  path : String
+  address : UInt64
+  kind : Hdf5ObjectKind
+} derive(Eq, @debug.Debug)
+pub fn Hdf5ResolvedNode::equal(Self, Self) -> Bool
+pub fn Hdf5ResolvedNode::not_equal(Self, Self) -> Bool
+pub fn Hdf5ResolvedNode::to_repr(Self) -> @debug.Repr
+
+pub struct Hdf5Resolver {
+  // private fields
+}
+pub fn Hdf5Resolver::add_source(Self, String, &Hdf5Source) -> Unit raise Hdf5Error
+pub fn Hdf5Resolver::attributes(Self, String) -> Array[Attribute] raise Hdf5Error
+pub fn Hdf5Resolver::chunk_iterator(Self, String, Array[UInt64]) -> DatasetChunkIterator raise Hdf5Error
+pub fn Hdf5Resolver::new(&Hdf5Source) -> Self
+pub fn Hdf5Resolver::open(Self, String) -> Hdf5File raise Hdf5Error
+pub fn Hdf5Resolver::read_dataset(Self, String) -> Dataset raise Hdf5Error
+pub fn Hdf5Resolver::read_dataset_metadata(Self, String) -> DatasetMetadata raise Hdf5Error
+pub fn Hdf5Resolver::read_dataset_selection(Self, String, DatasetSelection) -> DatasetSelectionResult raise Hdf5Error
+pub fn Hdf5Resolver::resolve(Self, String) -> Hdf5ResolvedNode raise Hdf5Error
 
 pub(all) enum Hdf5WriteFilter {
   Shuffle

@@ -10,10 +10,10 @@ their global heap objects on demand. Source-backed file addresses remain
 | Layer | Files | Responsibility |
 | --- | --- | --- |
 | Framing | reader, superblock, object_header | Byte reads, addresses, messages |
-| Navigation | heap, symbol_table, link, hdf5_file | Groups, links and paths |
+| Navigation | heap, symbol_table, link, hdf5_file, resolver | Groups, links, paths and cross-file resolution |
 | Dense metadata | fractal_heap, v2_metadata | Fractal heaps and metadata v2 B-trees |
 | Metadata | dataspace, datatype, data_layout | Shapes, types and storage |
-| Values | dataset, chunked, direct_chunks, filter, fill_value, global_heap, attribute | Value decoding |
+| Values | dataset, selection, chunked, direct_chunks, filter, fill_value, global_heap, attribute, streaming | Value decoding and bounded tile iteration |
 | Writing | writer | New-file encoding for groups, datasets and attributes |
 
 Dataset metadata parsing is separate from storage reads and value decoding.
@@ -23,6 +23,24 @@ path before decoding all values. Dataset selections validate their rank and
 bounds, preserve point order and duplicates, and read only the selected elements
 from compact or contiguous storage. For chunked storage, every supported index
 is validated while only chunks intersecting the selection are read and decoded.
+
+`Hdf5Resolver` is the file-manager boundary for multiple `Hdf5Source` values.
+The source passed to `new` is named `<root>`; `add_source` registers named
+external-link targets. Resolution follows hard, soft and external links, tries
+an exact target name, then a name relative to the referring source directory,
+then the basename. A resolved node records its source, canonical object path,
+address and kind. An explicit visited set rejects soft/external-link cycles and
+a depth bound limits indirection chains. `Hdf5File` retains its single-source
+behavior and still reports external links as unresolved.
+
+`DatasetChunkIterator` divides a dataset into caller-selected tiles without
+materializing the complete dataset. Each tile is read through the same validated
+selection path, so memory is bounded by the tile result plus a decoded storage
+chunk when filters require whole-chunk decoding. Storage indexes are consulted
+for each tile; this favors bounded memory and early termination over a single
+full-index traversal. Scalar datasets produce one empty-coordinate tile, and
+datasets with a zero-length axis produce no tiles. `Hdf5Resolver::chunk_iterator`
+provides the same iterator after resolving a path to its concrete source.
 
 Addresses are resolved relative to the superblock base. Modern group link-info
 messages select compact or dense storage from allocated heap/index addresses.
@@ -138,7 +156,8 @@ object, continuation and raw-data addresses before encoding checksummed
 metadata. Soft links may use absolute targets or targets relative to their
 containing group and may remain dangling. External links use HDF5's version-zero
 external-link information block with null-terminated target file and object-path
-strings; the reader parses those fields but never opens another file. The public
+strings; `Hdf5File` parses those fields, while `Hdf5Resolver` opens registered
+targets. The public
 builder validates absolute paths, duplicate objects, links and attributes,
 dataspace rank and element counts, fixed-string widths and encoded link-message
 sizes before allocating output.

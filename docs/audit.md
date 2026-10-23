@@ -286,7 +286,7 @@ not a claim of complete HDF5 support. The profile lists the supported
 superblocks, storage layouts, chunk indexes, filters, datatypes, selections and
 writer outputs, and separates virtual datasets, external data storage, SWMR,
 parallel HDF5, third-party filters, in-place editing, external-link
-dereferencing and reference resolution as out of scope.
+dereferencing in `Hdf5File` and reference resolution as out of scope.
 
 The proposal wording was aligned with the repository: it targets the HDF5
 1.14.6 common-file profile and the HDF5 File Format Specification v3.0, records
@@ -299,3 +299,23 @@ current shape. The chunk allocator now masks allocation to chunks intersecting
 the current shape. `write_demo` and the h5py verifier cover a bounded
 variable-length dataset whose current shape is `(1, 2)`, maximum shape is
 `(None, 4)` and chunk shape is `(1, 2)`; h5py reports one allocated chunk.
+
+## Resolver and streaming review — 2026-10-23
+
+The reader previously parsed external-link metadata but deliberately rejected
+resolution because `Hdf5File` has no file-manager boundary. `Hdf5Resolver` now
+maintains a registry of named random-access sources and resolves hard, soft and
+external links across them. It tries exact, referring-directory-relative and
+basename target names, returns the concrete source and canonical object path,
+and rejects unregistered targets. A visited path/source set detects soft and
+external cycles, with a separate indirection-depth limit. Regression tests cover
+chained external links, a relative filename inside the target source, a soft
+link in an external target, attributes and selections through the resolver, a
+missing target and a two-source cycle.
+
+`DatasetChunkIterator` adds bounded-memory reads without changing the supported
+storage formats. It computes caller-selected tiles, clips edge tiles to the
+dataset shape, and reuses the validated selection path. Tests cover contiguous
+and chunked storage, edge clipping, scalar and empty datasets, and early stop.
+The original `read_dataset` and single-selection APIs remain materialized and
+are documented as such.
