@@ -189,6 +189,22 @@ def generate_layouts_32(destination: Path) -> None:
         create_layout_dataset(handle, "compact", data, h5py.h5d.COMPACT)
         create_layout_dataset(handle, "contiguous", data, h5py.h5d.CONTIGUOUS)
         create_layout_dataset(handle, "chunked", data, h5py.h5d.CHUNKED)
+        handle.create_group("group")
+        for name, reference in (
+            ("object_ref_compact", handle["compact"].ref),
+            ("object_ref_group", handle["group"].ref),
+            ("object_ref_chunked", handle["chunked"].ref),
+            ("object_ref_null", h5py.Reference()),
+        ):
+            handle.create_dataset(
+                name,
+                data=np.array([reference], dtype=h5py.ref_dtype),
+                track_times=False,
+            )
+        handle["compact"].attrs.create(
+            "sibling_ref",
+            np.array([handle["contiguous"].ref], dtype=h5py.ref_dtype),
+        )
         references = (
             (
                 "ref_compact",
@@ -252,6 +268,22 @@ def verify_layouts_32(destination: Path) -> None:
             np.testing.assert_array_equal(
                 handle[name][...], np.arange(6, dtype="<i4")
             )
+        expected = {
+            "object_ref_compact": ("/compact", "Dataset"),
+            "object_ref_group": ("/group", "Group"),
+            "object_ref_chunked": ("/chunked", "Dataset"),
+        }
+        for name, (path, kind) in expected.items():
+            dataset = handle[name]
+            assert dataset.id.get_storage_size() == 4
+            resolved = handle[dataset[0]]
+            assert resolved.name == path
+            assert type(resolved).__name__ == kind
+        null_dataset = handle["object_ref_null"]
+        null_offset = null_dataset.id.get_offset()
+        assert destination.read_bytes()[null_offset : null_offset + 4] == b"\0" * 4
+        attribute_ref = handle["compact"].attrs["sibling_ref"][0]
+        assert handle[attribute_ref].name == "/contiguous"
 
     verify_serialized_references(destination)
 

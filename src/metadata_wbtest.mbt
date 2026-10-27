@@ -26,15 +26,33 @@ test "integer precision and bit offsets decode through every value path" {
     Some(Integers(values)) => assert_eq(values, expected_big_endian)
     _ => abort("expected big-endian custom-integer attribute")
   }
-  assert_eq(integer_values(file.read_dataset("/fill")), [-2L, -2L, -2L])
-
-  let error = try {
-    file.read_dataset("/custom_float") |> ignore
-    None
-  } catch {
-    error => Some(error)
+  let expected_signed_20 = [42L, -2L, -524288L, 524287L]
+  assert_eq(integer_values(file.read_dataset("/signed_20")), expected_signed_20)
+  match find_attribute(file.attributes("/signed_20"), "custom").values {
+    Some(Integers(values)) => assert_eq(values, expected_signed_20)
+    _ => abort("expected 20-bit signed custom-integer attribute")
   }
-  assert_true(error is Some(UnsupportedFeature(_)))
+  let expected_unsigned_40 = [0UL, 1UL, 0xFFFFFFFFFFUL]
+  assert_eq(
+    unsigned_values(file.read_dataset("/unsigned_40_be")),
+    expected_unsigned_40,
+  )
+  match find_attribute(file.attributes("/unsigned_40_be"), "custom").values {
+    Some(UnsignedIntegers(values)) => assert_eq(values, expected_unsigned_40)
+    _ => abort("expected 40-bit unsigned custom-integer attribute")
+  }
+  assert_eq(integer_values(file.read_dataset("/fill")), [-2L, -2L, -2L])
+  assert_eq(float_values(file.read_dataset("/custom_float")), [1.5])
+  let expected_float = [1.5, -2.25, 0.125]
+  assert_eq(
+    float_values(file.read_dataset("/custom_binary_float")),
+    expected_float,
+  )
+  match
+    find_attribute(file.attributes("/custom_binary_float"), "custom").values {
+    Some(Floats(values)) => assert_eq(values, expected_float)
+    _ => abort("expected custom binary-float attribute")
+  }
 }
 
 ///|
@@ -49,11 +67,11 @@ test "invalid integer storage and bit layouts are rejected" {
       InvalidField("invalid integer offset or precision"),
     ),
     (
-      b"\x10\x08\x00\x00\x03\x00\x00\x00\x00\x00\x18\x00",
-      UnsupportedFeature("integer width is not 1, 2, 4 or 8 bytes"),
+      b"\x10\x08\x00\x00\x09\x00\x00\x00\x00\x00\x40\x00",
+      UnsupportedFeature("integer width is outside 1..8 bytes"),
     ),
     (
-      b"\x10\x0a\x00\x00\x04\x00\x00\x00\x00\x00\x20\x00",
+      b"\x10\x10\x00\x00\x04\x00\x00\x00\x00\x00\x20\x00",
       UnsupportedFeature("integer datatype flags are not supported"),
     ),
   ]

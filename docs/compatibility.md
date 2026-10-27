@@ -14,10 +14,10 @@ HDF5 1.14.6 is supported.
 
 The reader profile covers superblocks v0–v3, common compact and dense group and
 attribute storage, compact/contiguous/chunked datasets with the listed chunk
-indexes, Deflate/Shuffle/Fletcher32 pipelines, fixed-point and IEEE numeric
-layouts, string layouts, the structured datatypes listed below, fill values, and
-hyperslab and ordered-point selections. It also resolves shared object header
-messages (SOHM) for the structures exercised below. The writer profile covers
+indexes, Deflate/Shuffle/Fletcher32 pipelines, fixed-point and normalized binary
+numeric layouts, string layouts, the structured datatypes listed below, fill
+values, and hyperslab and ordered-point selections. It also resolves shared
+object header messages (SOHM) for the structures exercised below. The writer profile covers
 new-file writing of the structures listed in its table. Known unsupported
 structures raise `UnsupportedFeature`; profile-external inputs are not a v1.0
 compatibility promise.
@@ -28,8 +28,8 @@ evidence and are not part of the HDF5 1.14.6 v1.0 baseline.
 The following are outside the v1.0 profile: virtual datasets, external data
 storage beyond the resolver-only extension described below, SWMR, parallel
 HDF5, third-party filters, in-place editing, external-link dereferencing in
-`Hdf5File` itself, version-4 encoded references, reference writing, non-IEEE
-floating-point layouts, integer storage widths other than 8/16/32/64 bits,
+`Hdf5File` itself, version-4 encoded references, reference writing, numeric
+storage wider than 8 bytes, binary-float normalizations other than implied MSB,
 MATLAB file semantics, and netCDF-4 data-model semantics beyond the structures
 exercised by the producer fixture. External-link dereferencing is available
 through `Hdf5Resolver` and is listed as a verified reader capability below.
@@ -59,10 +59,10 @@ MoonBit tests.
 | Dataset layouts | Compact, contiguous and chunked | `Hdf5File` rejects external raw data and virtual dataset storage; external raw data is available through the resolver extension below |
 | Chunk indexes | V1 B-tree, single chunk, implicit, fixed array, extensible array and v2 B-tree | Unsupported index variants are rejected |
 | Filters | Deflate, shuffle and Fletcher32, pipelines, skip masks and checksum failures | Other required filters are rejected; unknown optional skipped filters can be ignored |
-| Numeric values | Signed/unsigned 8/16/32/64-bit integers with declared bit offset and 1–64 bit precision, plus IEEE float16/32/64, both byte orders; datasets, attributes, fills and enum bases share the decoder | Other integer storage widths, integer padding flags and non-IEEE floating layouts are rejected |
+| Numeric values | Signed/unsigned integers stored in 1–8 bytes with declared byte order, bit offset, 1–64 bit precision and padding flags; IEEE float16/32/64 plus normalized binary floats with implied MSB, declared field positions and exponent bias; both byte orders; datasets, attributes, fills and enum bases share the decoder | Numeric storage wider than 8 bytes and normalizations other than implied MSB are rejected |
 | Strings | Fixed strings with supported padding and ASCII/UTF-8, plus variable-length UTF-8 | Other character encodings are rejected |
 | Structured values | Compound, enum, fixed array, vlen sequence, bitfield, opaque, time, reference and HDF5 2.0 complex; datatype messages v1–v5 including HDF5 1.14.6 v4 types | Reference values decode as bytes; resolution is a separate step |
-| References | Eight-byte object references in HDF5 1.14.6 `latest` and v108 files; object targets include datasets, groups, the root group, committed datatypes and attribute values. Legacy dataset-region references cover 4- and 8-byte file addresses and compact, contiguous and filtered chunk targets, with none/all, point and regular or irregular hyperslab selections, selected-value reads and null or dangling rejection | Object path discovery needs a named hard link. Region targets must be datasets in the same file. Region results are memory resident; object references in 4-byte-address files and version-4 encoded references are not resolved |
+| References | Legacy object references under 4- and 8-byte address widths, including datasets, groups, the root group, committed datatypes and attribute values. Legacy dataset-region references cover compact, contiguous and filtered chunk targets, with none/all, point and regular or irregular hyperslab selections, selected-value reads and null or dangling rejection | Object path discovery needs a named hard link. Region targets must be datasets in the same file. Region results are memory resident; version-4 encoded references are not resolved |
 | Fill values | Default and fixed-size fills for unallocated contiguous or chunked storage | Undefined/disabled policies and custom vlen fills are rejected when decoding requires them |
 | Selections | Hyperslabs and ordered points across supported layouts and chunk indexes; `DatasetChunkIterator` reads edge-clipped tiles with early termination | A single selection result is memory resident; streaming memory is bounded by one tile plus intersecting storage chunks |
 | Shared messages | Superblock-extension SOHM table, SMTB indexes, fractal-heap heap IDs, wrapper versions 1–3, committed object-header targets, shared fills and dense-attribute shared records | Writer output is absent; stored shared messages are rejected; filter-pipeline sharing follows the same resolver but is not fixture-verified |
@@ -101,7 +101,7 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | Attributes | Inline numeric, fixed/vlen string and structured attributes, plus dense attributes with a name index | Dense attributes use the dense-metadata limits below |
 | Dense metadata | Automatic dense link and attribute storage for 9–65,535 records when each encoded heap object is at most 4 KiB; FRHP/FHDB direct block and BTHD/BTLF name index | One direct block and one leaf index per collection; no indirect/huge heap blocks, creation-order index, free-space manager or SOHM table; out-of-bound sets use compact OCHK continuations |
 | Dataset layouts | Contiguous, paged fixed-array chunked and extensible-array chunked with inline, direct, super and paged data blocks | External and virtual dataset storage are absent |
-| Numeric values | Little-endian int/uint8–64 and IEEE float32/64 | Big-endian and nonstandard numeric output are absent |
+| Numeric values | Little-endian int/uint1–8 and IEEE float32/64; standard widths are checked by h5py and nonstandard widths by MoonBit round-trip | Big-endian and nonstandard floating-point output are absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Variable-length sequence output is absent |
 | Structured values | Packed compound, enum and fixed array values | Reference, bitfield, opaque, time and complex output are absent |
 | Filters | Shuffle, deflate and Fletcher32 in HDF5 pipeline order for fixed-size values | Additional filters, per-chunk caller masks and variable-length filters are absent |

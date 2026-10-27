@@ -68,7 +68,7 @@ not part of the release gate.
 | fill_v2.h5 | Earliest/v108 bounds, v2 fill messages, v1 chunk B-trees |
 | fill_v3.h5 | v108/v108 bounds, v3 fill messages, v1 chunk B-trees |
 | contiguous_fill_v2.h5, contiguous_fill_v3.h5 | Unallocated numeric/string/default fills, scalar/empty/null datasets and allocated partial writes, with legacy and v108 bounds |
-| numeric_layouts.h5 | All standard integer widths and IEEE float16/32/64 in both byte orders; signed little- and big-endian fixed-point values with nonstandard precision/offset, an unsigned 20-bit value, binary16 normals/subnormals/zero/special values, custom attributes, custom fills, and an unsupported float exponent bias |
+| numeric_layouts.h5 | All standard integer widths and IEEE float16/32/64 in both byte orders; signed 3-byte/20-bit and unsigned 5-byte/40-bit fixed-point values with padding flags, nonstandard precision/offset, binary16 normals/subnormals/zero/special values, custom attributes, custom fills, and normalized binary floats with custom field positions and exponent bias |
 | attribute_storage.h5 | Compact and dense attributes, with/without creation-order tracking |
 | layout_v4.h5 | v110 bounds; raw/filtered/unallocated/single-chunk masks, implicit edge and bounded-resizable grids, compact/contiguous data; basic fixed array |
 | fixed_array.h5 | Raw/filtered edge chunks, bounded maximum strides, skipped filters, fills, paged arrays with uninitialized pages and a partial final page |
@@ -87,7 +87,7 @@ not part of the release gate.
 | netcdf4_1_7_5.h5 | Real netCDF4 1.7.5/libnetcdf 4.10.1/HDF5 2.2.0 output: groups, dimension variables, shuffled/deflated chunks with a v1 B-tree index, UTF-8 strings, numeric values and NetCDF dimension-reference attributes |
 | shared_messages.h5 | HDF5 1.14.6 SOHM tables and heap IDs: internally shared datatype/dataspace fields, whole shared attributes, shared fills, dense attribute B-tree records, and a committed datatype used by a dataset and attribute |
 | references.h5, references_v108.h5 | HDF5 1.14.6 `latest` and v108 object references to a dataset, group, child dataset, root group and committed datatype, plus an attribute reference, null reference, deleted target and 11 dataset-region references covering none/all, points, regular hyperslabs and block unions |
-| references_layouts_32.h5 | HDF5 1.14.6 `latest` with 4-byte offsets and 8-byte lengths; legacy region references to compact, contiguous and shuffle/deflate chunked datasets |
+| references_layouts_32.h5 | HDF5 1.14.6 `latest` with 4-byte offsets and 8-byte lengths; 4-byte object references to datasets, a group, a null target and an attribute value, plus 8-byte region references to compact, contiguous and shuffle/deflate chunked datasets |
 | external_storage.h5, external_storage_32.h5 | HDF5 1.14.6 external raw data split across two files and read at a nonzero offset under 8-byte addresses and lengths, plus a 4-byte-address/8-byte-length legacy file; supporting binary slot files are committed beside them |
 
 Group datasets `value_NN` contain `[NN, NN + 100]`. Compact groups must read
@@ -135,11 +135,13 @@ MoonBit tests resolve and read both reference kinds in memory and through
 uses version 1, and synthetic tests cover version 2. The h5py verifier
 independently checks every valid target and selected value.
 
-`references_layouts_32.h5` verifies region references in a 4-byte-address file.
-Each 8-byte reference points to a compact, contiguous or filtered chunked target
-and selects a hyperslab or ordered points. The verifier checks target
-dereferencing and dataset layouts with h5py, then decodes the raw global-heap
-selection bytes according to the HDF5 file-format specification.
+`references_layouts_32.h5` verifies both reference widths in a 4-byte-address
+file. Object references are 4 bytes and resolve datasets, a group, a null target
+and an attribute value. Region references are 8 bytes and point to compact,
+contiguous or filtered chunked targets while selecting a hyperslab or ordered
+points. The verifier checks target dereferencing and dataset layouts with h5py,
+then decodes the raw global-heap selection bytes according to the HDF5
+file-format specification.
 
 `datatypes_v114.h5` and `datatypes_v114_default.h5` exercise HDF5 1.14.6
 datatype messages under both `latest` (version 4) and default (earlier

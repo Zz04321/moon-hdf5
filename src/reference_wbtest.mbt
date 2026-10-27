@@ -250,6 +250,55 @@ fn check_region_reference_fixture(
 fn check_region_layout_fixture(file : Hdf5File) -> Unit raise Error {
   assert_eq(file.superblock.offset_size, 4)
   assert_eq(file.superblock.length_size, 8)
+  let compact = file.resolve("/compact")
+  let compact_ref = reference_value_bytes(
+      file.read_dataset("/object_ref_compact"),
+    )[0]
+  assert_eq(compact_ref.length(), 4)
+  assert_eq(
+    file.resolve_object_reference(compact_ref),
+    Some({ address: compact.address, kind: Dataset, path: Some("/compact"), }),
+  )
+  let group = file.resolve("/group")
+  let group_ref = reference_value_bytes(file.read_dataset("/object_ref_group"))[0]
+  assert_eq(group_ref.length(), 4)
+  assert_eq(
+    file.resolve_object_reference(group_ref),
+    Some({ address: group.address, kind: Group, path: Some("/group"), }),
+  )
+  let chunked = file.resolve("/chunked")
+  let chunked_ref = reference_value_bytes(
+      file.read_dataset("/object_ref_chunked"),
+    )[0]
+  assert_eq(chunked_ref.length(), 4)
+  assert_eq(
+    file.resolve_object_reference(chunked_ref),
+    Some({ address: chunked.address, kind: Dataset, path: Some("/chunked"), }),
+  )
+  let null_ref = reference_value_bytes(file.read_dataset("/object_ref_null"))[0]
+  assert_eq(null_ref.length(), 4)
+  assert_eq(file.resolve_object_reference(null_ref), None)
+
+  let attributes = file.attributes("/compact")
+  let sibling_ref = match
+    attributes.search_by(attribute => attribute.name == "sibling_ref") {
+    Some(index) => attributes[index]
+    None => raise InvalidField("compact.sibling_ref attribute is missing")
+  }
+  let contiguous = file.resolve("/contiguous")
+  match sibling_ref.values {
+    Some(Structured([Reference(bytes)])) =>
+      assert_eq(
+        file.resolve_object_reference(bytes),
+        Some({
+          address: contiguous.address,
+          kind: Dataset,
+          path: Some("/contiguous"),
+        }),
+      )
+    _ => raise InvalidField("compact.sibling_ref has an unexpected value")
+  }
+
   assert_eq(file.read_dataset_metadata("/compact").layout.kind(), Compact)
   assert_eq(file.read_dataset_metadata("/contiguous").layout.kind(), Contiguous)
   assert_eq(file.read_dataset_metadata("/chunked").layout.kind(), Chunked)

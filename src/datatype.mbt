@@ -47,6 +47,13 @@ pub(all) struct Datatype {
   array_dimensions : Array[UInt64]
   bit_offset : Int32
   bit_precision : Int32
+  float_sign_position : Int32
+  float_exponent_position : Int32
+  float_exponent_size : Int32
+  float_mantissa_position : Int32
+  float_mantissa_size : Int32
+  float_exponent_bias : Int32
+  float_normalization : Int32
   string_padding : Int32
   string_charset : Int32
   opaque_tag : String
@@ -128,6 +135,13 @@ fn array_datatype(
     array_dimensions: dimensions,
     bit_offset: 0,
     bit_precision: 0,
+    float_sign_position: 0,
+    float_exponent_position: 0,
+    float_exponent_size: 0,
+    float_mantissa_position: 0,
+    float_mantissa_size: 0,
+    float_exponent_bias: 0,
+    float_normalization: 0,
     string_padding: 0,
     string_charset: 0,
     opaque_tag: "",
@@ -158,6 +172,13 @@ fn parse_datatype_reader(
   let array_dimensions : Array[UInt64] = []
   let mut bit_offset = 0
   let mut bit_precision = 0
+  let mut float_sign_position = 0
+  let mut float_exponent_position = 0
+  let mut float_exponent_size = 0
+  let mut float_mantissa_position = 0
+  let mut float_mantissa_size = 0
+  let mut float_exponent_bias = 0
+  let mut float_normalization = 0
   let mut string_padding = 0
   let mut string_charset = 0
   let mut opaque_tag = ""
@@ -171,13 +192,13 @@ fn parse_datatype_reader(
     bit_offset = offset
     bit_precision = precision
     if class == 0 {
-      guard size == 1 || size == 2 || size == 4 || size == 8 else {
-        raise UnsupportedFeature("integer width is not 1, 2, 4 or 8 bytes")
+      guard size >= 1 && size <= 8 else {
+        raise UnsupportedFeature("integer width is outside 1..8 bytes")
       }
-      guard (bit_field_0 & 0xF6) == 0 && bit_field_1 == 0 && bit_field_2 == 0 else {
+      guard (bit_field_0 & 0xF0) == 0 && bit_field_1 == 0 && bit_field_2 == 0 else {
         raise UnsupportedFeature("integer datatype flags are not supported")
       }
-      guard precision > 0 && offset + precision <= size * 8 else {
+      guard precision > 0 && precision <= 64 && offset + precision <= size * 8 else {
         raise InvalidField("invalid integer offset or precision")
       }
     } else {
@@ -186,37 +207,40 @@ fn parse_datatype_reader(
       let mantissa_position = reader.read_u8().to_int()
       let mantissa_size = reader.read_u8().to_int()
       let exponent_bias = reader.read_u32_le()
-      let ieee_fields = if size == 2 {
-        bit_field_1 == 15 &&
-        exponent_position == 10 &&
-        exponent_size == 5 &&
-        mantissa_size == 10 &&
-        exponent_bias == 15U
-      } else if size == 4 {
-        bit_field_1 == 31 &&
-        exponent_position == 23 &&
-        exponent_size == 8 &&
-        mantissa_size == 23 &&
-        exponent_bias == 127U
-      } else if size == 8 {
-        bit_field_1 == 63 &&
-        exponent_position == 52 &&
-        exponent_size == 11 &&
-        mantissa_size == 52 &&
-        exponent_bias == 1023U
-      } else {
-        false
+      float_normalization = (bit_field_0 >> 4) & 0x03
+      guard size >= 1 &&
+        size <= 8 &&
+        precision > 0 &&
+        precision <= 64 &&
+        offset + precision <= size * 8 &&
+        (bit_field_0 & 0xC0) == 0 &&
+        bit_field_2 == 0 else {
+        raise InvalidField("invalid floating-point layout")
       }
-      guard ieee_fields &&
-        offset == 0 &&
-        precision == size * 8 &&
-        (bit_field_0 & 0xFE) == 0x20 &&
-        bit_field_2 == 0 &&
-        mantissa_position == 0 else {
+      guard float_normalization == 2 else {
         raise UnsupportedFeature(
-          "non-IEEE floating-point layout is not supported",
+          "floating-point normalization other than implied MSB",
         )
       }
+      guard exponent_size > 0 &&
+        exponent_size <= 32 &&
+        mantissa_size >= 0 &&
+        mantissa_size <= 64 &&
+        bit_field_1 >= 0 &&
+        bit_field_1 < precision &&
+        exponent_position >= 0 &&
+        exponent_position + exponent_size <= precision &&
+        mantissa_position >= 0 &&
+        mantissa_position + mantissa_size <= precision &&
+        exponent_bias <= 0x7FFFFFFFU else {
+        raise InvalidField("invalid floating-point field locations")
+      }
+      float_sign_position = bit_field_1
+      float_exponent_position = exponent_position
+      float_exponent_size = exponent_size
+      float_mantissa_position = mantissa_position
+      float_mantissa_size = mantissa_size
+      float_exponent_bias = exponent_bias.reinterpret_as_int()
     }
   } else if class == 2 {
     guard version >= 1 &&
@@ -470,6 +494,13 @@ fn parse_datatype_reader(
     array_dimensions,
     bit_offset,
     bit_precision,
+    float_sign_position,
+    float_exponent_position,
+    float_exponent_size,
+    float_mantissa_position,
+    float_mantissa_size,
+    float_exponent_bias,
+    float_normalization,
     string_padding,
     string_charset,
     opaque_tag,

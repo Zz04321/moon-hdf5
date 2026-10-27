@@ -158,6 +158,22 @@ def verify(path: Path) -> None:
             np.testing.assert_array_equal(
                 handle[name][...], np.arange(6, dtype="<i4")
             )
+        expected = {
+            "object_ref_compact": ("/compact", "Dataset"),
+            "object_ref_group": ("/group", "Group"),
+            "object_ref_chunked": ("/chunked", "Dataset"),
+        }
+        for name, (target_path, kind) in expected.items():
+            dataset = handle[name]
+            assert dataset.id.get_storage_size() == 4
+            resolved = handle[dataset[0]]
+            assert resolved.name == target_path
+            assert type(resolved).__name__ == kind
+        null_dataset = handle["object_ref_null"]
+        null_offset = null_dataset.id.get_offset()
+        assert path.read_bytes()[null_offset : null_offset + 4] == b"\0" * 4
+        attribute_ref = handle["compact"].attrs["sibling_ref"][0]
+        assert handle[attribute_ref].name == "/contiguous"
     verify_serialized_references(path)
 
     print(

@@ -92,7 +92,7 @@ fn Hdf5File::find_reference_path(
 }
 
 ///|
-/// Resolves an eight-byte HDF5 object reference to its target object.
+/// Resolves a legacy HDF5 object reference to its target object.
 ///
 /// The all-zero null reference returns `None`. Region references must be
 /// resolved with `resolve_region_reference`; malformed references and dangling
@@ -103,21 +103,25 @@ pub fn Hdf5File::resolve_object_reference(
   self : Hdf5File,
   reference : Bytes,
 ) -> Hdf5ReferenceTarget? raise Hdf5Error {
-  guard reference.length() == 8 else {
-    if reference.length() == 12 {
+  let offset_size = self.superblock.offset_size
+  guard reference.length() == offset_size else {
+    if reference.length() == offset_size + 4 {
       raise InvalidArgument(
         "region references require resolve_region_reference",
       )
     }
     raise InvalidField(
-      "object reference must be 8 bytes, found " +
+      "object reference must be " +
+      offset_size.to_string() +
+      " bytes, found " +
       reference.length().to_string(),
     )
   }
   if reference_is_null(reference) {
     return None
   }
-  let address = reference.unsafe_read_uint64_le(0)
+  let reader = Reader::new(reference)
+  let address = reader.read_uint_le(offset_size)
   let header = self.object_header_at(address) catch {
     error =>
       raise InvalidField(

@@ -7,7 +7,7 @@ were subsequently fixed and covered by regression tests.
 
 | Priority | Evidence | Finding and next action |
 | --- | --- | --- |
-| Fixed | Regression tested / h5py verified | Fixed-point datatypes now honor declared bit offset and 1–64 bit precision within 8/16/32/64-bit storage, including signed values, both byte orders, attributes, fills and enum bases. IEEE binary16 is decoded alongside binary32/64. Non-IEEE floating-point layouts and unsupported integer widths or padding flags remain explicit errors. |
+| Fixed | Regression tested / h5py verified | Fixed-point datatypes now honor declared byte order, padding, bit offset and 1–64 bit precision within 1–8-byte storage, including signed values, attributes, fills and enum bases. IEEE binary16 is decoded alongside binary32/64, and other binary layouts with implied-MSB normalization use their declared field positions and exponent bias. |
 | Fixed | Regression tested / CLI verified | Attribute-info heap/index addresses now distinguish dense from compact storage. Compact and dense attributes read normally, with and without creation-order tracking. CLI displays attribute-read errors with their object path. |
 | Fixed | Regression tested | Dataspace/chunk products now check limits before multiplication. Dataset byte sizes are bounded before reading/allocating storage, and chunk copies validate byte capacity before narrowing offsets. Zero-dimensional arrays remain empty regardless of dimension order. |
 | Fixed | Regression tested | V2 continuation parsing included the checksum in the message region, so a short trailing gap caused a bogus message and EOF. Parsing now excludes signature/checksum, uses the correct prefix size with creation-order tracking, and checks complete chunk bounds before reading. |
@@ -107,9 +107,10 @@ encoded bytes rather than resolved objects or selected regions; later reviews
 added object- and region-reference resolution.
 
 Parser regressions reject truncated properties, out-of-bounds compound members,
-inconsistent array/complex sizes and invalid tags. Fixed-point subtypes support
-declared bit offset and precision within 8/16/32/64-bit storage; other integer
-widths, padding flags and non-IEEE float layouts remain unsupported.
+inconsistent array/complex sizes and invalid tags. At that stage fixed-point
+subtypes supported declared bit offset and precision within 8/16/32/64-bit
+storage, and only standard IEEE float layouts were accepted. The numeric-layout
+review below removed those storage and layout restrictions.
 
 ## Writer MVP review — 2026-10-20
 
@@ -371,25 +372,30 @@ prerequisite.
 
 ## Numeric layout review — 2026-10-27
 
-Integer decoding now applies the datatype's declared bit offset and precision
-before signed interpretation. The shared path covers ordinary datasets, nested
-compound and array members, attributes and fixed-size fills; enum member tables
-and enum payloads use the layout of their recursively parsed integer base.
-Regression coverage includes signed little- and big-endian values, unsigned
-20-bit values, negative sign extension, custom attributes, an unallocated custom
-fill and a synthetic enum with a nonstandard base layout. The committed
+Integer decoding now accepts 1–8-byte storage and applies the datatype's
+declared byte order, bit offset and precision before signed interpretation;
+padding flags are accepted while value extraction follows offset and precision.
+The shared path covers ordinary datasets, nested compound and array members,
+attributes and fixed-size fills; enum member tables and enum payloads use the
+layout of their recursively parsed integer base. Regression coverage includes
+signed little- and big-endian values, 3-byte/20-bit and 5-byte/40-bit values,
+negative sign extension, custom attributes, an unallocated custom fill and a
+synthetic enum with a nonstandard base layout. The committed
 `numeric_layouts.h5` fixture is generated with h5py 3.13.0/HDF5 1.14.6 and
 independently rechecked by a verifier in the release gate.
 
 IEEE binary16 is decoded by exact bit mapping to binary32, including normal,
 subnormal, signed-zero, infinity and NaN encodings. The fixture covers both byte
 orders, finite range limits and binary16 attributes and fills. Binary32 and
-binary64 continue to use direct bit reinterpretation.
+binary64 continue to use direct bit reinterpretation. Other normalized binary
+layouts with implied MSB are decoded from their declared sign/exponent/mantissa
+positions and sizes plus exponent bias; coverage includes a nonstandard bias and
+a compact 6-bit-exponent layout in both datasets and attributes.
 
-The supported storage widths remain 8, 16, 32 and 64 bits. Valid precision must
-be positive and contained with its offset in the storage width. Other widths,
-integer padding flags and non-IEEE floating-point layouts continue to raise
-`UnsupportedFeature` or `InvalidField` rather than returning a guessed value.
+Numeric storage is limited to 8 bytes and 64 bits of precision, and floating
+normalization must be implied MSB. Wider storage, other normalization modes and
+malformed field placement raise `UnsupportedFeature` or `InvalidField` rather
+than returning a guessed value.
 
 ## Shared object header messages — 2026-10-27
 
@@ -446,13 +452,14 @@ declarations with h5py.
 
 ## Reference-resolution review — 2026-10-27
 
-An h5py 3.13.0/HDF5 1.14.6 probe confirmed that the supported object-reference
-payload is an eight-byte object-header address. The implementation now exposes
-`Hdf5File::resolve_object_reference`, validates the target header, classifies
-groups, datasets and committed datatypes, and finds a deterministic hard-link
-path with cycle and depth limits. Empty references return `None`; malformed
-lengths and dangling addresses are rejected. Region references are directed to
-their dedicated API rather than decoded as object references.
+An h5py 3.13.0/HDF5 1.14.6 probe confirmed that a legacy object-reference
+payload is an object-header address whose width follows the file's offset size.
+The implementation now exposes `Hdf5File::resolve_object_reference`, validates
+the target header, classifies groups, datasets and committed datatypes, and
+finds a deterministic hard-link path with cycle and depth limits. Empty
+references return `None`; malformed lengths and dangling addresses are rejected.
+Region references are directed to their dedicated API rather than decoded as
+object references.
 
 `references.h5` and `references_v108.h5` cover dataset, group, child dataset,
 root group, committed datatype, attribute, null, deleted-target and region
@@ -467,11 +474,12 @@ regular or irregular hyperslab selections. The committed fixtures contain 11
 region references covering 1D and 2D regular selections, ordered points, block
 unions, all/empty, scalar, null and dangling targets. The `latest` fixture uses
 hyperslab version 3, the v108 fixture uses version 1, and synthetic tests cover
-version 2. A third fixture uses 4-byte offsets and 8-byte lengths with region
-references to compact, contiguous and shuffle/deflate chunked datasets. Its
-serialized 8-byte references and global-heap selections are checked directly
-against the file-format specification; h5py verifies the target objects and
-layout metadata. Malformed tests cover unsupported point versions, oversized
-ranks, out-of-bounds points and blocks, invalid heap identifiers and a truncated
-global heap collection. Version-4 encoded references, object references in
-4-byte-address files and reference writing remain out of scope.
+version 2. A third fixture uses 4-byte offsets and 8-byte lengths. Its 4-byte
+object references cover datasets, a group, a null target and an attribute value;
+its 8-byte region references point to compact, contiguous and shuffle/deflate
+chunked datasets. Serialized object references and global-heap selections are
+checked directly against the file-format specification; h5py verifies the target
+objects and layout metadata. Malformed tests cover unsupported point versions,
+oversized ranks, out-of-bounds points and blocks, invalid heap identifiers and a
+truncated global heap collection. Version-4 encoded references and reference
+writing remain out of scope.

@@ -138,6 +138,36 @@ test "bitfield opaque time reference and complex datatypes decode" {
 }
 
 ///|
+test "custom binary float subnormal with a wide mantissa stays finite" {
+  let datatype : Datatype = {
+    class: 1,
+    version: 1,
+    size: 8,
+    signed: false,
+    little_endian: true,
+    vlen_is_string: false,
+    enum_members: [],
+    compound_members: [],
+    base_types: [],
+    array_dimensions: [],
+    bit_offset: 0,
+    bit_precision: 64,
+    float_sign_position: 63,
+    float_exponent_position: 56,
+    float_exponent_size: 4,
+    float_mantissa_position: 0,
+    float_mantissa_size: 56,
+    float_exponent_bias: 7,
+    float_normalization: 2,
+    string_padding: 0,
+    string_charset: 0,
+    opaque_tag: "",
+    reference_kind: 0,
+  }
+  assert_eq(binary_float_to_double(1UL << 55, datatype), 0.0078125)
+}
+
+///|
 test "structured values work in fills selections and attributes" {
   let file = Hdf5File::parse(
     @fs.read_file_to_bytes("testdata/datatypes_v200.h5"),

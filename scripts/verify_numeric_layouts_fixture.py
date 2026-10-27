@@ -17,6 +17,18 @@ def integer_layout(datatype) -> tuple[int, int, bool, str]:
     )
 
 
+def read_custom_integer(handle, name: bytes, dtype, memory_type):
+    dataset = h5py.h5d.open(handle.id, name)
+    values = np.empty(dataset.get_space().get_simple_extent_dims(), dtype=dtype)
+    dataset.read(h5py.h5s.ALL, h5py.h5s.ALL, values, mtype=memory_type)
+    attribute = h5py.h5a.open(dataset, b"custom")
+    attribute_values = np.empty(
+        attribute.get_space().get_simple_extent_dims(), dtype=dtype
+    )
+    attribute.read(attribute_values, mtype=memory_type)
+    return dataset.get_type(), values, attribute.get_type(), attribute_values
+
+
 def verify(path: Path) -> None:
     cases = {
         "offset": (16, 8, True, "little", [42, -2, -32768]),
@@ -53,6 +65,26 @@ def verify(path: Path) -> None:
         assert custom_float.get_ebias() == 126
         np.testing.assert_array_equal(handle["custom_float"][:], [1.5])
 
+        dataset = h5py.h5d.open(handle.id, b"custom_binary_float")
+        datatype = dataset.get_type()
+        assert isinstance(datatype, h5py.h5t.TypeFloatID)
+        assert datatype.get_fields() == (26, 20, 6, 0, 13)
+        assert datatype.get_ebias() == 20
+        assert datatype.get_norm() == h5py.h5t.NORM_IMPLIED
+        expected = np.array([1.5, -2.25, 0.125], dtype="<f4")
+        values = np.empty((3,), dtype="<f4")
+        dataset.read(
+            h5py.h5s.ALL,
+            h5py.h5s.ALL,
+            values,
+            mtype=h5py.h5t.IEEE_F32LE,
+        )
+        np.testing.assert_array_equal(values, expected)
+        attribute = h5py.h5a.open(dataset, b"custom")
+        values = np.empty((3,), dtype="<f4")
+        attribute.read(values, mtype=h5py.h5t.IEEE_F32LE)
+        np.testing.assert_array_equal(values, expected)
+
         for endian in ("<", ">"):
             prefix = "le" if endian == "<" else "be"
             for kind in ("i", "u", "f"):
@@ -82,6 +114,60 @@ def verify(path: Path) -> None:
             half.attrs["custom"], [1.0, -2.5, 65504.0]
         )
         np.testing.assert_array_equal(handle["half_fill"][:], [-2.5, -2.5, -2.5])
+
+        cases = (
+            (
+                b"signed_20",
+                np.dtype("<i4"),
+                h5py.h5t.STD_I32LE,
+                [42, -2, -524288, 524287],
+                3,
+                20,
+                0,
+                1,
+                True,
+                h5py.h5t.ORDER_LE,
+            ),
+            (
+                b"unsigned_40_be",
+                np.dtype("<u8"),
+                h5py.h5t.STD_U64LE,
+                [0, 1, 0xFFFFFFFFFF],
+                5,
+                40,
+                0,
+                0,
+                False,
+                h5py.h5t.ORDER_BE,
+            ),
+        )
+        for (
+            name,
+            dtype,
+            memory_type,
+            expected,
+            size,
+            precision,
+            offset,
+            high_pad,
+            signed,
+            order,
+        ) in cases:
+            dataset_type, values, attribute_type, attribute_values = (
+                read_custom_integer(handle, name, dtype, memory_type)
+            )
+            for datatype in (dataset_type, attribute_type):
+                assert isinstance(datatype, h5py.h5t.TypeIntegerID)
+                assert datatype.get_size() == size
+                assert datatype.get_precision() == precision
+                assert datatype.get_offset() == offset
+                assert datatype.get_pad()[1] == high_pad
+                assert datatype.get_sign() == (
+                    h5py.h5t.SGN_2 if signed else h5py.h5t.SGN_NONE
+                )
+                assert datatype.get_order() == order
+            np.testing.assert_array_equal(values, expected)
+            np.testing.assert_array_equal(attribute_values, expected)
 
     print(
         f"Verified {path.name} with h5py {h5py.__version__} "

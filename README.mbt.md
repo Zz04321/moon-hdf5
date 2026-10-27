@@ -33,13 +33,14 @@ an executable example.
 - Resolves shared object header messages (SOHM), including shared attributes,
   datatypes, dataspaces, fills and committed datatype targets. Inline, dense
   and source-backed attribute paths are supported.
-- Decodes fixed-point values with declared bit offset/precision, IEEE
-  float16/32/64, string, compound, enum, array, bitfield, opaque, reference,
-  variable-length sequence, time and complex values.
-- Resolves eight-byte object references to their target address, object kind and
-  first hard-link path; resolves legacy dataset-region references to their
-  target dataset, dataspace selection and selected values, including 4- and
-  8-byte-address files and compact, contiguous or chunked target storage.
+- Decodes signed and unsigned 1–8-byte fixed-point values with declared byte
+  order, bit offset, precision and padding flags; IEEE float16/32/64; normalized
+  binary floats with implied-MSB layouts; string, compound, enum, array,
+  bitfield, opaque, reference, variable-length sequence, time and complex values.
+- Resolves legacy object references under 4- and 8-byte address widths to their
+  target address, object kind and first hard-link path; resolves legacy
+  dataset-region references to their target dataset, dataspace selection and
+  selected values, including compact, contiguous or chunked target storage.
 - Supports compact, contiguous and chunked layouts with the common HDF5 chunk
   indexes.
 - Applies deflate, shuffle and Fletcher32 filters, including per-chunk masks.
@@ -128,9 +129,10 @@ while chunks.next() is Some(chunk) {
 
 Simple values are returned as `Integers`, `UnsignedIntegers`, `Floats`,
 `Strings` or `Enums`. Other datatype classes use recursive `Structured` values.
-References are returned as encoded bytes. Pass an eight-byte object reference to
-`resolve_object_reference` to obtain its address, kind and first named path. The
-all-zero null reference returns `None`; dangling addresses raise an error.
+References are returned as encoded bytes. Legacy object-reference width follows
+the file's address size (4 or 8 bytes); pass one to
+`resolve_object_reference` to obtain its address, kind and first named path.
+The all-zero null reference returns `None`; dangling addresses raise an error.
 Pass a legacy dataset-region reference to `resolve_region_reference` to obtain
 its dataset, path, dataspace and selection, or to `read_region_reference` to
 read the selected values. Both return `None` for a null reference; region
@@ -178,9 +180,9 @@ Source file addresses use 64-bit offsets and can exceed 2 GiB.
 
 ## Writing
 
-`Hdf5Writer` builds a complete new file in memory. It supports signed and
-unsigned 8/16/32/64-bit integers, float32/64, fixed or variable-length UTF-8
-strings, and structured compound, enum and fixed-array values.
+`Hdf5Writer` builds a complete new file in memory. It supports little-endian
+signed and unsigned 1–8-byte integers, IEEE float32/64, fixed or variable-length
+UTF-8 strings, and structured compound, enum and fixed-array values.
 
 ```moonbit nocheck
 ///|
@@ -294,15 +296,13 @@ preserve order and duplicates.
   URLs, chunked external storage or writer support. Tile iteration is supported.
 - The writer does not emit a SOHM table or shared-message wrappers. All writer
   metadata is stored inline; shared-message support is reader-only.
-- Integer storage widths other than 8, 16, 32 or 64 bits, integer padding flags
-  and non-IEEE floating-point layouts are not supported.
+- Numeric storage wider than 8 bytes and binary floating-point normalizations
+  other than implied MSB are not supported.
 - Custom variable-length fill values, additional writer filters and reference
   writing are not supported.
-- Reference resolution covers eight-byte object references and legacy
-  dataset-region references. Region references support 4- and 8-byte file
-  addresses, but region targets must be datasets in the same file. Object
-  references in 4-byte-address files, version-4 encoded references and reference
-  writing are not supported.
+- Reference resolution covers legacy object and dataset-region references under
+  4- and 8-byte address widths. Region targets must be datasets in the same
+  file. Version-4 encoded references and reference writing are not supported.
 - Variable-length writer datasets cannot use filters; HDF5 1.14.6 rejects this
   combination natively.
 

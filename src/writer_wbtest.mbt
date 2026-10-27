@@ -1204,6 +1204,41 @@ test "writer encodes compound enum and array values recursively" {
 }
 
 ///|
+test "writer round-trips nonstandard integer widths" {
+  let writer = Hdf5Writer::new()
+  let signed_24 = Datatype::write_integer(true, 3)
+  let unsigned_40 = Datatype::write_integer(false, 5)
+  writer.add_dataset(
+    "/signed_24",
+    [3UL],
+    StructuredValues(signed_24, [
+      SignedInteger(42L),
+      SignedInteger(-2L),
+      SignedInteger(-8388608L),
+    ]),
+  )
+  writer.add_dataset(
+    "/unsigned_40",
+    [3UL],
+    StructuredValues(unsigned_40, [
+      UnsignedInteger(0UL),
+      UnsignedInteger(1UL),
+      UnsignedInteger(0xFFFFFFFFFFUL),
+    ]),
+  )
+
+  let file = Hdf5File::parse(writer.encode())
+  let signed = file.read_dataset("/signed_24")
+  assert_eq(signed.datatype.size, 3)
+  assert_eq(signed.datatype.bit_precision, 24)
+  assert_eq(integer_values(signed), [42L, -2L, -8388608L])
+  let unsigned = file.read_dataset("/unsigned_40")
+  assert_eq(unsigned.datatype.size, 5)
+  assert_eq(unsigned.datatype.bit_precision, 40)
+  assert_eq(unsigned_values(unsigned), [0UL, 1UL, 0xFFFFFFFFFFUL])
+}
+
+///|
 test "writer appends and fills extensible enums" {
   let writer = Hdf5Writer::new()
   let state = Datatype::write_enum(Datatype::write_integer(false, 1), [

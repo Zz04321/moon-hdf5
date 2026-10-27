@@ -99,28 +99,21 @@ fn read_uint_at(
     offset.to_int64() + size.to_int64() <= bytes.length().to_int64() else {
     raise UnexpectedEof(offset.to_int64())
   }
-  match size {
-    1 => bytes.unsafe_get(offset).to_uint64()
-    2 =>
-      if little_endian {
-        bytes.unsafe_read_uint16_le(offset).to_uint64()
-      } else {
-        bytes.unsafe_read_uint16_be(offset).to_uint64()
-      }
-    4 =>
-      if little_endian {
-        bytes.unsafe_read_uint32_le(offset).to_uint64()
-      } else {
-        bytes.unsafe_read_uint32_be(offset).to_uint64()
-      }
-    8 =>
-      if little_endian {
-        bytes.unsafe_read_uint64_le(offset)
-      } else {
-        bytes.unsafe_read_uint64_be(offset)
-      }
-    _ => raise UnsupportedFeature("datatype width is not 1, 2, 4 or 8 bytes")
+  guard size >= 1 && size <= 8 else {
+    raise UnsupportedFeature("datatype width is outside 1..8 bytes")
   }
+  let mut value = 0UL
+  if little_endian {
+    for index in 0..<size {
+      value = value |
+        (bytes.unsafe_get(offset + index).to_uint64() << (index * 8))
+    }
+  } else {
+    for index in 0..<size {
+      value = (value << 8) | bytes.unsafe_get(offset + index).to_uint64()
+    }
+  }
+  value
 }
 
 ///|
@@ -192,6 +185,126 @@ fn read_float_at(
     bits.reinterpret_as_double()
   } else {
     raise UnsupportedFeature("floating-point width is not 2, 4 or 8 bytes")
+  }
+}
+
+///|
+fn is_ieee_float_layout(datatype : Datatype) -> Bool {
+  if datatype.size == 2 {
+    datatype.float_sign_position == 15 &&
+    datatype.float_exponent_position == 10 &&
+    datatype.float_exponent_size == 5 &&
+    datatype.float_mantissa_position == 0 &&
+    datatype.float_mantissa_size == 10 &&
+    datatype.float_exponent_bias == 15 &&
+    datatype.bit_offset == 0 &&
+    datatype.bit_precision == 16
+  } else if datatype.size == 4 {
+    datatype.float_sign_position == 31 &&
+    datatype.float_exponent_position == 23 &&
+    datatype.float_exponent_size == 8 &&
+    datatype.float_mantissa_position == 0 &&
+    datatype.float_mantissa_size == 23 &&
+    datatype.float_exponent_bias == 127 &&
+    datatype.bit_offset == 0 &&
+    datatype.bit_precision == 32
+  } else if datatype.size == 8 {
+    datatype.float_sign_position == 63 &&
+    datatype.float_exponent_position == 52 &&
+    datatype.float_exponent_size == 11 &&
+    datatype.float_mantissa_position == 0 &&
+    datatype.float_mantissa_size == 52 &&
+    datatype.float_exponent_bias == 1023 &&
+    datatype.bit_offset == 0 &&
+    datatype.bit_precision == 64
+  } else {
+    false
+  }
+}
+
+///|
+fn binary_float_to_double(raw : UInt64, datatype : Datatype) -> Double {
+  let sign_bit = 0x8000000000000000UL
+  let fraction_mask = 0x000FFFFFFFFFFFFFUL
+  let value = masked_value(raw, datatype.bit_offset, datatype.bit_precision)
+  let sign = if ((value >> datatype.float_sign_position) & 1UL) != 0UL {
+    sign_bit
+  } else {
+    0UL
+  }
+  let exponent = masked_value(
+    value,
+    datatype.float_exponent_position,
+    datatype.float_exponent_size,
+  ).reinterpret_as_int64()
+  let max_exponent = (1UL << datatype.float_exponent_size) - 1UL
+  let mantissa = masked_value(
+    value,
+    datatype.float_mantissa_position,
+    datatype.float_mantissa_size,
+  )
+  if exponent == max_exponent.reinterpret_as_int64() {
+    return if mantissa == 0UL {
+      (sign | 0x7FF0000000000000UL).reinterpret_as_double()
+    } else {
+      (sign | 0x7FF8000000000000UL).reinterpret_as_double()
+    }
+  }
+  if exponent == 0L && mantissa == 0UL {
+    return sign.reinterpret_as_double()
+  }
+  let mantissa_size = datatype.float_mantissa_size.to_int64()
+  let mut exponent_field = 0L
+  let mut fraction = 0UL
+  if exponent == 0L {
+    let mut highest = 0
+    for bit in 0..<datatype.float_mantissa_size {
+      if ((mantissa >> bit) & 1UL) != 0UL {
+        highest = bit
+      }
+    }
+    fraction = if highest <= 52 {
+      (mantissa << (52 - highest)) & fraction_mask
+    } else {
+      (mantissa >> (highest - 52)) & fraction_mask
+    }
+    exponent_field = 1023L +
+      1L -
+      datatype.float_exponent_bias.to_int64() -
+      (mantissa_size - highest.to_int64())
+  } else {
+    fraction = if mantissa_size <= 52L {
+      (mantissa << (52 - mantissa_size.to_int())) & fraction_mask
+    } else {
+      mantissa >> (mantissa_size.to_int() - 52)
+    }
+    exponent_field = 1023L + exponent - datatype.float_exponent_bias.to_int64()
+  }
+  if exponent_field >= 2047L {
+    return (sign | 0x7FF0000000000000UL).reinterpret_as_double()
+  }
+  if exponent_field <= 0L {
+    let shift = 1L - exponent_field
+    if shift >= 53L {
+      return sign.reinterpret_as_double()
+    }
+    let significand = (1UL << 52) | fraction
+    return (sign | (significand >> shift.to_int())).reinterpret_as_double()
+  }
+  (sign | (exponent_field.reinterpret_as_uint64() << 52) | fraction).reinterpret_as_double()
+}
+
+///|
+fn read_float_value(
+  bytes : Bytes,
+  offset : Int32,
+  datatype : Datatype,
+) -> Double raise Hdf5Error {
+  if is_ieee_float_layout(datatype) {
+    read_float_at(bytes, offset, datatype.size, datatype.little_endian)
+  } else {
+    let raw = read_uint_at(bytes, offset, datatype.size, datatype.little_endian)
+    binary_float_to_double(raw, datatype)
   }
 }
 
@@ -283,11 +396,8 @@ fn decode_integer_unsigned(
   raw : UInt64,
   datatype : Datatype,
 ) -> UInt64 raise Hdf5Error {
-  guard datatype.size == 1 ||
-    datatype.size == 2 ||
-    datatype.size == 4 ||
-    datatype.size == 8 else {
-    raise UnsupportedFeature("integer width is not 1, 2, 4 or 8 bytes")
+  guard datatype.size >= 1 && datatype.size <= 8 else {
+    raise UnsupportedFeature("integer width is outside 1..8 bytes")
   }
   guard datatype.bit_offset >= 0 &&
     datatype.bit_precision > 0 &&
@@ -334,10 +444,7 @@ fn decode_dataset_value(
         UnsignedInteger(decode_integer_unsigned(raw, datatype))
       }
     }
-    1 =>
-      FloatingPoint(
-        read_float_at(payload, offset, datatype.size, datatype.little_endian),
-      )
+    1 => FloatingPoint(read_float_value(payload, offset, datatype))
     2 => {
       let raw = read_uint_at(
         payload,
@@ -515,13 +622,8 @@ fn decode_dataset_value(
       }
       let base = datatype.base_types[0]
       Complex(
-        read_float_at(payload, offset, base.size, base.little_endian),
-        read_float_at(
-          payload,
-          offset + base.size,
-          base.size,
-          base.little_endian,
-        ),
+        read_float_value(payload, offset, base),
+        read_float_value(payload, offset + base.size, base),
       )
     }
     _ => raise UnsupportedFeature("datatype class is not supported yet")
@@ -577,14 +679,7 @@ fn decode_values(
     c if c == datatype_class_floating_point() => {
       let values : Array[Double] = []
       for i in 0..<n {
-        values.push(
-          read_float_at(
-            payload,
-            i * datatype.size,
-            datatype.size,
-            datatype.little_endian,
-          ),
-        )
+        values.push(read_float_value(payload, i * datatype.size, datatype))
       }
       Floats(values)
     }

@@ -117,12 +117,15 @@ inputs are rejected. See [audit.md](audit.md).
 Invalid selections and writer inputs raise `InvalidArgument`, keeping caller
 errors distinct from malformed file metadata.
 
-Fixed-point metadata accepts any positive precision contained in an 8-, 16-,
-32- or 64-bit storage unit. Decoding shifts out the declared bit offset, masks
-the precision and sign-extends signed values from their effective width; the
-same path covers datasets, attributes, fills and nested values. Floats require
-standard IEEE binary16, binary32 or binary64 fields. Enum datatypes recursively parse an
-integer base type and require the enum and base sizes to agree. Member names use
+Fixed-point metadata accepts 1–8-byte storage, any positive precision contained
+in the storage unit, and the declared padding flags. Decoding shifts out the bit
+offset, masks the precision and sign-extends signed values from their effective
+width; the same path covers datasets, attributes, fills and nested values.
+IEEE binary16/32/64 use direct decoding. Other binary floats use the declared
+sign, exponent and mantissa positions and sizes, exponent bias and implied-MSB
+normalization, then convert to `Double`; storage is limited to 8 bytes and 64
+bits of precision. Enum datatypes recursively parse an integer base type and
+require the enum and base sizes to agree. Member names use
 the version 1/2 8-byte padding rule or the version 3 single-NUL encoding; values
 follow the base type's signedness, offset, precision and byte order. Datasets
 and attributes decode enum payloads to member names and reject values with no
@@ -134,10 +137,11 @@ dimensions and vlen sequence bases retain their nested datatypes. Bitfields
 apply their declared offset and precision, opaque values preserve bytes and
 tags, and complex values decode their floating-point real and imaginary parts.
 Reference values remain encoded bytes in the value tree so the decoder stays
-layout-agnostic. `Hdf5File::resolve_object_reference` interprets the eight-byte
-object-reference form as a file address, validates its object header and finds a
-deterministic hard-link path with a bounded hierarchy walk. Null references
-return `None`; dangling addresses are rejected explicitly.
+layout-agnostic. `Hdf5File::resolve_object_reference` interprets the
+file-address-width (4- or 8-byte) object-reference form as an address, validates
+its object header and finds a deterministic hard-link path with a bounded
+hierarchy walk. Null references return `None`; dangling addresses are rejected
+explicitly.
 
 `Hdf5File::resolve_region_reference` reads the global-heap object named by a
 legacy dataset-region reference, resolves its target dataset in the same file
@@ -160,10 +164,10 @@ ASCII/UTF-8 character sets. Callers that construct the public `Datatype` record
 directly must initialize its recursive metadata fields.
 Attribute-info heap/index addresses determine dense storage independently of
 creation-order tracking, and dense records are read through the same fractal
-heap and metadata v2 B-tree helpers as groups. Non-IEEE floats, unsupported
-integer storage widths and integer padding flags raise an error, including when
-used in attributes; the inspector prints attribute
-errors with their path.
+heap and metadata v2 B-tree helpers as groups. Numeric storage wider than 8
+bytes and binary-float normalizations other than implied MSB raise an error,
+including when used in attributes; the inspector prints attribute errors with
+their path.
 
 The reader resolves file-wide shared object header messages through the
 superblock-extension SOHM table, its SMTB indexes and their fractal heaps.
@@ -221,8 +225,8 @@ targets. The public
 builder validates absolute paths, duplicate objects, links and attributes,
 dataspace rank and element counts, fixed-string widths and encoded link-message
 sizes before allocating output.
-Supported values are little-endian signed/unsigned integers at 8, 16, 32 and 64
-bits, IEEE float32/64, and fixed-width or variable-length UTF-8 strings. Variable
+Supported values are little-endian signed/unsigned integers stored in 1–8 bytes,
+IEEE float32/64, and fixed-width or variable-length UTF-8 strings. Variable
 strings use 16-byte descriptors and a shared global heap collection; empty
 strings use the zero descriptor and repeated strings share one heap object.
 Filters remain limited to fixed-size writer values because HDF5 1.14.6 rejects

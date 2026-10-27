@@ -163,6 +163,13 @@ pub(all) struct Datatype {
   array_dimensions : Array[UInt64]
   bit_offset : Int32
   bit_precision : Int32
+  float_sign_position : Int32
+  float_exponent_position : Int32
+  float_exponent_size : Int32
+  float_mantissa_position : Int32
+  float_mantissa_size : Int32
+  float_exponent_bias : Int32
+  float_normalization : Int32
   string_padding : Int32
   string_charset : Int32
   opaque_tag : String

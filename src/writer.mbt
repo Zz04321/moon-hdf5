@@ -46,6 +46,13 @@ fn writer_datatype(
     } else {
       0
     },
+    float_sign_position: 0,
+    float_exponent_position: 0,
+    float_exponent_size: 0,
+    float_mantissa_position: 0,
+    float_mantissa_size: 0,
+    float_exponent_bias: 0,
+    float_normalization: 0,
     string_padding: if class == 3 {
       1
     } else {
@@ -67,7 +74,7 @@ pub fn Datatype::write_integer(
   signed : Bool,
   size : Int32,
 ) -> Datatype raise Hdf5Error {
-  guard size == 1 || size == 2 || size == 4 || size == 8 else {
+  guard size >= 1 && size <= 8 else {
     raise InvalidArgument("writer integer datatype width is invalid")
   }
   writer_datatype(0, size, signed~)
@@ -428,6 +435,13 @@ fn copy_writer_datatype(datatype : Datatype) -> Datatype {
     array_dimensions: datatype.array_dimensions.copy(),
     bit_offset: datatype.bit_offset,
     bit_precision: datatype.bit_precision,
+    float_sign_position: datatype.float_sign_position,
+    float_exponent_position: datatype.float_exponent_position,
+    float_exponent_size: datatype.float_exponent_size,
+    float_mantissa_position: datatype.float_mantissa_position,
+    float_mantissa_size: datatype.float_mantissa_size,
+    float_exponent_bias: datatype.float_exponent_bias,
+    float_normalization: datatype.float_normalization,
     string_padding: datatype.string_padding,
     string_charset: datatype.string_charset,
     opaque_tag: datatype.opaque_tag,
@@ -509,13 +523,7 @@ fn validate_writer_datatype(
   }
   match datatype.class {
     0 => {
-      guard (
-          datatype.size == 1 ||
-          datatype.size == 2 ||
-          datatype.size == 4 ||
-          datatype.size == 8
-        ) &&
-        datatype.little_endian else {
+      guard datatype.size >= 1 && datatype.size <= 8 && datatype.little_endian else {
         raise InvalidArgument("writer integer datatype is unsupported")
       }
     }
