@@ -87,14 +87,15 @@ scale-offset reads f32/f64 headers and reconstructs each value as
 match HDF5, before applying the declared byte order. Decoded chunks must exactly
 match the full chunk shape, including edge padding.
 
-The writer emits integer scale-offset as the first filter in a chunk pipeline.
-It excludes fill values from the minimum and maximum, computes automatic bits
-from the resulting span, writes the 21-byte header and packs differences
-most-significant-bit first. Fill values become the all-ones marker. A configured
-full-width filter stores raw element bytes. Automatic full-range chunks are
-rejected because HDF5 1.14.6 cannot decode the header form it emits for that
-case, so callers must select the raw full-width path explicitly. The writer does
-not emit floating-point scale-offset.
+The writer emits scale-offset as the first filter in a chunk pipeline. Integer
+values use automatic or fixed bit counts; f32/f64 values use HDF5 DSCALE with a
+decimal digit count. The writer excludes fill values from the minimum and
+maximum, writes the 21-byte header and packs differences most-significant-bit
+first. Fill values become the all-ones marker. A configured full-width integer
+filter stores raw element bytes. Automatic full-range chunks are rejected
+because HDF5 1.14.6 cannot decode the header form it emits for that case, so
+callers must select the raw full-width path explicitly. Floating-point
+scale-offset rejects non-finite data and Fletcher32 pipelines.
 
 Layout v4 compact/contiguous storage follows the v3 encoding. Single-chunk
 indexes store a direct address and, when filtered, a byte length and mask.
@@ -246,9 +247,11 @@ Supported values are little-endian signed/unsigned integers stored in 1–8 byte
 IEEE float32/64, and fixed-width or variable-length UTF-8 strings. Variable
 strings use 16-byte descriptors and a shared global heap collection; empty
 strings use the zero descriptor and repeated strings share one heap object.
-Filters remain limited to fixed-size writer values because HDF5 1.14.6 rejects
-filter pipelines on variable-length datasets. Integer scale-offset supports
-automatic or fixed bit counts and must precede shuffle, deflate and Fletcher32.
+Filter pipelines remain limited to fixed-size writer values because HDF5 1.14.6
+rejects them on variable-length datasets. Integer scale-offset supports
+automatic or fixed bit counts. Floating-point scale-offset supports f32/f64
+decimal digits. Scale-offset must precede shuffle, deflate and supported
+Fletcher32 combinations.
 Narrow integer constructors validate every value before truncating it to the
 encoded width. Structured values reuse the reader's recursive `Datatype` and
 `DatasetValue` model. The writer encodes version-three compound, enum and array

@@ -167,6 +167,36 @@ def verify(path: Path) -> None:
         (filter_id, flags, parameters, name), = filter_records(scaleoffset_full)
         assert (filter_id, flags, name) == (6, 1, b"scaleoffset")
         assert parameters[:8] == (2, 32, 2, 0, 4, 1, 0, 1)
+        scaleoffset_f32 = handle["types/scaleoffset_f32"]
+        np.testing.assert_array_equal(
+            scaleoffset_f32[:], [1.25, 2.5, -1.75, 9.5, -9.5, 0.0]
+        )
+        assert scaleoffset_f32.dtype == np.dtype("<f4")
+        assert scaleoffset_f32.fillvalue == np.float32(-9.5)
+        (filter_id, flags, parameters, name), = filter_records(scaleoffset_f32)
+        assert (filter_id, flags, name) == (6, 1, b"scaleoffset")
+        assert parameters[:8] == (0, 2, 3, 1, 4, 0, 0, 1)
+        assert parameters[8] == 0xC1180000
+        scaleoffset_f64 = handle["types/scaleoffset_f64"]
+        np.testing.assert_array_equal(
+            scaleoffset_f64[:], [1.5, -2.5, 3.5, -9.5, 0.0]
+        )
+        assert scaleoffset_f64.dtype == np.dtype("<f8")
+        assert scaleoffset_f64.fillvalue == -9.5
+        (filter_id, flags, parameters, name), = filter_records(scaleoffset_f64)
+        assert (filter_id, flags, name) == (6, 1, b"scaleoffset")
+        assert parameters[:8] == (0, 1, 5, 1, 8, 0, 0, 1)
+        assert parameters[8:10] == (0, 0xC0230000)
+        scaleoffset_f32_pipeline = handle["types/scaleoffset_f32_pipeline"]
+        np.testing.assert_array_equal(
+            scaleoffset_f32_pipeline[:], [1.25, 2.5, -1.75, 9.5, -9.5, 0.0]
+        )
+        records = filter_records(scaleoffset_f32_pipeline)
+        assert [(record[0], record[1], record[3]) for record in records] == [
+            (6, 1, b"scaleoffset"),
+            (1, 0, b"deflate"),
+        ]
+        assert records[0][2][:8] == (0, 2, 3, 1, 4, 0, 0, 1)
         growing_f32 = handle["types/growing_f32"]
         np.testing.assert_array_equal(growing_f32[:], [1.25, 2.5, 3.75, -1.0])
         assert growing_f32.dtype == np.dtype("<f4")

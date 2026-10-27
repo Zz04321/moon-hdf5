@@ -14,9 +14,9 @@ HDF5 1.14.6 is supported.
 
 The reader profile covers superblocks v0–v3, common compact and dense group and
 attribute storage, compact/contiguous/chunked datasets with the listed chunk
-indexes, Deflate/Shuffle/Fletcher32/integer scale-offset pipelines, fixed-point
-and normalized binary numeric layouts, string layouts, the structured datatypes
-listed below, fill
+indexes, Deflate/Shuffle/Fletcher32 and integer or floating-point scale-offset
+pipelines, fixed-point and normalized binary numeric layouts, string layouts,
+the structured datatypes listed below, fill
 values, and hyperslab and ordered-point selections. It also resolves shared
 object header messages (SOHM) for the structures exercised below. The writer profile covers
 new-file writing of the structures listed in its table. Known unsupported
@@ -39,7 +39,7 @@ These exclusions remain outside the v1.0 compatibility promise.
 The release gate is `scripts/release_check.sh`. It runs the interface, format,
 documentation and package checks, wasm/native tests, writes a demo file and
 opens it with h5py, then independently verifies the committed NetCDF-4 producer
-fixture, the numeric-layout fixture and the integer scale-offset fixture. The
+fixture, the numeric-layout fixture and the scale-offset fixture. The
 same gate also verifies the post-v1.0 external raw-data fixtures, the
 shared-message fixture and both reference fixtures; the v1.0 verification environment is h5py
 3.13.0/HDF5 1.14.6. HDF5 1.14.6 default and `latest` datatype fixtures are
@@ -105,7 +105,7 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | Numeric values | Little-endian int/uint1–8 and IEEE float32/64; standard widths are checked by h5py and nonstandard widths by MoonBit round-trip | Big-endian and nonstandard floating-point output are absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Variable-length sequence output is absent |
 | Structured values | Packed compound, enum and fixed array values | Reference, bitfield, opaque, time and complex output are absent |
-| Filters | Shuffle, deflate, Fletcher32 and integer scale-offset with automatic or fixed bits, in HDF5 pipeline order for fixed-size values | Floating-point scale-offset writing, other filters, per-chunk caller masks and variable-length filters are absent; scale-offset must lead the pipeline |
+| Filters | Shuffle, deflate, Fletcher32, integer scale-offset with automatic or fixed bits, and f32/f64 decimal scale-offset, in HDF5 pipeline order for fixed-size values | Other filters, per-chunk caller masks and variable-length filters are absent; scale-offset must lead the pipeline and floating-point scale-offset cannot use Fletcher32 |
 | Fill values | Default and custom fixed-size fills, including structured fills | Custom variable-length fills are rejected |
 | Extensible datasets | One unlimited axis, in-memory resize and append | MoonBit does not modify an existing file in place |
 

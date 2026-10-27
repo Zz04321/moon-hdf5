@@ -108,20 +108,12 @@ fn scaleoffset_write_scalar(
 
 ///|
 fn scaleoffset_float_factor32(digits : Int32) -> Float {
-  let mut factor = Float(1.0)
-  for _ in 0..<digits {
-    factor = factor * Float(10.0)
-  }
-  factor
+  @math.powf(Float(10.0), Float::from_int(digits))
 }
 
 ///|
 fn scaleoffset_float_factor64(digits : Int32) -> Double {
-  let mut factor = 1.0
-  for _ in 0..<digits {
-    factor = factor * 10.0
-  }
-  factor
+  @math.pow(10.0, Double::from_int(digits))
 }
 
 ///|
@@ -292,10 +284,11 @@ fn decode_filters(
   guard filters.length() == 32 || mask >> filters.length() == 0U else {
     raise InvalidField("chunk filter mask exceeds pipeline")
   }
-  guard expected_size >= 0 && expected_size <= 0x7FFFFFFF - filters.length() * 4 else {
+  guard expected_size >= 0 &&
+    expected_size <= 0x7FFFFFFF - filters.length() * 32 else {
     raise InvalidField("filtered chunk is too large")
   }
-  let limit = expected_size + filters.length() * 4
+  let limit = expected_size + filters.length() * 32
   let mut output = data
   let mut index = filters.length()
   while index > 0 {

@@ -181,6 +181,44 @@ fn run(args : Array[String]) -> Int32 {
       fill_value=Int32Values([0]),
       filters=[ScaleOffset(32)],
     )
+    writer.add_chunked_dataset(
+      "/types/scaleoffset_f32",
+      [6UL],
+      [3U],
+      Float32Values([
+        Float(1.25),
+        Float(2.5),
+        Float(-1.75),
+        Float(9.5),
+        Float(-9.5),
+        Float(0.0),
+      ]),
+      fill_value=Float32Values([Float(-9.5)]),
+      filters=[ScaleOffset(2)],
+    )
+    writer.add_chunked_dataset(
+      "/types/scaleoffset_f64",
+      [5UL],
+      [5U],
+      Float64Values([1.5, -2.5, 3.5, -9.5, 0.0]),
+      fill_value=Float64Values([-9.5]),
+      filters=[ScaleOffset(1)],
+    )
+    writer.add_chunked_dataset(
+      "/types/scaleoffset_f32_pipeline",
+      [6UL],
+      [3U],
+      Float32Values([
+        Float(1.25),
+        Float(2.5),
+        Float(-1.75),
+        Float(9.5),
+        Float(-9.5),
+        Float(0.0),
+      ]),
+      fill_value=Float32Values([Float(-9.5)]),
+      filters=[ScaleOffset(2), Deflate(6)],
+    )
     writer.add_extensible_dataset(
       "/types/growing_f32",
       [0UL],

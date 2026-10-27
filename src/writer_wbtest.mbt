@@ -842,6 +842,65 @@ test "writer emits integer scale-offset chunks" {
 }
 
 ///|
+test "writer emits floating-point scale-offset chunks" {
+  let writer = Hdf5Writer::new()
+  writer.add_chunked_dataset(
+    "/f32",
+    [6UL],
+    [3U],
+    Float32Values([
+      Float(1.25),
+      Float(2.5),
+      Float(-1.75),
+      Float(9.5),
+      Float(-9.5),
+      Float(0.0),
+    ]),
+    fill_value=Float32Values([Float(-9.5)]),
+    filters=[ScaleOffset(2)],
+  )
+  writer.add_chunked_dataset(
+    "/f64",
+    [5UL],
+    [5U],
+    Float64Values([1.5, -2.5, 3.5, -9.5, 0.0]),
+    fill_value=Float64Values([-9.5]),
+    filters=[ScaleOffset(1)],
+  )
+  writer.add_chunked_dataset(
+    "/pipeline",
+    [6UL],
+    [3U],
+    Float32Values([
+      Float(1.25),
+      Float(2.5),
+      Float(-1.75),
+      Float(9.5),
+      Float(-9.5),
+      Float(0.0),
+    ]),
+    fill_value=Float32Values([Float(-9.5)]),
+    filters=[ScaleOffset(2), Deflate(6)],
+  )
+  let file = Hdf5File::parse(writer.encode())
+  assert_eq(float_values(file.read_dataset("/f32")), [
+    1.25, 2.5, -1.75, 9.5, -9.5, 0.0,
+  ])
+  assert_eq(float_values(file.read_dataset("/f64")), [1.5, -2.5, 3.5, -9.5, 0.0])
+  assert_eq(float_values(file.read_dataset("/pipeline")), [
+    1.25, 2.5, -1.75, 9.5, -9.5, 0.0,
+  ])
+  let selected = file.read_dataset_selection(
+    "/f32",
+    Points([[0UL], [2UL], [4UL]]),
+  )
+  match selected.values {
+    Floats(values) => assert_eq(values, [1.25, -1.75, -9.5])
+    _ => abort("expected filtered floating-point selection")
+  }
+}
+
+///|
 test "writer validates scale-offset filters" {
   let writer = Hdf5Writer::new()
   let cases : Array[Hdf5Error?] = [
@@ -851,7 +910,7 @@ test "writer validates scale-offset filters" {
         [1UL],
         [1U],
         Float32Values([Float(1.5)]),
-        filters=[ScaleOffset(0)],
+        filters=[ScaleOffset(39)],
       )
       None
     } catch {
@@ -884,6 +943,18 @@ test "writer validates scale-offset filters" {
       error => Some(error)
     },
     try {
+      writer.add_chunked_dataset(
+        "/lossy_checksum",
+        [1UL],
+        [1U],
+        Float32Values([Float(1.5)]),
+        filters=[ScaleOffset(2), Fletcher32],
+      )
+      None
+    } catch {
+      error => Some(error)
+    },
+    try {
       writer.add_chunked_dataset("/full_range", [1UL], [1U], Int32Values([0]), filters=[
         ScaleOffset(0),
       ])
@@ -897,13 +968,18 @@ test "writer validates scale-offset filters" {
   ]
   assert_eq(cases, [
     Some(
-      UnsupportedFeature(
-        "scale-offset writer filter requires fixed-point integer values",
+      InvalidArgument(
+        "scale-offset decimal digits exceed the datatype precision",
       ),
     ),
     Some(InvalidArgument("scale-offset minimum bits exceed the datatype width")),
     Some(InvalidArgument("scale-offset must be the first writer filter")),
     Some(InvalidArgument("scale-offset must be the first writer filter")),
+    Some(
+      InvalidArgument(
+        "Fletcher32 cannot be combined with floating-point scale-offset",
+      ),
+    ),
     None,
   ])
 }

@@ -160,7 +160,7 @@ pub(all) enum Hdf5WriteFilter {
   Shuffle
   Deflate(Int32)
   Fletcher32
-  /// Integer scale-offset; zero selects automatic bits.
+  /// Integer bits or decimal digits for floats; zero selects automatic bits for integers.
   ScaleOffset(Int32)
 } derive(Eq, @debug.Debug)
 
@@ -1120,12 +1120,35 @@ fn validate_writer_filters_for_values(
   }
   for filter in filters {
     match filter {
-      ScaleOffset(minbits) => {
-        let (element_size, _) = writer_scaleoffset_layout(values)
-        guard minbits <= element_size * 8 else {
-          raise InvalidArgument(
-            "scale-offset minimum bits exceed the datatype width",
-          )
+      ScaleOffset(scale) => {
+        let (element_size, _, datatype_class) = writer_scaleoffset_layout(
+          values,
+        )
+        guard scale >= 0 else {
+          raise InvalidArgument("invalid scale-offset writer filter")
+        }
+        if datatype_class == 0 {
+          guard scale <= element_size * 8 else {
+            raise InvalidArgument(
+              "scale-offset minimum bits exceed the datatype width",
+            )
+          }
+        } else {
+          let maximum_digits = if element_size == 4 { 38 } else { 308 }
+          guard scale <= maximum_digits else {
+            raise InvalidArgument(
+              "scale-offset decimal digits exceed the datatype precision",
+            )
+          }
+          for other in filters {
+            match other {
+              Fletcher32 =>
+                raise InvalidArgument(
+                  "Fletcher32 cannot be combined with floating-point scale-offset",
+                )
+              _ => ()
+            }
+          }
         }
       }
       _ => ()
@@ -2212,19 +2235,21 @@ fn encode_fill_value(fill : Hdf5WriteValues) -> Bytes raise Hdf5Error {
 ///|
 fn writer_scaleoffset_layout(
   values : Hdf5WriteValues,
-) -> (Int32, Bool) raise Hdf5Error {
+) -> (Int32, Bool, Int32) raise Hdf5Error {
   match values {
-    Int8Values(_) => (1, true)
-    Int16Values(_) => (2, true)
-    Int32Values(_) => (4, true)
-    Int64Values(_) => (8, true)
-    UInt8Values(_) => (1, false)
-    UInt16Values(_) => (2, false)
-    UInt32Values(_) => (4, false)
-    UInt64Values(_) => (8, false)
+    Int8Values(_) => (1, true, 0)
+    Int16Values(_) => (2, true, 0)
+    Int32Values(_) => (4, true, 0)
+    Int64Values(_) => (8, true, 0)
+    UInt8Values(_) => (1, false, 0)
+    UInt16Values(_) => (2, false, 0)
+    UInt32Values(_) => (4, false, 0)
+    UInt64Values(_) => (8, false, 0)
+    Float32Values(_) => (4, false, 1)
+    Float64Values(_) => (8, false, 1)
     _ =>
       raise UnsupportedFeature(
-        "scale-offset writer filter requires fixed-point integer values",
+        "scale-offset writer filter requires fixed-size numeric values",
       )
   }
 }
@@ -2313,16 +2338,18 @@ fn scaleoffset_min_max(
 
 ///|
 fn scaleoffset_client_data(
-  minbits : Int32,
+  scale : Int32,
+  datatype_class : Int32,
   element_size : Int32,
   signed : Bool,
   chunk_elements : Int32,
   fill : Bytes,
 ) -> Array[UInt32] {
   let parameters : Array[UInt32] = Array::make(20, 0U)
-  parameters[0] = 2U
-  parameters[1] = minbits.reinterpret_as_uint()
+  parameters[0] = if datatype_class == 0 { 2U } else { 0U }
+  parameters[1] = scale.reinterpret_as_uint()
   parameters[2] = chunk_elements.reinterpret_as_uint()
+  parameters[3] = datatype_class.reinterpret_as_uint()
   parameters[4] = element_size.reinterpret_as_uint()
   parameters[5] = if signed { 1U } else { 0U }
   parameters[7] = 1U
@@ -2334,10 +2361,274 @@ fn scaleoffset_client_data(
 }
 
 ///|
+fn scaleoffset_round_away(value : Double) -> Int64 {
+  let truncated = value.to_int64()
+  let fraction = value - truncated.to_double()
+  if fraction >= 0.5 {
+    truncated + 1L
+  } else if fraction <= -0.5 {
+    truncated - 1L
+  } else {
+    truncated
+  }
+}
+
+///|
+fn scaleoffset_finite32(value : Float) -> Bool {
+  !value.is_nan() && !value.is_inf()
+}
+
+///|
+fn scaleoffset_finite64(value : Double) -> Bool {
+  !value.is_nan() && !value.is_inf()
+}
+
+///|
+fn scaleoffset_write_packed_chunk(
+  minbits : Int32,
+  min_raw : UInt64,
+  packed : FixedArray[UInt64],
+) -> Bytes raise Hdf5Error {
+  let count = packed.length()
+  guard minbits >= 0 && minbits < 64 else {
+    raise InvalidArgument("invalid scale-offset minimum bits")
+  }
+  let output_size = 21L + count.to_int64() * minbits.to_int64() / 8L + 1L
+  guard output_size <= 0x7FFFFFFFL else {
+    raise InvalidField("scale-offset writer chunk is too large")
+  }
+  let output = FixedArray::make(output_size.to_int(), b'\x00')
+  let encoded_bits = minbits.reinterpret_as_uint()
+  for index in 0..<4 {
+    output[index] = ((encoded_bits >> (index * 8)) & 0xFFU).to_byte()
+  }
+  output[4] = 8
+  for index in 0..<8 {
+    output[5 + index] = ((min_raw >> (index * 8)) & 0xFFUL).to_byte()
+  }
+  let mut bit_index = 0
+  for index in 0..<count {
+    let value = packed[index]
+    let mut remaining = minbits
+    while remaining > 0 {
+      let byte_index = bit_index / 8
+      let bit_offset = bit_index % 8
+      let available = 8 - bit_offset
+      let take = if remaining < available { remaining } else { available }
+      let part = (value >> (remaining - take)) & ((1UL << take) - 1UL)
+      output[21 + byte_index] = (output[21 + byte_index].to_uint() |
+      (part.to_uint() << (available - take))).to_byte()
+      bit_index = bit_index + take
+      remaining = remaining - take
+    }
+  }
+  output.unsafe_reinterpret_as_bytes()
+}
+
+///|
+fn encode_scaleoffset_float32_chunk(
+  data : Bytes,
+  digits : Int32,
+  fill : Bytes,
+) -> Bytes raise Hdf5Error {
+  guard data.length() % 4 == 0 && fill.length() == 4 else {
+    raise InvalidField("invalid float32 scale-offset writer chunk")
+  }
+  guard digits >= 0 && digits <= 38 else {
+    raise InvalidArgument("invalid float32 scale-offset decimal digits")
+  }
+  let count = data.length() / 4
+  let fill_value = Float::reinterpret_from_uint(fill.unsafe_read_uint32_le(0))
+  guard scaleoffset_finite32(fill_value) else {
+    raise UnsupportedFeature("scale-offset fill value must be finite")
+  }
+  let factor = scaleoffset_float_factor32(digits)
+  let tolerance = @math.powf(Float(10.0), -Float::from_int(digits))
+  guard scaleoffset_finite32(factor) && scaleoffset_finite32(tolerance) else {
+    raise UnsupportedFeature("float32 scale-offset factor is out of range")
+  }
+  let mut found = false
+  let mut minimum = Float(0.0)
+  let mut maximum = Float(0.0)
+  for index in 0..<count {
+    let value = Float::reinterpret_from_uint(
+      data.unsafe_read_uint32_le(index * 4),
+    )
+    guard scaleoffset_finite32(value) else {
+      raise UnsupportedFeature(
+        "scale-offset does not support non-finite floating-point values",
+      )
+    }
+    if Float::abs(value - fill_value) < tolerance {
+      continue
+    }
+    if !found {
+      minimum = value
+      maximum = value
+      found = true
+    } else {
+      if value < minimum {
+        minimum = value
+      }
+      if value > maximum {
+        maximum = value
+      }
+    }
+  }
+  let difference = maximum * factor - minimum * factor
+  guard scaleoffset_finite32(difference) &&
+    difference >= Float(0.0) &&
+    difference.to_double() < 9223372036854775808.0 else {
+    raise UnsupportedFeature("float32 scale-offset range is out of range")
+  }
+  let rounded_difference = scaleoffset_round_away(difference.to_double())
+  guard rounded_difference >= 0L &&
+    rounded_difference.to_double() < 9223372036854775808.0 else {
+    raise UnsupportedFeature("float32 scale-offset range is out of range")
+  }
+  let span = rounded_difference.reinterpret_as_uint64() + 1UL
+  let minbits = scaleoffset_ceil_log2(span + 1UL)
+  guard minbits < 32 else {
+    raise UnsupportedFeature(
+      "scale-offset automatic bits require full precision",
+    )
+  }
+  let marker = (1UL << minbits) - 1UL
+  let minimum_scaled = minimum * factor
+  guard scaleoffset_finite32(minimum_scaled) else {
+    raise UnsupportedFeature("float32 scale-offset range is out of range")
+  }
+  let packed = FixedArray::make(count, 0UL)
+  for index in 0..<count {
+    let value = Float::reinterpret_from_uint(
+      data.unsafe_read_uint32_le(index * 4),
+    )
+    if Float::abs(value - fill_value) < tolerance {
+      packed[index] = marker
+    } else {
+      let scaled = value * factor - minimum_scaled
+      guard scaleoffset_finite32(scaled) &&
+        scaled >= Float(0.0) &&
+        scaled.to_double() < 9223372036854775808.0 else {
+        raise UnsupportedFeature("float32 scale-offset value is out of range")
+      }
+      let quantized = scaleoffset_round_away(scaled.to_double())
+      guard quantized >= 0L && quantized.reinterpret_as_uint64() <= marker else {
+        raise InvalidField("float32 scale-offset value is out of range")
+      }
+      packed[index] = quantized.reinterpret_as_uint64()
+    }
+  }
+  scaleoffset_write_packed_chunk(
+    minbits,
+    minimum.reinterpret_as_uint().to_uint64(),
+    packed,
+  )
+}
+
+///|
+fn encode_scaleoffset_float64_chunk(
+  data : Bytes,
+  digits : Int32,
+  fill : Bytes,
+) -> Bytes raise Hdf5Error {
+  guard data.length() % 8 == 0 && fill.length() == 8 else {
+    raise InvalidField("invalid float64 scale-offset writer chunk")
+  }
+  guard digits >= 0 && digits <= 308 else {
+    raise InvalidArgument("invalid float64 scale-offset decimal digits")
+  }
+  let count = data.length() / 8
+  let fill_value = fill.unsafe_read_uint64_le(0).reinterpret_as_double()
+  guard scaleoffset_finite64(fill_value) else {
+    raise UnsupportedFeature("scale-offset fill value must be finite")
+  }
+  let factor = scaleoffset_float_factor64(digits)
+  let tolerance = @math.pow(10.0, -Double::from_int(digits))
+  guard scaleoffset_finite64(factor) && scaleoffset_finite64(tolerance) else {
+    raise UnsupportedFeature("float64 scale-offset factor is out of range")
+  }
+  let mut found = false
+  let mut minimum = 0.0
+  let mut maximum = 0.0
+  for index in 0..<count {
+    let value = data.unsafe_read_uint64_le(index * 8).reinterpret_as_double()
+    guard scaleoffset_finite64(value) else {
+      raise UnsupportedFeature(
+        "scale-offset does not support non-finite floating-point values",
+      )
+    }
+    if Double::abs(value - fill_value) < tolerance {
+      continue
+    }
+    if !found {
+      minimum = value
+      maximum = value
+      found = true
+    } else {
+      if value < minimum {
+        minimum = value
+      }
+      if value > maximum {
+        maximum = value
+      }
+    }
+  }
+  let difference = maximum * factor - minimum * factor
+  guard scaleoffset_finite64(difference) &&
+    difference >= 0.0 &&
+    difference < 9223372036854775808.0 else {
+    raise UnsupportedFeature("float64 scale-offset range is out of range")
+  }
+  let rounded_difference = scaleoffset_round_away(difference)
+  guard rounded_difference >= 0L &&
+    rounded_difference.to_double() < 9223372036854775808.0 else {
+    raise UnsupportedFeature("float64 scale-offset range is out of range")
+  }
+  let span = rounded_difference.reinterpret_as_uint64() + 1UL
+  let minbits = scaleoffset_ceil_log2(span + 1UL)
+  guard minbits < 64 else {
+    raise UnsupportedFeature(
+      "scale-offset automatic bits require full precision",
+    )
+  }
+  let marker = (1UL << minbits) - 1UL
+  let minimum_scaled = minimum * factor
+  guard scaleoffset_finite64(minimum_scaled) else {
+    raise UnsupportedFeature("float64 scale-offset range is out of range")
+  }
+  let packed = FixedArray::make(count, 0UL)
+  for index in 0..<count {
+    let value = data.unsafe_read_uint64_le(index * 8).reinterpret_as_double()
+    if Double::abs(value - fill_value) < tolerance {
+      packed[index] = marker
+    } else {
+      let scaled = value * factor - minimum_scaled
+      guard scaleoffset_finite64(scaled) &&
+        scaled >= 0.0 &&
+        scaled < 9223372036854775808.0 else {
+        raise UnsupportedFeature("float64 scale-offset value is out of range")
+      }
+      let quantized = scaleoffset_round_away(scaled)
+      guard quantized >= 0L && quantized.reinterpret_as_uint64() <= marker else {
+        raise InvalidField("float64 scale-offset value is out of range")
+      }
+      packed[index] = quantized.reinterpret_as_uint64()
+    }
+  }
+  scaleoffset_write_packed_chunk(
+    minbits,
+    minimum.reinterpret_as_uint64(),
+    packed,
+  )
+}
+
+///|
 fn encode_scaleoffset_chunk(
   data : Bytes,
-  configured_bits : Int32,
+  scale : Int32,
   element_size : Int32,
+  datatype_class : Int32,
   signed : Bool,
   fill : Bytes,
 ) -> Bytes raise Hdf5Error {
@@ -2347,8 +2638,19 @@ fn encode_scaleoffset_chunk(
     fill.length() == element_size else {
     raise InvalidField("invalid scale-offset writer chunk")
   }
+  if datatype_class == 1 {
+    if element_size == 4 {
+      return encode_scaleoffset_float32_chunk(data, scale, fill)
+    }
+    if element_size == 8 {
+      return encode_scaleoffset_float64_chunk(data, scale, fill)
+    }
+    raise UnsupportedFeature(
+      "scale-offset floating-point width is not supported",
+    )
+  }
   let bits = element_size * 8
-  if configured_bits == bits {
+  if scale == bits {
     return data
   }
   let count = data.length() / element_size
@@ -2358,7 +2660,7 @@ fn encode_scaleoffset_chunk(
   )
   let value_mask = scaleoffset_bit_mask(element_size)
   let difference = (max_raw - min_raw) & value_mask
-  let minbits = if configured_bits == 0 {
+  let minbits = if scale == 0 {
     let span = difference + 1UL
     let computed = scaleoffset_ceil_log2(span + 1UL)
     guard computed < bits else {
@@ -2368,7 +2670,7 @@ fn encode_scaleoffset_chunk(
     }
     computed
   } else {
-    configured_bits
+    scale
   }
   guard minbits >= 0 && minbits < bits else {
     raise InvalidArgument("invalid scale-offset minimum bits")
@@ -2456,12 +2758,12 @@ fn encode_filter_pipeline(
         buffer.write_uint16_le(0)
       }
       ScaleOffset(minbits) => {
-        let (size, signed) = writer_scaleoffset_layout(values)
+        let (size, signed, datatype_class) = writer_scaleoffset_layout(values)
         guard size == element_size else {
           raise InvalidField("scale-offset datatype size mismatch")
         }
         let parameters = scaleoffset_client_data(
-          minbits, size, signed, chunk_elements, fill,
+          minbits, datatype_class, size, signed, chunk_elements, fill,
         )
         buffer.write_uint16_le(6)
         buffer.write_uint16_le(1)
@@ -2531,11 +2833,13 @@ fn encode_chunk_filters(
       Deflate(level) => @zlib.zlib(output[:], level~)
       Fletcher32 => add_fletcher32(output)
       ScaleOffset(minbits) => {
-        let (size, signed) = writer_scaleoffset_layout(values)
+        let (size, signed, datatype_class) = writer_scaleoffset_layout(values)
         guard size == element_size else {
           raise InvalidField("scale-offset datatype size mismatch")
         }
-        encode_scaleoffset_chunk(output, minbits, size, signed, fill)
+        encode_scaleoffset_chunk(
+          output, minbits, size, datatype_class, signed, fill,
+        )
       }
     }
   }

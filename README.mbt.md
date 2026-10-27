@@ -43,9 +43,9 @@ an executable example.
   selected values, including compact, contiguous or chunked target storage.
 - Supports compact, contiguous and chunked layouts with the common HDF5 chunk
   indexes.
-- Reads and writes deflate, shuffle, Fletcher32 and integer scale-offset, and
-  reads f32/f64 decimal floating-point scale-offset, including per-chunk masks
-  and fill markers.
+- Reads and writes deflate, shuffle, Fletcher32, integer scale-offset and
+  f32/f64 decimal floating-point scale-offset, including per-chunk masks and
+  fill markers.
 - Provides metadata-only access, hyperslab selection and ordered point
   selection.
 - Resolves chained soft and external links across registered sources, with
@@ -270,9 +270,11 @@ dense attributes including a variable-length string attribute, exactly eight
 oversized links and attributes that exercise compact OCHK continuations, and a
 20-attribute object spanning multiple continuation chunks.
 
-`ScaleOffset(0)` selects automatic integer bit width; a positive value fixes
-the width. Scale-offset must be the first filter in a pipeline and accepts only
-fixed-point integer values.
+For integer values, `ScaleOffset(0)` selects automatic bit width and a positive
+value fixes the width. For f32/f64 values, the parameter is the number of
+decimal digits retained by HDF5's DSCALE mode. Scale-offset accepts fixed-size
+numeric values, must be the first filter, and cannot be combined with Fletcher32
+for floating-point data.
 
 Run the complete writer example and verify its output independently with h5py:
 
@@ -314,11 +316,12 @@ preserve order and duplicates.
   metadata is stored inline; shared-message support is reader-only.
 - Numeric storage wider than 8 bytes and binary floating-point normalizations
   other than implied MSB are not supported.
-- Floating-point scale-offset reading supports f32/f64 decimal scaling and both
-  byte orders; other floating scale modes are rejected. Writer scale-offset is
-  limited to fixed-point integers, must be the first filter and rejects
-  automatic bit reduction when a chunk needs full precision; use
-  `ScaleOffset(element_width * 8)` to store that chunk unfiltered.
+- Floating-point scale-offset supports f32/f64 decimal scaling; other floating
+  scale modes are rejected. Writer scale-offset must be the first filter and
+  rejects automatic bit reduction when a chunk needs full precision; use
+  `ScaleOffset(element_width * 8)` to store an integer chunk unfiltered. Writer
+  floating-point data and fill values must be finite, and floating-point
+  scale-offset cannot be combined with Fletcher32.
 - Custom variable-length fill values, other writer filters and reference writing
   are not supported.
 - Reference resolution covers legacy object and dataset-region references under

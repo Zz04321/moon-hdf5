@@ -424,6 +424,15 @@ orders, fill markers and scale-offset pipelines, and is checked against HDF5
 reader header whose per-chunk bit count equals the full element width is
 rejected because it is not interoperable with HDF5 1.14.6.
 
+The writer now emits the matching f32/f64 DSCALE representation. It computes
+the per-chunk minimum and quantized span while excluding fill values, stores the
+little-endian minimum in the 21-byte header, packs differences most-significant
+bit first and maps fills to the all-ones marker. Rounding follows HDF5's
+away-from-zero behavior, f32 arithmetic remains single precision, and
+non-finite values plus Fletcher32 combinations are rejected. Deflate decoding
+now reserves bounded filter overhead so scale-offset chunks that grow before
+compression can pass through a pipeline.
+
 `testdata/scaleoffset.h5` is generated and independently verified with h5py
 3.13.0/HDF5 1.14.6. It covers automatic bits over two chunks with an
 unallocated fill chunk, fixed bits, fill values inside an allocated chunk,
@@ -433,8 +442,9 @@ a large minimum. Floating cases cover f32/f64, both byte orders, fills, all-fill
 chunks and a deflate pipeline. Writer tests cover both signednesses at every
 width, automatic and fixed bits, fills, full precision, pipeline order and
 invalid inputs. wasm/native tests exercise full reads and hyperslabs; the release
-gate writes automatic, fixed, pipeline, 8-byte unsigned and full-precision
-datasets and checks their values and filter parameters with h5py.
+gate writes automatic, fixed, pipeline, 8-byte unsigned, full-precision and
+f32/f64 decimal datasets and checks their values and filter parameters with
+h5py.
 
 ## Shared object header messages — 2026-10-27
 
