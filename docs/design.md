@@ -81,9 +81,11 @@ Integer scale-offset reads HDF5 1.14.6's 21-byte chunk header, unpacks
 most-significant-bit-first values, applies the stored minimum and restores the
 declared byte order. The all-ones packed value maps to the declared fill value;
 an unstored fill maps to zero. Configured full precision is accepted only when
-HDF5 bypasses filtering and stores raw element bytes. Floating-point
-scale-offset remains unsupported. Decoded chunks must exactly match the full
-chunk shape, including edge padding.
+HDF5 bypasses filtering and stores raw element bytes. Decimal floating-point
+scale-offset reads f32/f64 headers and reconstructs each value as
+`packed / 10^digits + minimum`, using single- or double-precision arithmetic to
+match HDF5, before applying the declared byte order. Decoded chunks must exactly
+match the full chunk shape, including edge padding.
 
 The writer emits integer scale-offset as the first filter in a chunk pipeline.
 It excludes fill values from the minimum and maximum, computes automatic bits
@@ -91,7 +93,8 @@ from the resulting span, writes the 21-byte header and packs differences
 most-significant-bit first. Fill values become the all-ones marker. A configured
 full-width filter stores raw element bytes. Automatic full-range chunks are
 rejected because HDF5 1.14.6 cannot decode the header form it emits for that
-case, so callers must select the raw full-width path explicitly.
+case, so callers must select the raw full-width path explicitly. The writer does
+not emit floating-point scale-offset.
 
 Layout v4 compact/contiguous storage follows the v3 encoding. Single-chunk
 indexes store a direct address and, when filtered, a byte length and mask.

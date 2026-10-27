@@ -89,6 +89,42 @@ fn scaleoffset_parameter_value(
 }
 
 ///|
+fn scaleoffset_write_scalar(
+  output : FixedArray[Byte],
+  offset : Int32,
+  size : Int32,
+  order : Int32,
+  value : UInt64,
+) -> Unit {
+  for byte_index in 0..<size {
+    let shift = if order == 0 {
+      byte_index * 8
+    } else {
+      (size - 1 - byte_index) * 8
+    }
+    output[offset + byte_index] = ((value >> shift) & 0xFFUL).to_byte()
+  }
+}
+
+///|
+fn scaleoffset_float_factor32(digits : Int32) -> Float {
+  let mut factor = Float(1.0)
+  for _ in 0..<digits {
+    factor = factor * Float(10.0)
+  }
+  factor
+}
+
+///|
+fn scaleoffset_float_factor64(digits : Int32) -> Double {
+  let mut factor = 1.0
+  for _ in 0..<digits {
+    factor = factor * 10.0
+  }
+  factor
+}
+
+///|
 fn decode_scaleoffset(
   data : Bytes,
   filter : Filter,
@@ -103,29 +139,27 @@ fn decode_scaleoffset(
   guard filter.parameters.length() == 20 else {
     raise UnsupportedFeature("unsupported scale-offset parameters")
   }
+  let scale_type = filter.parameters[0].reinterpret_as_int()
   let datatype_class = filter.parameters[3].reinterpret_as_int()
   let datatype_size = filter.parameters[4].reinterpret_as_int()
   let sign = filter.parameters[5].reinterpret_as_int()
   let order = filter.parameters[6].reinterpret_as_int()
   let fill_available = filter.parameters[7].reinterpret_as_int()
-  let minimum_bits = filter.parameters[1].reinterpret_as_int()
+  let filter_value = filter.parameters[1].reinterpret_as_int()
   guard datatype_size == element_size &&
     (sign == 0 || sign == 1) &&
     (order == 0 || order == 1) &&
-    (fill_available == 0 || fill_available == 1) &&
-    minimum_bits >= 0 &&
-    minimum_bits <= element_size * 8 else {
+    (fill_available == 0 || fill_available == 1) else {
     raise InvalidField("invalid scale-offset filter parameters")
   }
-  guard filter.parameters[0].reinterpret_as_int() == 2 else {
-    raise UnsupportedFeature(
-      "scale-offset floating-point data is not supported",
-    )
-  }
-  guard datatype_class == 0 else {
+  let is_integer = datatype_class == 0 && scale_type == 2
+  let is_float = datatype_class == 1 &&
+    scale_type == 0 &&
+    (element_size == 4 || element_size == 8)
+  guard is_integer || is_float else {
     raise UnsupportedFeature("scale-offset datatype class is not supported")
   }
-  if minimum_bits == element_size * 8 {
+  if is_integer && filter_value == element_size * 8 {
     guard data.length() == expected_size else {
       raise InvalidField("unfiltered scale-offset chunk has the wrong size")
     }
@@ -140,7 +174,8 @@ fn decode_scaleoffset(
   guard minbits >= 0 &&
     minbits < element_size * 8 &&
     minval_size >= 0 &&
-    minval_size <= 8 else {
+    minval_size <= 8 &&
+    (!is_float || minval_size >= element_size) else {
     raise InvalidField("invalid scale-offset chunk header")
   }
   let mut minval = 0UL
@@ -159,6 +194,25 @@ fn decode_scaleoffset(
     scaleoffset_parameter_value(filter.parameters, element_size)
   } else {
     0UL
+  }
+  let maximum_digits = if element_size == 4 { 38 } else { 308 }
+  guard !is_float || (filter_value >= 0 && filter_value <= maximum_digits) else {
+    raise UnsupportedFeature("unsupported floating-point scale factor")
+  }
+  let minimum = if is_float {
+    read_float_at(data, 5, element_size, true)
+  } else {
+    0.0
+  }
+  let factor32 = if is_float && element_size == 4 {
+    scaleoffset_float_factor32(filter_value)
+  } else {
+    Float(1.0)
+  }
+  let factor64 = if is_float && element_size == 8 {
+    scaleoffset_float_factor64(filter_value)
+  } else {
+    1.0
   }
   let marker = if minbits == 0 { 0UL } else { (1UL << minbits) - 1UL }
   let mask = if element_size == 8 {
@@ -183,18 +237,45 @@ fn decode_scaleoffset(
       remaining = remaining - take
     }
     let decoded = if fill_available == 1 && packed == marker {
-      fill
+      Some(fill)
     } else {
-      packed + minval
+      None
     }
-    let value = decoded & mask
-    for byte_index in 0..<element_size {
-      let shift = if order == 0 {
-        byte_index * 8
-      } else {
-        (element_size - 1 - byte_index) * 8
-      }
-      output[element * element_size + byte_index] = ((value >> shift) & 0xFFUL).to_byte()
+    let offset = element * element_size
+    match decoded {
+      Some(value) =>
+        scaleoffset_write_scalar(output, offset, element_size, order, value)
+      None =>
+        if is_float {
+          if element_size == 4 {
+            let value = Float::from_double(packed.to_double()) / factor32 +
+              Float::from_double(minimum)
+            scaleoffset_write_scalar(
+              output,
+              offset,
+              element_size,
+              order,
+              value.reinterpret_as_uint().to_uint64(),
+            )
+          } else {
+            let value = packed.to_double() / factor64 + minimum
+            scaleoffset_write_scalar(
+              output,
+              offset,
+              element_size,
+              order,
+              value.reinterpret_as_uint64(),
+            )
+          }
+        } else {
+          scaleoffset_write_scalar(
+            output,
+            offset,
+            element_size,
+            order,
+            (packed + minval) & mask,
+          )
+        }
     }
   }
   output.unsafe_reinterpret_as_bytes()

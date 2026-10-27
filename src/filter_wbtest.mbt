@@ -173,6 +173,31 @@ test "integer scale-offset chunks decode widths signs and byte orders" {
 }
 
 ///|
+test "floating scale-offset chunks decode f32 f64 byte orders and pipelines" {
+  let file = Hdf5File::parse(@fs.read_file_to_bytes("testdata/scaleoffset.h5"))
+  let f32_values = [1.25, 2.5, -1.75, 9.5, -9.5, 0.0]
+  assert_eq(float_values(file.read_dataset("/float32_dscale")), f32_values)
+  let selected = file.read_dataset_selection(
+    "/float32_dscale",
+    Hyperslab([1UL], [3UL], [1UL]),
+  )
+  match selected.values {
+    Floats(values) => assert_eq(values, [2.5, -1.75, 9.5])
+    _ => abort("expected floating scale-offset selection")
+  }
+  assert_eq(float_values(file.read_dataset("/float64_dscale")), [
+    1.5, -2.5, 3.5, -9.5, 0.0,
+  ])
+  assert_eq(float_values(file.read_dataset("/float32_be")), f32_values)
+  assert_eq(float_values(file.read_dataset("/float32_pipeline")), [
+    10.25, 11.5, 12.75, -9.5, 0.0,
+  ])
+  assert_eq(float_values(file.read_dataset("/float32_all_fill")), [
+    -9.5, -9.5, -9.5, -9.5,
+  ])
+}
+
+///|
 test "malformed scale-offset headers are rejected" {
   let parameters : Array[UInt32] = [
     2U, 0U, 1U, 0U, 4U, 1U, 0U, 1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U,
@@ -188,7 +213,7 @@ test "malformed scale-offset headers are rejected" {
     assert_true(error is Some(InvalidField(_)))
   }
   let float_parameters : Array[UInt32] = [
-    0U, 0U, 1U, 1U, 4U, 0U, 0U, 1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U,
+    1U, 0U, 1U, 1U, 4U, 0U, 0U, 1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U,
   ]
   let float_error = try {
     decode_scaleoffset(

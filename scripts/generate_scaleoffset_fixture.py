@@ -172,6 +172,67 @@ def generate(destination: Path) -> None:
         )
         expected["uint64"] = values
 
+        values = np.array([1.25, 2.5, -1.75, 9.5, -9.5, 0.0], dtype="<f4")
+        handle.create_dataset(
+            "float32_dscale",
+            data=values,
+            chunks=(4,),
+            fillvalue=-9.5,
+            compression="scaleoffset",
+            scaleoffset=2,
+            track_times=False,
+        )
+        expected["float32_dscale"] = values
+
+        values = np.array([1.5, -2.5, 3.5, -9.5, 0.0], dtype="<f8")
+        handle.create_dataset(
+            "float64_dscale",
+            data=values,
+            chunks=(5,),
+            fillvalue=-9.5,
+            compression="scaleoffset",
+            scaleoffset=1,
+            track_times=False,
+        )
+        expected["float64_dscale"] = values
+
+        values = np.array([1.25, 2.5, -1.75, 9.5, -9.5, 0.0], dtype=">f4")
+        handle.create_dataset(
+            "float32_be",
+            data=values,
+            chunks=(4,),
+            fillvalue=-9.5,
+            compression="scaleoffset",
+            scaleoffset=2,
+            track_times=False,
+        )
+        expected["float32_be"] = values
+
+        values = np.array([10.25, 11.5, 12.75, -9.5, 0.0], dtype="<f4")
+        handle.create_dataset(
+            "float32_pipeline",
+            data=values,
+            chunks=(5,),
+            fillvalue=-9.5,
+            compression="gzip",
+            compression_opts=6,
+            scaleoffset=2,
+            track_times=False,
+        )
+        expected["float32_pipeline"] = values
+
+        values = np.full((4,), -9.5, dtype="<f4")
+        handle.create_dataset(
+            "float32_all_fill",
+            data=values,
+            chunks=(4,),
+            fillvalue=-9.5,
+            compression="scaleoffset",
+            scaleoffset=2,
+            track_times=False,
+        )
+        expected["float32_all_fill"] = values
+
     with h5py.File(destination, "r") as handle:
         for name, values in expected.items():
             np.testing.assert_array_equal(handle[name][:], values)
@@ -181,7 +242,8 @@ def generate(destination: Path) -> None:
                     handle[name].id.get_create_plist().get_nfilters()
                 )
             ]
-            assert filters == [6], (name, filters)
+            expected_filters = [6, 1] if name == "float32_pipeline" else [6]
+            assert filters == expected_filters, (name, filters)
     print(
         f"Generated {destination} with h5py {h5py.__version__} "
         f"and HDF5 {h5py.version.hdf5_version}"

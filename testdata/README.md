@@ -72,7 +72,7 @@ not part of the release gate.
 | fill_v3.h5 | v108/v108 bounds, v3 fill messages, v1 chunk B-trees |
 | contiguous_fill_v2.h5, contiguous_fill_v3.h5 | Unallocated numeric/string/default fills, scalar/empty/null datasets and allocated partial writes, with legacy and v108 bounds |
 | numeric_layouts.h5 | All standard integer widths and IEEE float16/32/64 in both byte orders; signed 3-byte/20-bit and unsigned 5-byte/40-bit fixed-point values with padding flags, nonstandard precision/offset, binary16 normals/subnormals/zero/special values, custom attributes, custom fills, and normalized binary floats with custom field positions and exponent bias |
-| scaleoffset.h5 | HDF5 1.14.6 integer scale-offset chunks with automatic and fixed bit widths; signed/unsigned values across 1-, 2-, 4- and 8-byte storage, including big-endian fixed-point; unallocated and allocated fill markers, all-fill chunks, configured full precision and a hyperslab |
+| scaleoffset.h5 | HDF5 1.14.6 integer and decimal floating-point scale-offset chunks; automatic/fixed integer bits across 1-, 2-, 4- and 8-byte storage; signed/unsigned and big-endian values; f32/f64, both byte orders, fill markers, all-fill chunks, a deflate pipeline, configured full precision and a hyperslab |
 | attribute_storage.h5 | Compact and dense attributes, with/without creation-order tracking |
 | layout_v4.h5 | v110 bounds; raw/filtered/unallocated/single-chunk masks, implicit edge and bounded-resizable grids, compact/contiguous data; basic fixed array |
 | fixed_array.h5 | Raw/filtered edge chunks, bounded maximum strides, skipped filters, fills, paged arrays with uninitialized pages and a partial final page |
@@ -158,7 +158,10 @@ environment. `/int32_auto` combines one allocated and one unallocated chunk;
 `/int32_full` uses the configured full-precision raw path. `/int16_be` and
 `/uint16_be` cover signed and unsigned big-endian storage; `/int8`, `/uint8`,
 `/uint32`, `/int64` and `/uint64` cover both signednesses and all remaining
-widths. The verifier checks every value, fill and filter parameter with h5py.
+widths. `/float32_dscale`, `/float64_dscale` and `/float32_be` cover decimal
+floating-point scale-offset in both widths and byte orders;
+`/float32_pipeline` adds deflate and `/float32_all_fill` covers the fill marker.
+The verifier checks every value, fill and filter parameter with h5py.
 
 `netcdf4_1_7_5.h5` is a producer-interoperability fixture, not a complete
 netCDF data-model implementation test. `/temperature` is a `(4, 3, 5)` float

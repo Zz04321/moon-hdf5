@@ -43,8 +43,9 @@ an executable example.
   selected values, including compact, contiguous or chunked target storage.
 - Supports compact, contiguous and chunked layouts with the common HDF5 chunk
   indexes.
-- Reads and writes deflate, shuffle, Fletcher32 and integer scale-offset
-  filters, including per-chunk masks and scale-offset fill markers.
+- Reads and writes deflate, shuffle, Fletcher32 and integer scale-offset, and
+  reads f32/f64 decimal floating-point scale-offset, including per-chunk masks
+  and fill markers.
 - Provides metadata-only access, hyperslab selection and ordered point
   selection.
 - Resolves chained soft and external links across registered sources, with
@@ -313,10 +314,11 @@ preserve order and duplicates.
   metadata is stored inline; shared-message support is reader-only.
 - Numeric storage wider than 8 bytes and binary floating-point normalizations
   other than implied MSB are not supported.
-- Scale-offset support is limited to fixed-point integers; floating-point
-  scale-offset is rejected. The writer requires scale-offset to be the first
-  filter and rejects automatic bit reduction when a chunk needs full precision;
-  use `ScaleOffset(element_width * 8)` to store that chunk unfiltered.
+- Floating-point scale-offset reading supports f32/f64 decimal scaling and both
+  byte orders; other floating scale modes are rejected. Writer scale-offset is
+  limited to fixed-point integers, must be the first filter and rejects
+  automatic bit reduction when a chunk needs full precision; use
+  `ScaleOffset(element_width * 8)` to store that chunk unfiltered.
 - Custom variable-length fill values, other writer filters and reference writing
   are not supported.
 - Reference resolution covers legacy object and dataset-region references under

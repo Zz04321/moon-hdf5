@@ -42,6 +42,19 @@ def verify(path: Path) -> None:
             [1 << 40, (1 << 40) + 5, (1 << 40) + 9, (1 << 40) + 12],
             dtype="<u8",
         ),
+        "float32_dscale": np.array(
+            [1.25, 2.5, -1.75, 9.5, -9.5, 0.0], dtype="<f4"
+        ),
+        "float64_dscale": np.array(
+            [1.5, -2.5, 3.5, -9.5, 0.0], dtype="<f8"
+        ),
+        "float32_be": np.array(
+            [1.25, 2.5, -1.75, 9.5, -9.5, 0.0], dtype=">f4"
+        ),
+        "float32_pipeline": np.array(
+            [10.25, 11.5, 12.75, -9.5, 0.0], dtype="<f4"
+        ),
+        "float32_all_fill": np.full((4,), -9.5, dtype="<f4"),
     }
     fills = {
         "int32_auto": -7,
@@ -56,6 +69,18 @@ def verify(path: Path) -> None:
         "uint32": 0,
         "int64": -1,
         "uint64": 7,
+        "float32_dscale": -9.5,
+        "float64_dscale": -9.5,
+        "float32_be": -9.5,
+        "float32_pipeline": -9.5,
+        "float32_all_fill": -9.5,
+    }
+    scales = {
+        "float32_dscale": 2,
+        "float64_dscale": 1,
+        "float32_be": 2,
+        "float32_pipeline": 2,
+        "float32_all_fill": 2,
     }
     with h5py.File(path, "r") as handle:
         for name, values in expected.items():
@@ -63,13 +88,15 @@ def verify(path: Path) -> None:
             np.testing.assert_array_equal(dataset[:], values)
             assert dataset.fillvalue == fills[name]
             properties = dataset.id.get_create_plist()
-            assert properties.get_nfilters() == 1
+            expected_filters = 2 if name == "float32_pipeline" else 1
+            assert properties.get_nfilters() == expected_filters
             filter_id, flags, parameters, name_bytes = properties.get_filter(0)
             assert filter_id == 6 and flags == 1
             assert name_bytes == b"scaleoffset"
             assert len(parameters) == 20
-            assert parameters[0] == 2
-            assert parameters[3] == 0
+            is_float = dataset.dtype.kind == "f"
+            assert parameters[0] == (0 if is_float else 2)
+            assert parameters[3] == (1 if is_float else 0)
             assert parameters[4] == dataset.dtype.itemsize
             assert parameters[5] == (1 if dataset.dtype.kind == "i" else 0)
             assert parameters[6] == (
@@ -78,6 +105,8 @@ def verify(path: Path) -> None:
                 else 1
             )
             assert parameters[7] == 1
+            if is_float:
+                assert parameters[1] == scales[name]
     print(
         f"Verified {path.name} with h5py {h5py.__version__} "
         f"and HDF5 {h5py.version.hdf5_version}"
