@@ -37,6 +37,7 @@ python3 -m venv /tmp/moon-hdf5-h5py
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_metadata_fixtures.py
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_external_storage_fixture.py
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_shared_messages_fixture.py
+/tmp/moon-hdf5-h5py/bin/python scripts/generate_reference_fixtures.py
 /tmp/moon-hdf5-h5py/bin/python \
   scripts/verify_numeric_layouts_fixture.py testdata/numeric_layouts.h5
 ```
@@ -85,6 +86,7 @@ not part of the release gate.
 | datatypes_v200.h5 | Nested compound and array types, vlen sequences and UTF-8 strings, bitfield, opaque, time, object/region references, HDF5 2.0 complex types, structured attributes and fills |
 | netcdf4_1_7_5.h5 | Real netCDF4 1.7.5/libnetcdf 4.10.1/HDF5 2.2.0 output: groups, dimension variables, shuffled/deflated chunks with a v1 B-tree index, UTF-8 strings, numeric values and NetCDF dimension-reference attributes |
 | shared_messages.h5 | HDF5 1.14.6 SOHM tables and heap IDs: internally shared datatype/dataspace fields, whole shared attributes, shared fills, dense attribute B-tree records, and a committed datatype used by a dataset and attribute |
+| references.h5, references_v108.h5 | HDF5 1.14.6 `latest` and v108 object references to a dataset, group, child dataset, root group and committed datatype, plus an attribute reference, null reference, deleted target and region reference |
 | external_storage.h5, external_storage_32.h5 | HDF5 1.14.6 external raw data split across two files and read at a nonzero offset under 8-byte addresses and lengths, plus a 4-byte-address/8-byte-length legacy file; supporting binary slot files are committed beside them |
 
 Group datasets `value_NN` contain `[NN, NN + 100]`. Compact groups must read
@@ -119,8 +121,15 @@ attributes on `/colors`. `EIGHTCHR` exercises the eight-byte name boundary;
 
 `datatypes_v200.h5` uses HDF5 2.0 bounds so compound, array and complex types
 exercise datatype-message v5. Structured values are also covered through point
-selections. Reference values are checked as encoded bytes by MoonBit and
-dereferenced by the generator's h5py validation.
+selections. Reference values are checked as encoded bytes and object references
+are resolved by MoonBit; the generator also dereferences them with h5py.
+
+`references.h5` and `references_v108.h5` use HDF5 1.14.6 `latest` and v108
+bounds. They cover dataset, group, root, committed-datatype and attribute
+references, a null reference, a deleted-target reference and a region reference.
+MoonBit tests resolve the valid object references in memory and through
+`Hdf5Source`, reject the dangling address, and leave the 12-byte region
+reference encoded.
 
 `datatypes_v114.h5` and `datatypes_v114_default.h5` exercise HDF5 1.14.6
 datatype messages under both `latest` (version 4) and default (earlier

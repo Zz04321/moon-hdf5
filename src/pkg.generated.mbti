@@ -201,6 +201,7 @@ pub fn Hdf5File::read_dataset(Self, String) -> Dataset raise Hdf5Error
 pub fn Hdf5File::read_dataset_metadata(Self, String) -> DatasetMetadata raise Hdf5Error
 pub fn Hdf5File::read_dataset_selection(Self, String, DatasetSelection) -> DatasetSelectionResult raise Hdf5Error
 pub fn Hdf5File::resolve(Self, String) -> Hdf5Node raise Hdf5Error
+pub fn Hdf5File::resolve_object_reference(Self, Bytes) -> Hdf5ReferenceTarget? raise Hdf5Error
 pub fn Hdf5File::superblock_version(Self) -> Int32
 pub fn Hdf5File::walk(Self) -> Array[Hdf5Node] raise Hdf5Error
 
@@ -216,11 +217,21 @@ pub fn Hdf5Node::to_repr(Self) -> @debug.Repr
 pub(all) enum Hdf5ObjectKind {
   Group
   Dataset
+  Datatype
   Unknown
 } derive(Eq, @debug.Debug)
 pub fn Hdf5ObjectKind::equal(Self, Self) -> Bool
 pub fn Hdf5ObjectKind::not_equal(Self, Self) -> Bool
 pub fn Hdf5ObjectKind::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Hdf5ReferenceTarget {
+  address : UInt64
+  kind : Hdf5ObjectKind
+  path : String?
+} derive(Eq, @debug.Debug)
+pub fn Hdf5ReferenceTarget::equal(Self, Self) -> Bool
+pub fn Hdf5ReferenceTarget::not_equal(Self, Self) -> Bool
+pub fn Hdf5ReferenceTarget::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Hdf5ResolvedNode {
   file : String

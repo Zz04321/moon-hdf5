@@ -86,4 +86,13 @@ else
   "$python" scripts/verify_shared_messages_fixture.py testdata/shared_messages.h5
 fi
 
+if [ "${SKIP_H5PY:-0}" = "1" ]; then
+  echo "==> Object-reference fixture verification skipped (SKIP_H5PY=1)"
+elif [ ! -f testdata/references.h5 ] || [ ! -f testdata/references_v108.h5 ]; then
+  echo "==> Object-reference fixture verification skipped (fixture unavailable)"
+else
+  "$python" scripts/verify_reference_fixture.py testdata/references.h5
+  "$python" scripts/verify_reference_fixture.py testdata/references_v108.h5
+fi
+
 echo "Release checks passed."

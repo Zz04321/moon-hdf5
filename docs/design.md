@@ -133,9 +133,13 @@ The remaining standard datatype classes use recursive `Datatype` metadata and
 dimensions and vlen sequence bases retain their nested datatypes. Bitfields
 apply their declared offset and precision, opaque values preserve bytes and
 tags, and complex values decode their floating-point real and imaginary parts.
-References remain encoded bytes because resolving object and region references
-requires a separate navigation API. HDF5 2.0 datatype-message v5 encodings for
-compound, array and complex types are accepted alongside earlier encodings.
+Reference values remain encoded bytes in the value tree so the decoder stays
+layout-agnostic. `Hdf5File::resolve_object_reference` interprets the eight-byte
+object-reference form as a file address, validates its object header and finds a
+deterministic hard-link path with a bounded hierarchy walk. Null references
+return `None`; dangling addresses and region references are rejected explicitly.
+HDF5 2.0 datatype-message v5 encodings for compound, array and complex types are
+accepted alongside earlier encodings.
 Fixed strings honor null-terminated, null-padded and space-padded forms plus
 ASCII/UTF-8 character sets. Callers that construct the public `Datatype` record
 directly must initialize its recursive metadata fields.

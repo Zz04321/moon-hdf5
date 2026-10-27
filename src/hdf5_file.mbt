@@ -3,6 +3,7 @@
 pub(all) enum Hdf5ObjectKind {
   Group
   Dataset
+  Datatype
   Unknown
 } derive(Eq, @debug.Debug)
 
@@ -109,6 +110,8 @@ fn object_kind(header : ObjectHeader) -> Hdf5ObjectKind {
     header.first(msg_link_info) is Some(_) ||
     header.first(msg_link) is Some(_) {
     Group
+  } else if header.first(msg_datatype) is Some(_) {
+    Datatype
   } else {
     Unknown
   }

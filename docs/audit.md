@@ -313,7 +313,8 @@ not a claim of complete HDF5 support. The profile lists the supported
 superblocks, storage layouts, chunk indexes, filters, datatypes, selections and
 writer outputs, and separates virtual datasets, external data storage, SWMR,
 parallel HDF5, third-party filters, in-place editing, external-link
-dereferencing in `Hdf5File` and reference resolution as out of scope.
+dereferencing in `Hdf5File` and reference resolution as out of scope at that
+time; object-reference resolution was added in the follow-up review below.
 
 The proposal wording was aligned with the repository: it targets the HDF5
 1.14.6 common-file profile and the HDF5 File Format Specification v3.0, records
@@ -440,3 +441,19 @@ reads, metadata, hyperslab and point selections, chunk iteration across the
 two-file boundary, missing and truncated sources and direct `Hdf5File`
 rejection. The release gate independently rechecks both fixtures and their slot
 declarations with h5py.
+
+## Object-reference review — 2026-10-27
+
+An h5py 3.13.0/HDF5 1.14.6 probe confirmed that the supported object-reference
+payload is an eight-byte object-header address. The implementation now exposes
+`Hdf5File::resolve_object_reference`, validates the target header, classifies
+groups, datasets and committed datatypes, and finds a deterministic hard-link
+path with cycle and depth limits. Empty references return `None`; malformed
+lengths, dangling addresses and 12-byte region references are rejected.
+
+`references.h5` and `references_v108.h5` cover dataset, group, child dataset,
+root group, committed datatype, attribute, null, deleted-target and region
+references under latest and v108 bounds. The tests run against both in-memory
+bytes and a random-access source. An independent h5py verifier checks the same
+valid targets and confirms that the deleted target cannot be reopened. Region
+selection decoding and version-4 encoded references remain out of scope.

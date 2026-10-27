@@ -115,6 +115,9 @@ test "bitfield opaque time reference and complex datatypes decode" {
   match (object_refs[0], object_refs[1]) {
     (Reference(first), Reference(second)) => {
       assert_eq(first.length(), 8)
+      let target = file.resolve_object_reference(first).unwrap()
+      assert_eq(target.kind, Dataset)
+      assert_eq(target.path, Some("/target"))
       assert_eq(second, b"\x00\x00\x00\x00\x00\x00\x00\x00")
     }
     _ => abort("expected object references")

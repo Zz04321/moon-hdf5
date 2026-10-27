@@ -35,6 +35,7 @@ fn kind_name(kind : @lib.Hdf5ObjectKind) -> String {
   match kind {
     Group => "group"
     Dataset => "dataset"
+    Datatype => "datatype"
     Unknown => "object"
   }
 }
