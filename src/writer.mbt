@@ -24,6 +24,7 @@ fn writer_datatype(
   class : Int32,
   size : Int32,
   signed~ : Bool = false,
+  little_endian~ : Bool = true,
   enum_members~ : Array[EnumMember] = [],
   compound_members~ : Array[CompoundMember] = [],
   base_types~ : Array[Datatype] = [],
@@ -34,7 +35,7 @@ fn writer_datatype(
     version: 3,
     size,
     signed,
-    little_endian: true,
+    little_endian,
     vlen_is_string: false,
     enum_members,
     compound_members,
@@ -74,19 +75,39 @@ pub fn Datatype::write_integer(
   signed : Bool,
   size : Int32,
 ) -> Datatype raise Hdf5Error {
+  Datatype::write_integer_with_order(signed, size, true)
+}
+
+///|
+/// Creates an integer datatype with an explicit byte order for structured writes.
+pub fn Datatype::write_integer_with_order(
+  signed : Bool,
+  size : Int32,
+  little_endian : Bool,
+) -> Datatype raise Hdf5Error {
   guard size >= 1 && size <= 8 else {
     raise InvalidArgument("writer integer datatype width is invalid")
   }
-  writer_datatype(0, size, signed~)
+  writer_datatype(0, size, signed~, little_endian~)
 }
 
 ///|
 /// Creates a standard little-endian IEEE floating-point datatype.
 pub fn Datatype::write_float(size : Int32) -> Datatype raise Hdf5Error {
+  Datatype::write_float_with_order(size, true)
+}
+
+///|
+/// Creates an IEEE floating-point datatype with an explicit byte order for
+/// structured writes.
+pub fn Datatype::write_float_with_order(
+  size : Int32,
+  little_endian : Bool,
+) -> Datatype raise Hdf5Error {
   guard size == 4 || size == 8 else {
     raise InvalidArgument("writer floating-point datatype width is invalid")
   }
-  writer_datatype(1, size)
+  writer_datatype(1, size, little_endian~)
 }
 
 ///|
@@ -525,12 +546,12 @@ fn validate_writer_datatype(
   }
   match datatype.class {
     0 => {
-      guard datatype.size >= 1 && datatype.size <= 8 && datatype.little_endian else {
+      guard datatype.size >= 1 && datatype.size <= 8 else {
         raise InvalidArgument("writer integer datatype is unsupported")
       }
     }
     1 => {
-      guard (datatype.size == 4 || datatype.size == 8) && datatype.little_endian else {
+      guard datatype.size == 4 || datatype.size == 8 else {
         raise InvalidArgument("writer floating-point datatype is unsupported")
       }
     }
@@ -1799,17 +1820,24 @@ fn write_uint_width(
   buffer : @buffer.Buffer,
   value : UInt64,
   size : Int32,
+  little_endian~ : Bool = true,
 ) -> Unit {
-  for shift in 0..<size {
-    buffer.write_byte(((value >> (shift * 8)) & 0xFFUL).to_byte())
+  for index in 0..<size {
+    let shift = if little_endian { index * 8 } else { (size - 1 - index) * 8 }
+    buffer.write_byte(((value >> shift) & 0xFFUL).to_byte())
   }
 }
 
 ///|
-fn encode_integer_datatype(signed : Bool, size : Int32) -> Bytes {
+fn encode_integer_datatype(
+  signed : Bool,
+  size : Int32,
+  little_endian~ : Bool = true,
+) -> Bytes {
   let buffer = @buffer.Buffer::Buffer(size_hint=12)
+  let flags = (if signed { 8 } else { 0 }) | (if little_endian { 0 } else { 1 })
   buffer.write_byte(b'\x10')
-  buffer.write_byte(if signed { b'\x08' } else { b'\x00' })
+  buffer.write_byte(flags.to_byte())
   buffer.write_byte(b'\x00')
   buffer.write_byte(b'\x00')
   buffer.write_uint_le(size.reinterpret_as_uint())
@@ -1819,11 +1847,11 @@ fn encode_integer_datatype(signed : Bool, size : Int32) -> Bytes {
 }
 
 ///|
-fn encode_float_datatype(size : Int32) -> Bytes {
+fn encode_float_datatype(size : Int32, little_endian~ : Bool = true) -> Bytes {
   let single = size == 4
   let buffer = @buffer.Buffer::Buffer(size_hint=20)
   buffer.write_byte(b'\x11')
-  buffer.write_byte(b'\x20')
+  buffer.write_byte(if little_endian { b'\x20' } else { b'\x21' })
   buffer.write_byte(if single { b'\x1f' } else { b'\x3f' })
   buffer.write_byte(b'\x00')
   buffer.write_uint_le(size.reinterpret_as_uint())
@@ -1841,8 +1869,14 @@ fn encode_float_datatype(size : Int32) -> Bytes {
 fn encode_writer_datatype(datatype : Datatype) -> Bytes raise Hdf5Error {
   validate_writer_datatype(datatype, 0)
   match datatype.class {
-    0 => encode_integer_datatype(datatype.signed, datatype.size)
-    1 => encode_float_datatype(datatype.size)
+    0 =>
+      encode_integer_datatype(
+        datatype.signed,
+        datatype.size,
+        little_endian=datatype.little_endian,
+      )
+    1 =>
+      encode_float_datatype(datatype.size, little_endian=datatype.little_endian)
     3 => encode_string_datatype(datatype.size)
     6 => {
       let buffer = @buffer.Buffer::Buffer()
@@ -1877,7 +1911,12 @@ fn encode_writer_datatype(datatype : Datatype) -> Bytes raise Hdf5Error {
           EnumValue::Signed(value) => value.reinterpret_as_uint64()
           EnumValue::Unsigned(value) => value
         }
-        write_uint_width(buffer, raw, datatype.size)
+        write_uint_width(
+          buffer,
+          raw,
+          datatype.size,
+          little_endian=datatype.base_types[0].little_endian,
+        )
       }
       buffer.to_bytes()
     }
@@ -1913,15 +1952,26 @@ fn encode_structured_value(
         UnsignedInteger(number) => number
         _ => 0UL
       }
-      write_uint_width(buffer, raw, datatype.size)
+      write_uint_width(
+        buffer,
+        raw,
+        datatype.size,
+        little_endian=datatype.little_endian,
+      )
     }
     1 =>
       match value {
         FloatingPoint(number) =>
           if datatype.size == 4 {
-            buffer.write_float_le(Float::from_double(number))
-          } else {
+            if datatype.little_endian {
+              buffer.write_float_le(Float::from_double(number))
+            } else {
+              buffer.write_float_be(Float::from_double(number))
+            }
+          } else if datatype.little_endian {
             buffer.write_double_le(number)
+          } else {
+            buffer.write_double_be(number)
           }
         _ => ()
       }
@@ -1960,7 +2010,12 @@ fn encode_structured_value(
             EnumValue::Signed(number) => number.reinterpret_as_uint64()
             EnumValue::Unsigned(number) => number
           }
-          write_uint_width(buffer, raw, datatype.size)
+          write_uint_width(
+            buffer,
+            raw,
+            datatype.size,
+            little_endian=datatype.base_types[0].little_endian,
+          )
         }
         _ => ()
       }

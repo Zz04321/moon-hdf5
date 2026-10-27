@@ -112,16 +112,57 @@ def verify(path: Path) -> None:
             "u16": ("<u2", [0, 1, 65535]),
             "u32": ("<u4", [0, 1, 0xFFFFFFFF]),
             "f32": ("<f4", [-1.5, 0.0, 2.25]),
+            "big_i16": (">i2", [-32768, -1, 12345]),
+            "big_u64": (">u8", [0, 1 << 40, 0xFFFFFFFFFFFFFFFF]),
+            "big_f32": (">f4", [-1.5, 0.0, 2.25]),
+            "big_f64": (">f8", [-1.25, 0.0, 3.5]),
         }
         for name, (dtype, values) in cases.items():
             dataset = handle[f"types/{name}"]
             assert dataset.dtype == np.dtype(dtype)
             np.testing.assert_array_equal(dataset[:], values)
         assert handle["types"].attrs["i8_marker"] == np.int8(-5)
-        assert len(handle["types"].attrs) == 2
+        assert len(handle["types"].attrs) == 3
         assert handle["types"].attrs["i8_marker"].dtype == np.dtype("<i1")
         assert handle["types"].attrs["f32_marker"] == np.float32(1.5)
         assert handle["types"].attrs["f32_marker"].dtype == np.dtype("<f4")
+        assert handle["types"].attrs["big_i32_marker"] == np.int32(-5)
+        assert handle["types"].attrs.get_id("big_i32_marker").dtype == np.dtype(">i4")
+        big_state = handle["types/big_state"]
+        assert big_state.dtype == np.dtype(">i2")
+        assert big_state.dtype.metadata["enum"] == {"LOW": -1, "HIGH": 300}
+        np.testing.assert_array_equal(big_state[:], [300, -1])
+        big_record = handle["types/big_record"]
+        assert big_record.dtype.names == ("id", "weight", "count", "state", "samples")
+        assert big_record.dtype.itemsize == 24
+        assert [big_record.dtype.fields[name][1] for name in big_record.dtype.names] == [
+            0,
+            4,
+            12,
+            14,
+            16,
+        ]
+        assert big_record.dtype.fields["id"][0] == np.dtype("<i4")
+        assert big_record.dtype.fields["weight"][0] == np.dtype(">f8")
+        assert big_record.dtype.fields["count"][0] == np.dtype(">u2")
+        state_dtype = big_record.dtype.fields["state"][0]
+        assert state_dtype == np.dtype(">i2")
+        assert state_dtype.metadata["enum"] == {"LOW": -1, "HIGH": 300}
+        assert big_record.dtype.fields["samples"][0].subdtype == (
+            np.dtype(">u4"),
+            (2,),
+        )
+        assert big_record[0]["id"] == 7
+        assert big_record[0]["weight"] == -2.5
+        assert big_record[0]["count"] == 513
+        assert big_record[0]["state"] == 300
+        np.testing.assert_array_equal(
+            big_record[0]["samples"], [1, 0x10203040]
+        )
+        big_fill = handle["types/big_fill"]
+        assert big_fill.dtype == np.dtype(">i2")
+        assert big_fill.fillvalue == -999
+        np.testing.assert_array_equal(big_fill[:], [7, -999, -999, -999])
         chunked_i16 = handle["types/chunked_i16"]
         np.testing.assert_array_equal(chunked_i16[:], [-7, 2, -7, 4, -7])
         assert chunked_i16.dtype == np.dtype("<i2")

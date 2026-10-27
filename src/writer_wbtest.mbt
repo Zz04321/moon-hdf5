@@ -1501,6 +1501,169 @@ test "writer round-trips nonstandard integer widths" {
 }
 
 ///|
+test "writer round-trips big-endian numeric enum and mixed compound values" {
+  let writer = Hdf5Writer::new()
+  let big_i16 = Datatype::write_integer_with_order(true, 2, false)
+  let big_u64 = Datatype::write_integer_with_order(false, 8, false)
+  let big_f32 = Datatype::write_float_with_order(4, false)
+  let big_f64 = Datatype::write_float_with_order(8, false)
+  writer.add_dataset(
+    "/big_i16",
+    [3UL],
+    StructuredValues(big_i16, [
+      SignedInteger(-32768L),
+      SignedInteger(-1L),
+      SignedInteger(12345L),
+    ]),
+  )
+  writer.add_dataset(
+    "/big_u64",
+    [3UL],
+    StructuredValues(big_u64, [
+      UnsignedInteger(0UL),
+      UnsignedInteger(1UL << 40),
+      UnsignedInteger(0xFFFFFFFFFFFFFFFFUL),
+    ]),
+  )
+  writer.add_dataset(
+    "/big_f32",
+    [3UL],
+    StructuredValues(big_f32, [
+      FloatingPoint(-1.5),
+      FloatingPoint(0.0),
+      FloatingPoint(2.25),
+    ]),
+  )
+  writer.add_dataset(
+    "/big_f64",
+    [3UL],
+    StructuredValues(big_f64, [
+      FloatingPoint(-1.25),
+      FloatingPoint(0.0),
+      FloatingPoint(3.5),
+    ]),
+  )
+
+  let state = Datatype::write_enum(
+    Datatype::write_integer_with_order(true, 2, false),
+    [
+      { name: "LOW", value: EnumValue::Signed(-1L), },
+      { name: "HIGH", value: EnumValue::Signed(300L), },
+    ],
+  )
+  writer.add_dataset(
+    "/big_state",
+    [2UL],
+    StructuredValues(state, [Enumeration("HIGH"), Enumeration("LOW")]),
+  )
+
+  let samples = Datatype::write_array(
+    Datatype::write_integer_with_order(false, 4, false),
+    [2UL],
+  )
+  let record_type = Datatype::write_compound([
+    ("id", Datatype::write_integer(true, 4)),
+    ("weight", big_f64),
+    ("count", Datatype::write_integer_with_order(false, 2, false)),
+    ("state", state),
+    ("samples", samples),
+  ])
+  let record = Compound([
+    { name: "id", value: SignedInteger(7L), },
+    { name: "weight", value: FloatingPoint(-2.5), },
+    { name: "count", value: UnsignedInteger(513UL), },
+    { name: "state", value: Enumeration("HIGH"), },
+    {
+      name: "samples",
+      value: Elements([UnsignedInteger(1UL), UnsignedInteger(0x10203040UL)]),
+    },
+  ])
+  writer.add_dataset(
+    "/big_record",
+    [1UL],
+    StructuredValues(record_type, [record]),
+  )
+  writer.add_attribute(
+    "/big_record",
+    "marker",
+    [],
+    StructuredValues(Datatype::write_integer_with_order(true, 4, false), [
+      SignedInteger(-5L),
+    ]),
+  )
+  writer.add_attribute(
+    "/big_record",
+    "prototype",
+    [],
+    StructuredValues(record_type, [record]),
+  )
+
+  writer.add_extensible_dataset(
+    "/big_fill",
+    [1UL],
+    [None],
+    [2U],
+    StructuredValues(big_i16, [SignedInteger(7L)]),
+    fill_value=StructuredValues(big_i16, [SignedInteger(-999L)]),
+  )
+  writer.resize_dataset("/big_fill", [4UL])
+
+  let file = Hdf5File::parse(writer.encode())
+  let integers = file.read_dataset("/big_i16")
+  assert_eq(integers.datatype.little_endian, false)
+  assert_eq(integer_values(integers), [-32768L, -1L, 12345L])
+  let unsigned = file.read_dataset("/big_u64")
+  assert_eq(unsigned.datatype.little_endian, false)
+  assert_eq(unsigned_values(unsigned), [0UL, 1UL << 40, 0xFFFFFFFFFFFFFFFFUL])
+  let floats32 = file.read_dataset("/big_f32")
+  assert_eq(floats32.datatype.little_endian, false)
+  assert_eq(float_values(floats32), [-1.5, 0.0, 2.25])
+  let floats64 = file.read_dataset("/big_f64")
+  assert_eq(floats64.datatype.little_endian, false)
+  assert_eq(float_values(floats64), [-1.25, 0.0, 3.5])
+  let states = file.read_dataset("/big_state")
+  assert_eq(states.datatype.little_endian, false)
+  assert_eq(states.datatype.base_types[0].little_endian, false)
+  match states.values {
+    Enums(values) => assert_eq(values, ["HIGH", "LOW"])
+    _ => abort("expected big-endian enum values")
+  }
+  assert_eq(states.datatype.enum_members[0].value, EnumValue::Signed(-1L))
+  assert_eq(states.datatype.enum_members[1].value, EnumValue::Signed(300L))
+
+  let records = file.read_dataset("/big_record")
+  let fields = records.datatype.compound_members
+  assert_eq(fields[0].datatype.little_endian, true)
+  assert_eq(fields[1].datatype.little_endian, false)
+  assert_eq(fields[2].datatype.little_endian, false)
+  assert_eq(fields[3].datatype.little_endian, false)
+  assert_eq(fields[4].datatype.base_types[0].little_endian, false)
+  assert_eq(structured_values(records), [record])
+  let attributes = file.attributes("/big_record")
+  match attributes.search_by(attribute => attribute.name == "marker") {
+    Some(index) => {
+      assert_eq(attributes[index].datatype.little_endian, false)
+      match attributes[index].values {
+        Some(Integers(values)) => assert_eq(values, [-5L])
+        _ => abort("expected big-endian integer attribute")
+      }
+    }
+    None => abort("expected big-endian integer attribute")
+  }
+  match attributes.search_by(attribute => attribute.name == "prototype") {
+    Some(index) =>
+      match attributes[index].values {
+        Some(Structured(values)) => assert_eq(values, [record])
+        _ => abort("expected big-endian compound attribute")
+      }
+    None => abort("expected big-endian compound attribute")
+  }
+  assert_eq(integer_values(file.read_dataset("/big_fill")), [
+    7L, -999L, -999L, -999L,
+  ])
+}
+
+///|
 test "writer appends and fills extensible enums" {
   let writer = Hdf5Writer::new()
   let state = Datatype::write_enum(Datatype::write_integer(false, 1), [

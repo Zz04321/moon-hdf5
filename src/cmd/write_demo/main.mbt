@@ -126,6 +126,15 @@ fn run(args : Array[String]) -> Int32 {
       [],
       Float32Values([Float(1.5)]),
     )
+    writer.add_attribute(
+      "/types",
+      "big_i32_marker",
+      [],
+      StructuredValues(
+        @lib.Datatype::write_integer_with_order(true, 4, false),
+        [@lib.SignedInteger(-5L)],
+      ),
+    )
     writer.add_dataset("/types/i8", [3UL], Int8Values([-128, 0, 127]))
     writer.add_dataset("/types/i16", [3UL], Int16Values([-32768, 0, 32767]))
     writer.add_dataset(
@@ -141,6 +150,100 @@ fn run(args : Array[String]) -> Int32 {
       [3UL],
       Float32Values([Float(-1.5), Float(0.0), Float(2.25)]),
     )
+    let big_i16 = @lib.Datatype::write_integer_with_order(true, 2, false)
+    writer.add_dataset(
+      "/types/big_i16",
+      [3UL],
+      StructuredValues(big_i16, [
+        @lib.SignedInteger(-32768L),
+        @lib.SignedInteger(-1L),
+        @lib.SignedInteger(12345L),
+      ]),
+    )
+    writer.add_dataset(
+      "/types/big_u64",
+      [3UL],
+      StructuredValues(
+        @lib.Datatype::write_integer_with_order(false, 8, false),
+        [
+          @lib.UnsignedInteger(0UL),
+          @lib.UnsignedInteger(1UL << 40),
+          @lib.UnsignedInteger(0xFFFFFFFFFFFFFFFFUL),
+        ],
+      ),
+    )
+    writer.add_dataset(
+      "/types/big_f32",
+      [3UL],
+      StructuredValues(@lib.Datatype::write_float_with_order(4, false), [
+        @lib.FloatingPoint(-1.5),
+        @lib.FloatingPoint(0.0),
+        @lib.FloatingPoint(2.25),
+      ]),
+    )
+    writer.add_dataset(
+      "/types/big_f64",
+      [3UL],
+      StructuredValues(@lib.Datatype::write_float_with_order(8, false), [
+        @lib.FloatingPoint(-1.25),
+        @lib.FloatingPoint(0.0),
+        @lib.FloatingPoint(3.5),
+      ]),
+    )
+    let big_state = @lib.Datatype::write_enum(
+      @lib.Datatype::write_integer_with_order(true, 2, false),
+      [
+        { name: "LOW", value: @lib.EnumValue::Signed(-1L), },
+        { name: "HIGH", value: @lib.EnumValue::Signed(300L), },
+      ],
+    )
+    writer.add_dataset(
+      "/types/big_state",
+      [2UL],
+      StructuredValues(big_state, [
+        @lib.Enumeration("HIGH"),
+        @lib.Enumeration("LOW"),
+      ]),
+    )
+    let big_samples = @lib.Datatype::write_array(
+      @lib.Datatype::write_integer_with_order(false, 4, false),
+      [2UL],
+    )
+    let big_record_type = @lib.Datatype::write_compound([
+      ("id", @lib.Datatype::write_integer(true, 4)),
+      ("weight", @lib.Datatype::write_float_with_order(8, false)),
+      ("count", @lib.Datatype::write_integer_with_order(false, 2, false)),
+      ("state", big_state),
+      ("samples", big_samples),
+    ])
+    writer.add_dataset(
+      "/types/big_record",
+      [1UL],
+      StructuredValues(big_record_type, [
+        @lib.Compound([
+          { name: "id", value: @lib.SignedInteger(7L), },
+          { name: "weight", value: @lib.FloatingPoint(-2.5), },
+          { name: "count", value: @lib.UnsignedInteger(513UL), },
+          { name: "state", value: @lib.Enumeration("HIGH"), },
+          {
+            name: "samples",
+            value: @lib.Elements([
+              @lib.UnsignedInteger(1UL),
+              @lib.UnsignedInteger(0x10203040UL),
+            ]),
+          },
+        ]),
+      ]),
+    )
+    writer.add_extensible_dataset(
+      "/types/big_fill",
+      [1UL],
+      [None],
+      [2U],
+      StructuredValues(big_i16, [@lib.SignedInteger(7L)]),
+      fill_value=StructuredValues(big_i16, [@lib.SignedInteger(-999L)]),
+    )
+    writer.resize_dataset("/types/big_fill", [4UL])
     writer.add_chunked_dataset(
       "/types/chunked_i16",
       [5UL],

@@ -102,9 +102,9 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | Attributes | Inline numeric, fixed/vlen string and structured attributes, plus dense attributes with a name index | Dense attributes use the dense-metadata limits below |
 | Dense metadata | Automatic dense link and attribute storage for 9–65,535 records when each encoded heap object is at most 4 KiB; FRHP/FHDB direct block and BTHD/BTLF name index | One direct block and one leaf index per collection; no indirect/huge heap blocks, creation-order index, free-space manager or SOHM table; out-of-bound sets use compact OCHK continuations |
 | Dataset layouts | Contiguous, paged fixed-array chunked and extensible-array chunked with inline, direct, super and paged data blocks | External and virtual dataset storage are absent |
-| Numeric values | Little-endian int/uint1–8 and IEEE float32/64; standard widths are checked by h5py and nonstandard widths by MoonBit round-trip | Big-endian and nonstandard floating-point output are absent |
+| Numeric values | Little- and big-endian int/uint1–8 and IEEE float32/64; standard widths and byte orders are checked by h5py and nonstandard integer widths by MoonBit round-trip | Nonstandard floating-point output is absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Variable-length sequence output is absent |
-| Structured values | Packed compound, enum and fixed array values | Reference, bitfield, opaque, time and complex output are absent |
+| Structured values | Packed compound, enum and fixed array values, including mixed byte orders within compounds and big-endian enum bases | Reference, bitfield, opaque, time and complex output are absent |
 | Filters | Shuffle, deflate, Fletcher32, integer scale-offset with automatic or fixed bits, and f32/f64 decimal scale-offset, in HDF5 pipeline order for fixed-size values | Other filters, per-chunk caller masks and variable-length filters are absent; scale-offset must lead the pipeline and floating-point scale-offset cannot use Fletcher32 |
 | Fill values | Default and custom fixed-size fills, including structured fills | Custom variable-length fills are rejected |
 | Extensible datasets | One unlimited axis, in-memory resize and append | MoonBit does not modify an existing file in place |

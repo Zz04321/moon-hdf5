@@ -532,3 +532,20 @@ objects and layout metadata. Malformed tests cover unsupported point versions,
 oversized ranks, out-of-bounds points and blocks, invalid heap identifiers and a
 truncated global heap collection. Version-4 encoded references and reference
 writing remain out of scope.
+
+## Big-endian writer review — 2026-10-27
+
+The structured writer now preserves an explicit byte order on primitive
+datatypes. `write_integer_with_order` and `write_float_with_order` emit the
+HDF5 byte-order flag and encode payloads accordingly; the standard constructors
+remain little-endian. Enum member tables and enum payloads follow their integer
+base, compound members retain independent byte orders, and array elements follow
+their recursively declared base type.
+
+Native tests cover signed and unsigned big-endian integers, f32/f64, big-endian
+enums, a compound mixing little- and big-endian fields, nested big-endian arrays,
+big-endian attributes and unallocated extensible-chunk fill values. The writer
+demo includes the same cases, and h5py 3.13.0/HDF5 1.14.6 independently checks
+dtypes such as `>i2`, `>u8`, `>f4` and `>f8`, compound field offsets and byte
+orders, enum metadata, values and fill values. Nonstandard floating-point writer
+layouts remain unsupported.

@@ -182,9 +182,10 @@ Source file addresses use 64-bit offsets and can exceed 2 GiB.
 
 ## Writing
 
-`Hdf5Writer` builds a complete new file in memory. It supports little-endian
-signed and unsigned 1–8-byte integers, IEEE float32/64, fixed or variable-length
-UTF-8 strings, and structured compound, enum and fixed-array values.
+`Hdf5Writer` builds a complete new file in memory. It supports signed and
+unsigned 1–8-byte integers in either byte order, IEEE float32/64 in either byte
+order, fixed or variable-length UTF-8 strings, and structured compound, enum
+and fixed-array values.
 
 ```moonbit nocheck
 ///|
@@ -258,7 +259,9 @@ them, and `Hdf5Resolver` resolves them when the target source is registered;
 writer rejects link messages whose encoded metadata exceeds HDF5's 16-bit message
 size. `Datatype::write_integer`, `write_float`, `write_fixed_string`,
 `write_enum`, `write_array` and `write_compound` construct supported structured
-writer types. Groups and objects with attributes use dense storage when they
+writer types. Use `write_integer_with_order` and `write_float_with_order` when a
+structured value needs big-endian storage; the standard constructors remain
+little-endian. Groups and objects with attributes use dense storage when they
 contain 9–65,535 links or attributes and every encoded heap object is at most
 4 KiB. Dense groups use an FRHP fractal heap with one FHDB direct block and a
 BTHD/BTLF name index; dense attributes use the same heap layout and their own
