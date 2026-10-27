@@ -12,6 +12,27 @@ fn run(args : Array[String]) -> Int32 {
       [2UL, 3UL],
       Int64Values([1L, 2L, 3L, 4L, 5L, 6L]),
     )
+    writer.add_dataset(
+      "/experiment/reference_target",
+      [2UL],
+      Int64Values([11L, 12L]),
+    )
+    writer.add_dataset(
+      "/experiment/references",
+      [4UL],
+      ObjectReferenceValues([
+        Some("/experiment/reference_target"),
+        Some("/experiment"),
+        None,
+        Some("/"),
+      ]),
+    )
+    writer.add_attribute(
+      "/experiment/reference_target",
+      "self_ref",
+      [],
+      ObjectReferenceValues([Some("/experiment/reference_target")]),
+    )
     writer.add_soft_link("/experiment", "latest", "/experiment/counts")
     writer.add_external_link(
       "/experiment", "external", "external-target.h5", "/experiment/counts",

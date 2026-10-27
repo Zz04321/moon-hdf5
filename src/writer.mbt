@@ -13,6 +13,7 @@ pub(all) enum Hdf5WriteValues {
   Float64Values(Array[Double])
   FixedStringValues(Array[String], Int32)
   VariableStringValues(Array[String])
+  ObjectReferenceValues(Array[String?])
   StructuredValues(Datatype, Array[DatasetValue])
 } derive(@debug.Debug)
 
@@ -488,7 +489,22 @@ fn writer_value_count(values : Hdf5WriteValues) -> Int32 {
     Float64Values(items) => items.length()
     FixedStringValues(items, _) => items.length()
     VariableStringValues(items) => items.length()
+    ObjectReferenceValues(items) => items.length()
     StructuredValues(_, items) => items.length()
+  }
+}
+
+///|
+fn writer_value_element_size(values : Hdf5WriteValues) -> Int32 {
+  match values {
+    Int8Values(_) | UInt8Values(_) => 1
+    Int16Values(_) | UInt16Values(_) => 2
+    Int32Values(_) | UInt32Values(_) | Float32Values(_) => 4
+    Int64Values(_) | UInt64Values(_) | Float64Values(_) => 8
+    FixedStringValues(_, width) => width
+    VariableStringValues(_) => 16
+    ObjectReferenceValues(_) => 8
+    StructuredValues(datatype, _) => datatype.size
   }
 }
 
@@ -507,6 +523,7 @@ fn copy_write_values(values : Hdf5WriteValues) -> Hdf5WriteValues {
     Float64Values(items) => Float64Values(items.copy())
     FixedStringValues(items, width) => FixedStringValues(items.copy(), width)
     VariableStringValues(items) => VariableStringValues(items.copy())
+    ObjectReferenceValues(items) => ObjectReferenceValues(items.copy())
     StructuredValues(datatype, items) =>
       StructuredValues(
         copy_writer_datatype(datatype),
@@ -946,6 +963,15 @@ fn validate_write_values(
         }
       }
     }
+    ObjectReferenceValues(items) => {
+      validate_writer_byte_size(items.length(), 8)
+      for item in items {
+        match item {
+          Some(path) => canonical_writer_path(path) |> ignore
+          None => ()
+        }
+      }
+    }
     Int8Values(items) => {
       validate_writer_byte_size(items.length(), 1)
       for item in items {
@@ -1244,6 +1270,7 @@ fn same_write_datatype(
     (FixedStringValues(_, left_width), FixedStringValues(_, right_width)) =>
       left_width == right_width
     (VariableStringValues(_), VariableStringValues(_)) => true
+    (ObjectReferenceValues(_), ObjectReferenceValues(_)) => true
     (StructuredValues(left_type, _), StructuredValues(right_type, _)) =>
       encode_writer_datatype(left_type) == encode_writer_datatype(right_type)
     _ => false
@@ -1456,7 +1483,7 @@ pub fn Hdf5Writer::add_chunked_dataset(
   chunk_grid(dimensions, chunk_dimensions) |> ignore
   validate_writer_chunk_size(
     chunk_dimensions,
-    encode_write_values(values).element_size,
+    writer_value_element_size(values),
   )
   validate_write_filters(filters)
   validate_writer_filters_for_values(values, filters)
@@ -1561,7 +1588,7 @@ pub fn Hdf5Writer::add_extensible_dataset(
   )
   validate_writer_chunk_size(
     chunk_dimensions,
-    encode_write_values(values).element_size,
+    writer_value_element_size(values),
   )
   validate_write_filters(filters)
   validate_writer_filters_for_values(values, filters)
@@ -1649,6 +1676,7 @@ fn default_write_fill(
     Float64Values(_) => Float64Values([0.0])
     FixedStringValues(_, width) => FixedStringValues([""], width)
     VariableStringValues(_) => VariableStringValues([""])
+    ObjectReferenceValues(_) => ObjectReferenceValues([None])
     StructuredValues(datatype, _) =>
       StructuredValues(datatype, [default_structured_value(datatype)])
   }
@@ -1718,6 +1746,8 @@ fn repeated_write_values(
       FixedStringValues(Array::make(count, items[0]), width)
     (VariableStringValues(_), VariableStringValues(items)) =>
       VariableStringValues(Array::make(count, items[0]))
+    (ObjectReferenceValues(_), ObjectReferenceValues(items)) =>
+      ObjectReferenceValues(Array::make(count, items[0]))
     (StructuredValues(datatype, _), StructuredValues(_, items)) =>
       StructuredValues(datatype, Array::make(count, items[0]))
     _ =>
@@ -1895,6 +1925,12 @@ fn overlay_write_values(
     }
     (VariableStringValues(output), VariableStringValues(items)) =>
       VariableStringValues(
+        overlay_array(
+          output, items, source_dimensions, destination_dimensions, axis, offset,
+        ),
+      )
+    (ObjectReferenceValues(output), ObjectReferenceValues(items)) =>
+      ObjectReferenceValues(
         overlay_array(
           output, items, source_dimensions, destination_dimensions, axis, offset,
         ),
@@ -2346,6 +2382,17 @@ fn encode_variable_string_datatype() -> Bytes {
 }
 
 ///|
+fn encode_object_reference_datatype() -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=8)
+  buffer.write_byte(b'\x17')
+  buffer.write_byte(b'\x00')
+  buffer.write_byte(b'\x00')
+  buffer.write_byte(b'\x00')
+  buffer.write_uint_le(8U)
+  buffer.to_bytes()
+}
+
+///|
 fn empty_writable_heap() -> WritableGlobalHeap {
   { address: 0UL, strings: [], sequences: [], }
 }
@@ -2386,6 +2433,7 @@ fn writable_sequence_heap_index(
 fn encode_write_values(
   values : Hdf5WriteValues,
   heap~ : WritableGlobalHeap = empty_writable_heap(),
+  objects~ : Array[WritableObject] = [],
 ) -> EncodedWriteValues raise Hdf5Error {
   let payload = @buffer.Buffer::Buffer()
   let (datatype, element_size) = match values {
@@ -2472,6 +2520,16 @@ fn encode_write_values(
         }
       }
       (encode_variable_string_datatype(), 16)
+    }
+    ObjectReferenceValues(items) => {
+      for item in items {
+        let address = match item {
+          None => 0UL
+          Some(path) => writer_reference_address(objects, path)
+        }
+        payload.write_uint64_le(address)
+      }
+      (encode_object_reference_datatype(), 8)
     }
     StructuredValues(datatype, items) => {
       for item in items {
@@ -2583,8 +2641,9 @@ fn encode_chunked_layout(
 fn encode_fill_value(
   fill : Hdf5WriteValues,
   heap~ : WritableGlobalHeap,
+  objects~ : Array[WritableObject],
 ) -> Bytes raise Hdf5Error {
-  let encoded = encode_write_values(fill, heap~)
+  let encoded = encode_write_values(fill, heap~, objects~)
   let buffer = @buffer.Buffer::Buffer(size_hint=6 + encoded.element_size)
   buffer.write_byte(b'\x03')
   buffer.write_byte(b'\x22')
@@ -3261,6 +3320,7 @@ fn chunk_grid(
 fn encode_dataset_chunks(
   dataset : WritableDataset,
   heap : WritableGlobalHeap,
+  objects : Array[WritableObject],
 ) -> Array[EncodedChunkEntry] raise Hdf5Error {
   let (chunk_dimensions, filters, order, grid_dimensions) = match
     dataset.storage {
@@ -3284,9 +3344,9 @@ fn encode_dataset_chunks(
     }
     WritableContiguous => raise InvalidField("expected chunked writer dataset")
   }
-  let encoded = encode_write_values(dataset.values, heap~)
+  let encoded = encode_write_values(dataset.values, heap~, objects~)
   let fill = match dataset.fill_value {
-    Some(value) => encode_write_values(value, heap~).payload
+    Some(value) => encode_write_values(value, heap~, objects~).payload
     None => Bytes::make(encoded.element_size, b'\x00')
   }
   let (grid, chunk_count) = chunk_grid(grid_dimensions, chunk_dimensions)
@@ -3381,13 +3441,14 @@ fn encode_fixed_array_storage(
   start : UInt64,
   dataset : WritableDataset,
   heap : WritableGlobalHeap,
+  objects : Array[WritableObject],
 ) -> Bytes raise Hdf5Error {
   let (_, filters) = match dataset.storage {
     WritableChunked(dimensions, filters) => (dimensions, filters)
     WritableExtensible(dimensions, filters, _) => (dimensions, filters)
     WritableContiguous => raise InvalidField("expected chunked writer dataset")
   }
-  let entries = encode_dataset_chunks(dataset, heap)
+  let entries = encode_dataset_chunks(dataset, heap, objects)
   let filtered = filters.length() > 0
   let entry_size = if filtered { 14 } else { 8 }
   let page_bits = 10
@@ -3621,12 +3682,13 @@ fn encode_extensible_array_storage(
   start : UInt64,
   dataset : WritableDataset,
   heap : WritableGlobalHeap,
+  objects : Array[WritableObject],
 ) -> Bytes raise Hdf5Error {
   let (_, filters, _) = match dataset.storage {
     WritableExtensible(dimensions, filters, axis) => (dimensions, filters, axis)
     _ => raise InvalidField("expected extensible writer dataset")
   }
-  let entries = encode_dataset_chunks(dataset, heap)
+  let entries = encode_dataset_chunks(dataset, heap, objects)
   let filtered = filters.length() > 0
   let entry_size = if filtered { 14 } else { 8 }
   let max_bits = 32
@@ -3984,8 +4046,9 @@ fn encode_external_link(
 fn encode_attribute(
   attribute : WritableAttribute,
   heap : WritableGlobalHeap,
+  objects : Array[WritableObject],
 ) -> Bytes raise Hdf5Error {
-  let encoded = encode_write_values(attribute.values, heap~)
+  let encoded = encode_write_values(attribute.values, heap~, objects~)
   let name = @utf8.encode(attribute.name)
   let dataspace = encode_dataspace(attribute.dimensions)
   let buffer = @buffer.Buffer::Buffer(
@@ -4094,13 +4157,14 @@ fn Hdf5Writer::dense_attribute_entries(
   self : Hdf5Writer,
   path : String,
   heap : WritableGlobalHeap,
+  objects : Array[WritableObject],
 ) -> Array[WritableDenseHeapEntry] raise Hdf5Error {
   let entries : Array[WritableDenseHeapEntry] = []
   for attribute in self.object_attributes(path) {
     entries.push({
       name: attribute.name,
       hash: writer_name_hash(attribute.name),
-      data: encode_attribute(attribute, heap),
+      data: encode_attribute(attribute, heap, objects),
     })
   }
   entries
@@ -4316,7 +4380,7 @@ fn Hdf5Writer::encode_dense_metadata(
   let entries = if group {
     self.dense_link_entries(object, objects)
   } else {
-    self.dense_attribute_entries(object.path, heap)
+    self.dense_attribute_entries(object.path, heap, objects)
   }
   guard writer_dense_entries_fit(entries) else {
     raise InvalidField("dense metadata is not available for this object")
@@ -4600,6 +4664,21 @@ fn find_writable_object(
 }
 
 ///|
+fn writer_reference_address(
+  objects : Array[WritableObject],
+  path : String,
+) -> UInt64 raise Hdf5Error {
+  let canonical = canonical_writer_path(path)
+  match objects.search_by(object => object.path == canonical) {
+    Some(index) => objects[index].address
+    None =>
+      raise InvalidArgument(
+        "object reference target does not exist: " + canonical,
+      )
+  }
+}
+
+///|
 fn Hdf5Writer::object_payload(
   self : Hdf5Writer,
   object : WritableObject,
@@ -4631,7 +4710,7 @@ fn Hdf5Writer::object_payload(
     }
     WritableDatasetObject(index) => {
       let dataset = self.datasets[index]
-      let encoded = encode_write_values(dataset.values, heap~)
+      let encoded = encode_write_values(dataset.values, heap~, objects~)
       write_header_message(
         buffer,
         msg_dataspace,
@@ -4650,12 +4729,12 @@ fn Hdf5Writer::object_payload(
           write_header_message(
             buffer,
             msg_fill_value,
-            encode_fill_value(fill, heap~),
+            encode_fill_value(fill, heap~, objects~),
           )
         None => ()
       }
       let filter_fill = match dataset.fill_value {
-        Some(fill) => encode_write_values(fill, heap~).payload
+        Some(fill) => encode_write_values(fill, heap~, objects~).payload
         None => Bytes::make(encoded.element_size, b'\x00')
       }
       match dataset.storage {
@@ -4725,7 +4804,7 @@ fn Hdf5Writer::object_payload(
   }
   let attributes = self.object_attributes(object.path)
   if attributes.length() > 0 {
-    let entries = self.dense_attribute_entries(object.path, heap)
+    let entries = self.dense_attribute_entries(object.path, heap, objects)
     if writer_dense_entries_fit(entries) {
       let (heap_address, index_address) = writer_dense_addresses(
         dense,
@@ -5011,7 +5090,7 @@ fn assign_writable_addresses(
     candidates.push(
       (
         WritableDenseAttributes,
-        writer.dense_attribute_entries(object.path, heap),
+        writer.dense_attribute_entries(object.path, heap, objects),
       ),
     )
     for (kind, dense_entries) in candidates {
@@ -5038,7 +5117,7 @@ fn assign_writable_addresses(
         let dataset = writer.datasets[dataset_index]
         let has_storage = match dataset.storage {
           WritableContiguous =>
-            encode_write_values(dataset.values).payload.length() > 0
+            encode_write_values(dataset.values, objects~).payload.length() > 0
           WritableChunked(_, _) => true
           WritableExtensible(_, _, _) => true
         }
@@ -5053,12 +5132,17 @@ fn assign_writable_addresses(
             WritableContiguous =>
               writer_align(
                 offset +
-                encode_write_values(dataset.values, heap~).payload.length(),
+                encode_write_values(dataset.values, heap~, objects~).payload.length(),
               )
             WritableChunked(_, _) =>
               writer_align(
                 offset +
-                encode_fixed_array_storage(offset.to_uint64(), dataset, heap).length(),
+                encode_fixed_array_storage(
+                  offset.to_uint64(),
+                  dataset,
+                  heap,
+                  objects,
+                ).length(),
               )
             WritableExtensible(_, _, _) =>
               writer_align(
@@ -5067,6 +5151,7 @@ fn assign_writable_addresses(
                   offset.to_uint64(),
                   dataset,
                   heap,
+                  objects,
                 ).length(),
               )
           }
@@ -5138,14 +5223,20 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
         let dataset = self.datasets[index]
         let payload = match dataset.storage {
           WritableContiguous =>
-            encode_write_values(dataset.values, heap=layout.heap).payload
+            encode_write_values(dataset.values, heap=layout.heap, objects~).payload
           WritableChunked(_, _) =>
-            encode_fixed_array_storage(object.raw_address, dataset, layout.heap)
+            encode_fixed_array_storage(
+              object.raw_address,
+              dataset,
+              layout.heap,
+              objects,
+            )
           WritableExtensible(_, _, _) =>
             encode_extensible_array_storage(
               object.raw_address,
               dataset,
               layout.heap,
+              objects,
             )
         }
         if payload.length() > 0 {

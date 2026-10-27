@@ -128,6 +128,141 @@ test "writer uses dense links and attributes above the compact threshold" {
 }
 
 ///|
+test "writer round-trips object reference datasets and attributes" {
+  let writer = Hdf5Writer::new()
+  writer.add_dataset(
+    "/refs",
+    [4UL],
+    ObjectReferenceValues([
+      Some("/target"),
+      Some("/group"),
+      None,
+      Some("/group/later"),
+    ]),
+  )
+  writer.add_chunked_dataset(
+    "/chunked_refs",
+    [2UL],
+    [1U],
+    ObjectReferenceValues([Some("/target"), None]),
+  )
+  writer.add_dataset("/target", [2UL], Int64Values([1L, 2L]))
+  writer.add_attribute(
+    "/target",
+    "self_ref",
+    [],
+    ObjectReferenceValues([Some("/target")]),
+  )
+  writer.add_group("/group")
+  writer.add_dataset("/group/later", [], UInt64Values([7UL]))
+
+  let file = Hdf5File::parse(writer.encode())
+  let dataset = file.read_dataset("/refs")
+  assert_eq(dataset.datatype.class, 7)
+  assert_eq(dataset.datatype.reference_kind, 0)
+  assert_eq(dataset.datatype.size, 8)
+  let references = match dataset.values {
+    Structured(values) => values
+    _ => abort("expected structured object references")
+  }
+  assert_eq(references.length(), 4)
+  let target = file.resolve("/target")
+  let group = file.resolve("/group")
+  let later = file.resolve("/group/later")
+  match references[0] {
+    Reference(bytes) =>
+      assert_eq(
+        file.resolve_object_reference(bytes),
+        Some({ address: target.address, kind: Dataset, path: Some("/target"), }),
+      )
+    _ => abort("expected target object reference")
+  }
+  match references[1] {
+    Reference(bytes) =>
+      assert_eq(
+        file.resolve_object_reference(bytes),
+        Some({ address: group.address, kind: Group, path: Some("/group"), }),
+      )
+    _ => abort("expected group object reference")
+  }
+  match references[2] {
+    Reference(bytes) => assert_eq(file.resolve_object_reference(bytes), None)
+    _ => abort("expected null object reference")
+  }
+  match references[3] {
+    Reference(bytes) =>
+      assert_eq(
+        file.resolve_object_reference(bytes),
+        Some({
+          address: later.address,
+          kind: Dataset,
+          path: Some("/group/later"),
+        }),
+      )
+    _ => abort("expected forward object reference")
+  }
+  let chunked = match file.read_dataset("/chunked_refs").values {
+    Structured([Reference(first), Reference(second)]) => (first, second)
+    _ => abort("expected chunked object references")
+  }
+  assert_eq(
+    file.resolve_object_reference(chunked.0),
+    Some({ address: target.address, kind: Dataset, path: Some("/target"), }),
+  )
+  assert_eq(file.resolve_object_reference(chunked.1), None)
+  let attributes = file.attributes("/target")
+  let self_ref = attributes.search_by(attribute => attribute.name == "self_ref")
+  match self_ref {
+    Some(index) =>
+      match attributes[index].values {
+        Some(Structured([Reference(bytes)])) =>
+          assert_eq(
+            file.resolve_object_reference(bytes),
+            Some({
+              address: target.address,
+              kind: Dataset,
+              path: Some("/target"),
+            }),
+          )
+        _ => abort("expected self reference attribute")
+      }
+    None => abort("expected self_ref attribute")
+  }
+}
+
+///|
+test "writer validates object reference paths and targets" {
+  let relative = try {
+    Hdf5Writer::new().add_dataset(
+      "/refs",
+      [1UL],
+      ObjectReferenceValues([Some("target")]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(relative, Some(InvalidArgument("writer paths must be absolute")))
+
+  let missing = try {
+    let writer = Hdf5Writer::new()
+    writer.add_dataset(
+      "/refs",
+      [1UL],
+      ObjectReferenceValues([Some("/missing")]),
+    )
+    writer.encode() |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    missing,
+    Some(InvalidArgument("object reference target does not exist: /missing")),
+  )
+}
+
+///|
 test "writer enforces exact dense metadata limits" {
   let entry = { name: "item", hash: 0U, data: b"", }
   assert_true(!writer_dense_entries_fit(Array::make(8, entry)))

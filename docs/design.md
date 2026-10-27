@@ -245,7 +245,11 @@ dataspace rank and element counts, fixed-string widths and encoded link-message
 sizes before allocating output.
 Supported values are signed/unsigned integers stored in 1–8 bytes in either byte
 order, IEEE float32/64 in either byte order, fixed-width or variable-length
-UTF-8 strings, time, bitfield, opaque and variable-length sequence values.
+UTF-8 strings, time, bitfield, opaque, legacy object references and
+variable-length sequence values. Object-reference values hold target paths and
+the null reference; addresses are resolved after the final object layout is
+known, so forward references are valid. They can be stored in datasets and
+attributes.
 Variable strings and sequences use 16-byte descriptors and a shared global heap
 collection; empty values use the zero descriptor and repeated payloads share one
 heap object. Sequence bases must be fixed-size datatypes. Custom variable-length

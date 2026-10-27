@@ -531,7 +531,8 @@ checked directly against the file-format specification; h5py verifies the target
 objects and layout metadata. Malformed tests cover unsupported point versions,
 oversized ranks, out-of-bounds points and blocks, invalid heap identifiers and a
 truncated global heap collection. Version-4 encoded references and reference
-writing remain out of scope.
+writing remained out of scope at that stage; object-reference writing was added
+in the later review below.
 
 ## Big-endian writer review — 2026-10-27
 
@@ -590,3 +591,19 @@ and a resized extensible dataset with a custom string fill. h5py 3.13.0/HDF5
 environment. HDF5 1.14.6 requires write intent when h5py materializes a vlen
 fill from an unallocated chunk; MoonBit reads the same file from immutable
 bytes, and the release gate verifies the producer fixture separately.
+
+## Object-reference writer review — 2026-10-27
+
+`ObjectReferenceValues` writes legacy object references without requiring the
+caller to know file addresses. The writer records absolute target paths, assigns
+all object addresses first, and then resolves each path while encoding dataset
+or attribute payloads. `None` emits the all-zero null reference. Forward
+references are supported; a missing target fails encoding with
+`InvalidArgument` instead of producing a dangling address.
+
+MoonBit tests cover dataset values, attribute values, group, root, self, null
+and forward references, plus relative and missing-target rejection. The writer
+demo stores object references in a dataset and a self-referencing attribute.
+The h5py 3.13.0/HDF5 1.14.6 verifier resolves every non-null reference by path
+and confirms the null reference. Region-reference writing and reference values
+nested inside compound writer values remain outside the current profile.

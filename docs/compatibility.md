@@ -29,12 +29,12 @@ evidence and are not part of the HDF5 1.14.6 v1.0 baseline.
 The following are outside the v1.0 profile: virtual datasets, external data
 storage beyond the resolver-only extension described below, SWMR, parallel
 HDF5, third-party filters, in-place editing, external-link dereferencing in
-`Hdf5File` itself, version-4 encoded references, reference writing, numeric
-storage wider than 8 bytes, binary-float normalizations other than implied MSB,
-MATLAB file semantics, and netCDF-4 data-model semantics beyond the structures
-exercised by the producer fixture. External-link dereferencing is available
-through `Hdf5Resolver` and is listed as a verified reader capability below.
-These exclusions remain outside the v1.0 compatibility promise.
+`Hdf5File` itself, version-4 encoded references, region-reference writing,
+numeric storage wider than 8 bytes, binary-float normalizations other than
+implied MSB, MATLAB file semantics, and netCDF-4 data-model semantics beyond the
+structures exercised by the producer fixture. External-link dereferencing is
+available through `Hdf5Resolver` and is listed as a verified reader capability
+below. These exclusions remain outside the v1.0 compatibility promise.
 
 The release gate is `scripts/release_check.sh`. It runs the interface, format,
 documentation and package checks, wasm/native tests, writes a demo file and
@@ -104,7 +104,8 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | Dataset layouts | Contiguous, paged fixed-array chunked and extensible-array chunked with inline, direct, super and paged data blocks | External and virtual dataset storage are absent |
 | Numeric values | Little- and big-endian int/uint1–8 and IEEE float32/64; standard widths and byte orders are checked by h5py and nonstandard integer widths by MoonBit round-trip | Nonstandard floating-point output is absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Other character encodings are absent |
-| Structured values | Packed compound, enum, fixed array, time, bitfield, opaque and variable-length sequence values, including mixed byte orders within compounds and big-endian enum bases | Reference and complex output are absent; variable-length sequence bases must be fixed-size |
+| Structured values | Packed compound, enum, fixed array, time, bitfield, opaque and variable-length sequence values, including mixed byte orders within compounds and big-endian enum bases | Reference values inside compounds and complex output are absent; variable-length sequence bases must be fixed-size |
+| Object references | Legacy 8-byte object references stored in datasets and attributes, including forward, group, self, root and null references, checked by path with h5py | Region references and compound-member references are not written |
 | Filters | Shuffle, deflate, Fletcher32, integer scale-offset with automatic or fixed bits, and f32/f64 decimal scale-offset, in HDF5 pipeline order for fixed-size values | Other filters, per-chunk caller masks and variable-length filters are absent; scale-offset must lead the pipeline and floating-point scale-offset cannot use Fletcher32 |
 | Fill values | Default, custom fixed-size/structured fills and custom variable-length string fills using the shared global heap | Custom variable-length sequence fills are rejected |
 | Extensible datasets | One unlimited axis, in-memory resize and append | MoonBit does not modify an existing file in place |

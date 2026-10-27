@@ -1,5 +1,7 @@
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 
 import h5py
 
@@ -28,16 +30,20 @@ def verify(path: Path) -> None:
         "extensible": ["grow", "grow", "grow", "grow", "grow"],
     }
     # HDF5 1.14.6 needs write intent to materialize a vlen fill from an
-    # unallocated chunk; MoonBit reads the same file from immutable bytes.
-    with h5py.File(path, "r+") as handle:
-        for name, values in expected.items():
-            dataset = handle[name]
-            assert h5py.check_string_dtype(dataset.dtype).encoding == "utf-8"
-            assert dataset.asstr()[:].tolist() == values
-        assert handle["contiguous"].fillvalue == b"missing"
-        assert handle["chunked"].fillvalue == b"fallback"
-        assert handle["chunked"].id.get_num_chunks() == 2
-        assert handle["extensible"].maxshape == (None,)
+    # unallocated chunk. Open a temporary copy so verification cannot rewrite
+    # the committed fixture; MoonBit reads the original immutable bytes.
+    with tempfile.TemporaryDirectory(prefix="moon-hdf5-vlen-fill-") as directory:
+        copy = Path(directory) / path.name
+        shutil.copyfile(path, copy)
+        with h5py.File(copy, "r+") as handle:
+            for name, values in expected.items():
+                dataset = handle[name]
+                assert h5py.check_string_dtype(dataset.dtype).encoding == "utf-8"
+                assert dataset.asstr()[:].tolist() == values
+            assert handle["contiguous"].fillvalue == b"missing"
+            assert handle["chunked"].fillvalue == b"fallback"
+            assert handle["chunked"].id.get_num_chunks() == 2
+            assert handle["extensible"].maxshape == (None,)
 
 
 if __name__ == "__main__":

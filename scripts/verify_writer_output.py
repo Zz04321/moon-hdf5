@@ -26,6 +26,8 @@ def verify(path: Path) -> None:
             "metrics",
             "names",
             "paged_series",
+            "reference_target",
+            "references",
             "series",
             "string_fill",
         ]
@@ -33,6 +35,13 @@ def verify(path: Path) -> None:
             handle["experiment/counts"][:], [[1, 2, 3], [4, 5, 6]]
         )
         assert handle["experiment/counts"].dtype == np.dtype("<i8")
+        references = handle["experiment/references"][:]
+        assert handle[references[0]].name == "/experiment/reference_target"
+        assert handle[references[1]].name == "/experiment"
+        assert not references[2]
+        assert handle[references[3]].name == "/"
+        self_ref = handle["experiment/reference_target"].attrs["self_ref"]
+        assert handle[self_ref].name == "/experiment/reference_target"
         latest = handle.get("experiment/latest", getlink=True)
         assert isinstance(latest, h5py.SoftLink)
         assert latest.path == "/experiment/counts"

@@ -17,7 +17,7 @@ This is not a read-only library.
 - `Hdf5File` reads existing files without modifying them.
 - `Hdf5Writer` creates a complete new HDF5 file in memory and writes groups,
   datasets, attributes, soft and external links, fixed-size-value filters, fill
-  values and one extensible dimension.
+  values, legacy object references and one extensible dimension.
 - In-place editing of an existing file is not implemented. `Hdf5File` parses
   external-link metadata without opening another file; `Hdf5Resolver` resolves
   those links and reads contiguous external raw-data storage when the target
@@ -56,8 +56,8 @@ an executable example.
   and early termination.
 - Creates new files with groups, attributes, hard, soft and external links,
   compact or dense metadata, contiguous or chunked datasets, filters, fill
-  values and one extensible dimension. Large chunk indexes use fixed-array
-  pages or extensible-array super blocks and data pages.
+  values, object references and one extensible dimension. Large chunk indexes
+  use fixed-array pages or extensible-array super blocks and data pages.
 
 ## Quick Start
 
@@ -257,10 +257,14 @@ target or a target relative to the containing group; dangling links are allowed.
 them, and `Hdf5Resolver` resolves them when the target source is registered;
 `Hdf5File` alone leaves the link unresolved. The
 writer rejects link messages whose encoded metadata exceeds HDF5's 16-bit message
-size. `Datatype::write_integer`, `write_float`, `write_fixed_string`,
-`write_enum`, `write_array`, `write_compound`, `write_time`, `write_bitfield`,
-`write_opaque` and `write_vlen_sequence` construct supported structured writer
-types. Use `write_integer_with_order` and `write_float_with_order` when a
+size. `ObjectReferenceValues` stores legacy object references as paths to
+objects in the same file; `None` writes the null reference. References may be
+stored in datasets or attributes, and their targets may be added later because
+paths are resolved when the file is encoded. `Datatype::write_integer`,
+`write_float`, `write_fixed_string`, `write_enum`, `write_array`,
+`write_compound`, `write_time`, `write_bitfield`, `write_opaque` and
+`write_vlen_sequence` construct supported structured writer types. Use
+`write_integer_with_order` and `write_float_with_order` when a
 structured value needs big-endian storage; the standard constructors remain
 little-endian. Variable-length sequences use a fixed-size base type, and empty,
 repeated and nested-in-compound sequence values are supported. Strings and
@@ -330,12 +334,14 @@ preserve order and duplicates.
   `ScaleOffset(element_width * 8)` to store an integer chunk unfiltered. Writer
   floating-point data and fill values must be finite, and floating-point
   scale-offset cannot be combined with Fletcher32.
-- Custom variable-length sequence fills, other writer filters, reference
-  writing and complex-number writing are not supported. Variable-length
-  sequence bases must be fixed-size values.
+- Custom variable-length sequence fills, other writer filters,
+  region-reference writing, references nested in compound writer values and
+  complex-number writing are not supported. Variable-length sequence bases must
+  be fixed-size values.
 - Reference resolution covers legacy object and dataset-region references under
   4- and 8-byte address widths. Region targets must be datasets in the same
-  file. Version-4 encoded references and reference writing are not supported.
+  file. Version-4 encoded references are not resolved, and region-reference
+  writing is not supported.
 - Variable-length writer datasets cannot use filters; HDF5 1.14.6 rejects this
   combination natively.
 
