@@ -75,6 +75,132 @@ fn strip_fletcher32(data : Bytes) -> Bytes raise Hdf5Error {
 }
 
 ///|
+fn scaleoffset_parameter_value(
+  parameters : Array[UInt32],
+  size : Int32,
+) -> UInt64 {
+  let mut value = 0UL
+  for index in 0..<size {
+    let word = parameters[8 + index / 4].to_uint64()
+    let byte = (word >> (index % 4 * 8)) & 0xFFUL
+    value = value | (byte << (index * 8))
+  }
+  value
+}
+
+///|
+fn decode_scaleoffset(
+  data : Bytes,
+  filter : Filter,
+  element_size : Int32,
+  expected_size : Int32,
+) -> Bytes raise Hdf5Error {
+  guard element_size > 0 &&
+    expected_size >= 0 &&
+    expected_size % element_size == 0 else {
+    raise InvalidField("invalid scale-offset chunk size")
+  }
+  guard filter.parameters.length() == 20 else {
+    raise UnsupportedFeature("unsupported scale-offset parameters")
+  }
+  let datatype_class = filter.parameters[3].reinterpret_as_int()
+  let datatype_size = filter.parameters[4].reinterpret_as_int()
+  let sign = filter.parameters[5].reinterpret_as_int()
+  let order = filter.parameters[6].reinterpret_as_int()
+  let fill_available = filter.parameters[7].reinterpret_as_int()
+  let minimum_bits = filter.parameters[1].reinterpret_as_int()
+  guard datatype_size == element_size &&
+    (sign == 0 || sign == 1) &&
+    (order == 0 || order == 1) &&
+    (fill_available == 0 || fill_available == 1) &&
+    minimum_bits >= 0 &&
+    minimum_bits <= element_size * 8 else {
+    raise InvalidField("invalid scale-offset filter parameters")
+  }
+  guard filter.parameters[0].reinterpret_as_int() == 2 else {
+    raise UnsupportedFeature(
+      "scale-offset floating-point data is not supported",
+    )
+  }
+  guard datatype_class == 0 else {
+    raise UnsupportedFeature("scale-offset datatype class is not supported")
+  }
+  if minimum_bits == element_size * 8 {
+    guard data.length() == expected_size else {
+      raise InvalidField("unfiltered scale-offset chunk has the wrong size")
+    }
+    return data
+  }
+  guard data.length() >= 21 else {
+    raise InvalidField("truncated scale-offset chunk")
+  }
+  let reader = Reader::new(data)
+  let minbits = reader.read_u32_le().reinterpret_as_int()
+  let minval_size = data[4].to_int()
+  guard minbits >= 0 &&
+    minbits < element_size * 8 &&
+    minval_size >= 0 &&
+    minval_size <= 8 else {
+    raise InvalidField("invalid scale-offset chunk header")
+  }
+  let mut minval = 0UL
+  for index in 0..<minval_size {
+    minval = minval | (data[5 + index].to_uint64() << (index * 8))
+  }
+  let count = expected_size / element_size
+  let element_bits = minbits.to_int64()
+  let total_bits = count.to_int64() * element_bits
+  guard total_bits >= 0 &&
+    total_bits <= 0x7FFFFFFF &&
+    (total_bits + 7) / 8 <= (data.length() - 21).to_int64() else {
+    raise InvalidField("truncated scale-offset bit stream")
+  }
+  let fill = if fill_available == 1 {
+    scaleoffset_parameter_value(filter.parameters, element_size)
+  } else {
+    0UL
+  }
+  let marker = if minbits == 0 { 0UL } else { (1UL << minbits) - 1UL }
+  let mask = if element_size == 8 {
+    0xFFFFFFFFFFFFFFFFUL
+  } else {
+    (1UL << (element_size * 8)) - 1UL
+  }
+  let output = FixedArray::make(expected_size, b'\x00')
+  let mut bit_index = 0
+  for element in 0..<count {
+    let mut packed = 0UL
+    let mut remaining = minbits
+    while remaining > 0 {
+      let byte_index = bit_index / 8
+      let bit_offset = bit_index % 8
+      let available = 8 - bit_offset
+      let take = if remaining < available { remaining } else { available }
+      let part = (data[21 + byte_index].to_uint() >> (available - take)) &
+        ((1U << take) - 1U)
+      packed = (packed << take) | part.to_uint64()
+      bit_index = bit_index + take
+      remaining = remaining - take
+    }
+    let decoded = if fill_available == 1 && packed == marker {
+      fill
+    } else {
+      packed + minval
+    }
+    let value = decoded & mask
+    for byte_index in 0..<element_size {
+      let shift = if order == 0 {
+        byte_index * 8
+      } else {
+        (element_size - 1 - byte_index) * 8
+      }
+      output[element * element_size + byte_index] = ((value >> shift) & 0xFFUL).to_byte()
+    }
+  }
+  output.unsafe_reinterpret_as_bytes()
+}
+
+///|
 fn decode_filters(
   data : Bytes,
   filters : Array[Filter],
@@ -148,6 +274,7 @@ fn decode_filters(
         }
         strip_fletcher32(output)
       }
+      6 => decode_scaleoffset(output, filter, element_size, expected_size)
       _ =>
         raise UnsupportedFeature(
           "filter " + filter.id.to_string() + " is not supported",

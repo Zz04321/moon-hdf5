@@ -114,3 +114,93 @@ test "shuffle can derive its element size from the filter pipeline" {
   assert_eq(decode_filters(shuffled, filters, 0U, 0, 8), b"abcdefgh")
   assert_eq(decode_filters(shuffled, filters, 0U, 4, 8), b"abcdefgh")
 }
+
+///|
+test "integer scale-offset chunks decode widths signs and byte orders" {
+  let file = Hdf5File::parse(@fs.read_file_to_bytes("testdata/scaleoffset.h5"))
+  let int32_auto = Array::make(20, -7L)
+  for index in 0..<10 {
+    int32_auto[index] = (-50 + index).to_int64()
+  }
+  assert_eq(integer_values(file.read_dataset("/int32_auto")), int32_auto)
+  let selected = file.read_dataset_selection(
+    "/int32_auto",
+    Hyperslab([8UL], [5UL], [1UL]),
+  )
+  match selected.values {
+    Integers(values) => assert_eq(values, [-42L, -41L, -7L, -7L, -7L])
+    _ => abort("expected scale-offset integer selection")
+  }
+  let fixed : Array[Int64] = []
+  for index in 0..<16 {
+    fixed.push((100 + index).to_int64())
+  }
+  assert_eq(integer_values(file.read_dataset("/int32_fixed")), fixed)
+  assert_eq(integer_values(file.read_dataset("/int32_mixed_fill")), [
+    10L, -7L, 12L, 13L,
+  ])
+  assert_eq(integer_values(file.read_dataset("/int32_all_fill")), [
+    -7L, -7L, -7L, -7L,
+  ])
+  assert_eq(integer_values(file.read_dataset("/int32_full")), [
+    -5L, -4L, -3L, -2L,
+  ])
+  assert_eq(integer_values(file.read_dataset("/int16_be")), [
+    -300L, -299L, -250L, -200L, -199L, -100L,
+  ])
+  assert_eq(integer_values(file.read_dataset("/int8")), [-50L, -7L, 0L, 50L])
+  assert_eq(unsigned_values(file.read_dataset("/uint16_be")), [
+    10000UL, 10001UL, 15000UL, 20000UL,
+  ])
+  assert_eq(unsigned_values(file.read_dataset("/uint8")), [
+    0UL, 1UL, 2UL, 3UL, 4UL, 5UL, 6UL,
+  ])
+  assert_eq(unsigned_values(file.read_dataset("/uint32")), [
+    1000000UL, 1000001UL, 2000000UL, 3000000UL,
+  ])
+  assert_eq(integer_values(file.read_dataset("/int64")), [
+    -(1L << 40),
+    -(1L << 40) + 1L,
+    0L,
+    1L << 40,
+  ])
+  assert_eq(unsigned_values(file.read_dataset("/uint64")), [
+    1UL << 40,
+    (1UL << 40) + 5UL,
+    (1UL << 40) + 9UL,
+    (1UL << 40) + 12UL,
+  ])
+}
+
+///|
+test "malformed scale-offset headers are rejected" {
+  let parameters : Array[UInt32] = [
+    2U, 0U, 1U, 0U, 4U, 1U, 0U, 1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U,
+  ]
+  let filter : Filter = { id: 6, parameters, }
+  for data in [b"", b"\x00\x00\x00\x00\x08"] {
+    let error = try {
+      decode_scaleoffset(data, filter, 4, 4) |> ignore
+      None
+    } catch {
+      error => Some(error)
+    }
+    assert_true(error is Some(InvalidField(_)))
+  }
+  let float_parameters : Array[UInt32] = [
+    0U, 0U, 1U, 1U, 4U, 0U, 0U, 1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U,
+  ]
+  let float_error = try {
+    decode_scaleoffset(
+      b"\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+      { id: 6, parameters: float_parameters, },
+      4,
+      4,
+    )
+    |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_true(float_error is Some(UnsupportedFeature(_)))
+}

@@ -63,6 +63,14 @@ else
 fi
 
 if [ "${SKIP_H5PY:-0}" = "1" ]; then
+  echo "==> Scale-offset fixture verification skipped (SKIP_H5PY=1)"
+elif [ ! -f testdata/scaleoffset.h5 ]; then
+  echo "==> Scale-offset fixture verification skipped (fixture unavailable)"
+else
+  "$python" scripts/verify_scaleoffset_fixture.py testdata/scaleoffset.h5
+fi
+
+if [ "${SKIP_H5PY:-0}" = "1" ]; then
   echo "==> NetCDF-4 fixture verification skipped (SKIP_H5PY=1)"
 elif [ ! -f testdata/netcdf4_1_7_5.h5 ]; then
   echo "==> NetCDF-4 fixture verification skipped (fixture unavailable)"

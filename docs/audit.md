@@ -397,6 +397,31 @@ normalization must be implied MSB. Wider storage, other normalization modes and
 malformed field placement raise `UnsupportedFeature` or `InvalidField` rather
 than returning a guessed value.
 
+## Integer scale-offset review — 2026-10-27
+
+The reader now decodes integer scale-offset chunks produced by HDF5 1.14.6.
+It supports automatic and fixed minimum bit counts, signed and unsigned values
+stored in 1–8 bytes, both byte orders, the 21-byte filtered-chunk header, the
+all-ones fill marker and the configured raw full-precision path. Chunk values
+are unpacked most-significant bit first, added to the stored minimum and written
+back in the datatype's declared byte order. Dataset and hyperslab reads share
+the normal chunk-decoding path.
+
+Floating-point scale-offset remains explicitly unsupported, as does writer
+output for this filter. A filtered header whose per-chunk bit count equals the
+full element width is rejected: HDF5 1.14.6 can emit that automatic full-range
+encoding but fails to read it back. Files requiring a genuine full-precision
+representation use the configured full-width path, which stores unfiltered
+elements.
+
+`testdata/scaleoffset.h5` is generated and independently verified with h5py
+3.13.0/HDF5 1.14.6. It covers automatic bits over two chunks with an
+unallocated fill chunk, fixed bits, fill values inside an allocated chunk,
+an all-fill chunk, configured full precision, signed and unsigned big-endian
+values, both signednesses at widths 1, 4 and 8, and unsigned 8-byte values with
+a large minimum. wasm/native tests exercise full reads and a hyperslab; the
+release gate checks the filter parameters and values with h5py.
+
 ## Shared object header messages — 2026-10-27
 
 The reader now follows HDF5 1.14.6 file-wide shared object header messages. It

@@ -38,8 +38,11 @@ python3 -m venv /tmp/moon-hdf5-h5py
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_external_storage_fixture.py
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_shared_messages_fixture.py
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_reference_fixtures.py
+/tmp/moon-hdf5-h5py/bin/python scripts/generate_scaleoffset_fixture.py
 /tmp/moon-hdf5-h5py/bin/python \
   scripts/verify_numeric_layouts_fixture.py testdata/numeric_layouts.h5
+/tmp/moon-hdf5-h5py/bin/python \
+  scripts/verify_scaleoffset_fixture.py testdata/scaleoffset.h5
 ```
 
 The generator refuses to produce the v114 fixtures from any other HDF5 version.
@@ -69,6 +72,7 @@ not part of the release gate.
 | fill_v3.h5 | v108/v108 bounds, v3 fill messages, v1 chunk B-trees |
 | contiguous_fill_v2.h5, contiguous_fill_v3.h5 | Unallocated numeric/string/default fills, scalar/empty/null datasets and allocated partial writes, with legacy and v108 bounds |
 | numeric_layouts.h5 | All standard integer widths and IEEE float16/32/64 in both byte orders; signed 3-byte/20-bit and unsigned 5-byte/40-bit fixed-point values with padding flags, nonstandard precision/offset, binary16 normals/subnormals/zero/special values, custom attributes, custom fills, and normalized binary floats with custom field positions and exponent bias |
+| scaleoffset.h5 | HDF5 1.14.6 integer scale-offset chunks with automatic and fixed bit widths; signed/unsigned values across 1-, 2-, 4- and 8-byte storage, including big-endian fixed-point; unallocated and allocated fill markers, all-fill chunks, configured full precision and a hyperslab |
 | attribute_storage.h5 | Compact and dense attributes, with/without creation-order tracking |
 | layout_v4.h5 | v110 bounds; raw/filtered/unallocated/single-chunk masks, implicit edge and bounded-resizable grids, compact/contiguous data; basic fixed array |
 | fixed_array.h5 | Raw/filtered edge chunks, bounded maximum strides, skipped filters, fills, paged arrays with uninitialized pages and a partial final page |
@@ -146,6 +150,15 @@ file-format specification.
 `datatypes_v114.h5` and `datatypes_v114_default.h5` exercise HDF5 1.14.6
 datatype messages under both `latest` (version 4) and default (earlier
 versions) bounds, independently of the HDF5 2.0 fixtures.
+
+`scaleoffset.h5` covers integer scale-offset chunks from the pinned HDF5 1.14.6
+environment. `/int32_auto` combines one allocated and one unallocated chunk;
+`/int32_fixed` uses a fixed bit count; `/int32_mixed_fill` and
+`/int32_all_fill` exercise the all-ones fill marker inside allocated chunks;
+`/int32_full` uses the configured full-precision raw path. `/int16_be` and
+`/uint16_be` cover signed and unsigned big-endian storage; `/int8`, `/uint8`,
+`/uint32`, `/int64` and `/uint64` cover both signednesses and all remaining
+widths. The verifier checks every value, fill and filter parameter with h5py.
 
 `netcdf4_1_7_5.h5` is a producer-interoperability fixture, not a complete
 netCDF data-model implementation test. `/temperature` is a `(4, 3, 5)` float

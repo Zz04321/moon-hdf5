@@ -77,7 +77,13 @@ filters for each v1 B-tree chunk. Masked-out filters are skipped, including
 unknown optional filters. Deflate uses a zlib wrapper (not a gzip container),
 Adler-32 verification and an output limit derived from chunk dimensions.
 Shuffle restores byte planes; Fletcher32 verifies and removes its trailer.
-Decoded chunks must exactly match the full chunk shape, including edge padding.
+Integer scale-offset reads HDF5 1.14.6's 21-byte chunk header, unpacks
+most-significant-bit-first values, applies the stored minimum and restores the
+declared byte order. The all-ones packed value maps to the declared fill value;
+an unstored fill maps to zero. Configured full precision is accepted only when
+HDF5 bypasses filtering and stores raw element bytes. Floating-point
+scale-offset remains unsupported. Decoded chunks must exactly match the full
+chunk shape, including edge padding.
 
 Layout v4 compact/contiguous storage follows the v3 encoding. Single-chunk
 indexes store a direct address and, when filtered, a byte length and mask.
