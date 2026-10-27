@@ -248,7 +248,9 @@ order, IEEE float32/64 in either byte order, fixed-width or variable-length
 UTF-8 strings, time, bitfield, opaque and variable-length sequence values.
 Variable strings and sequences use 16-byte descriptors and a shared global heap
 collection; empty values use the zero descriptor and repeated payloads share one
-heap object. Sequence bases must be fixed-size datatypes.
+heap object. Sequence bases must be fixed-size datatypes. Custom variable-length
+string fills use the same descriptor and heap collection; variable-length
+sequence fills remain unsupported.
 Filter pipelines remain limited to fixed-size writer values because HDF5 1.14.6
 rejects them on variable-length datasets. Integer scale-offset supports
 automatic or fixed bit counts. Floating-point scale-offset supports f32/f64

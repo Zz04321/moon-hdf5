@@ -1402,9 +1402,11 @@ fn validated_write_fill(
 ) -> Hdf5WriteValues? raise Hdf5Error {
   match fill_value {
     Some(fill) => {
-      guard !writer_values_contain_vlen(values) else {
+      let vlen_string_fill = fill is VariableStringValues(_) &&
+        values is VariableStringValues(_)
+      guard vlen_string_fill || !writer_values_contain_vlen(values) else {
         raise UnsupportedFeature(
-          "custom variable-length fill values are not supported yet",
+          "custom variable-length sequence fills are not supported yet",
         )
       }
       guard writer_value_count(fill) == 1 && same_write_datatype(values, fill) else {
@@ -2578,8 +2580,11 @@ fn encode_chunked_layout(
 }
 
 ///|
-fn encode_fill_value(fill : Hdf5WriteValues) -> Bytes raise Hdf5Error {
-  let encoded = encode_write_values(fill)
+fn encode_fill_value(
+  fill : Hdf5WriteValues,
+  heap~ : WritableGlobalHeap,
+) -> Bytes raise Hdf5Error {
+  let encoded = encode_write_values(fill, heap~)
   let buffer = @buffer.Buffer::Buffer(size_hint=6 + encoded.element_size)
   buffer.write_byte(b'\x03')
   buffer.write_byte(b'\x22')
@@ -3281,7 +3286,7 @@ fn encode_dataset_chunks(
   }
   let encoded = encode_write_values(dataset.values, heap~)
   let fill = match dataset.fill_value {
-    Some(value) => encode_write_values(value).payload
+    Some(value) => encode_write_values(value, heap~).payload
     None => Bytes::make(encoded.element_size, b'\x00')
   }
   let (grid, chunk_count) = chunk_grid(grid_dimensions, chunk_dimensions)
@@ -4642,11 +4647,15 @@ fn Hdf5Writer::object_payload(
       write_header_message(buffer, msg_datatype, encoded.datatype)
       match dataset.fill_value {
         Some(fill) =>
-          write_header_message(buffer, msg_fill_value, encode_fill_value(fill))
+          write_header_message(
+            buffer,
+            msg_fill_value,
+            encode_fill_value(fill, heap~),
+          )
         None => ()
       }
       let filter_fill = match dataset.fill_value {
-        Some(fill) => encode_write_values(fill).payload
+        Some(fill) => encode_write_values(fill, heap~).payload
         None => Bytes::make(encoded.element_size, b'\x00')
       }
       match dataset.storage {
@@ -4840,6 +4849,10 @@ fn Hdf5Writer::global_heap_strings(
   let strings : Array[String] = []
   for dataset in self.datasets {
     collect_heap_strings(strings, dataset.values)
+    match dataset.fill_value {
+      Some(fill) => collect_heap_strings(strings, fill)
+      None => ()
+    }
   }
   for attribute in self.attributes {
     collect_heap_strings(strings, attribute.values)
@@ -4855,6 +4868,13 @@ fn Hdf5Writer::global_heap_sequences(
   for dataset in self.datasets {
     match dataset.values {
       StructuredValues(datatype, items) =>
+        for item in items {
+          collect_heap_sequences(sequences, datatype, item)
+        }
+      _ => ()
+    }
+    match dataset.fill_value {
+      Some(StructuredValues(datatype, items)) =>
         for item in items {
           collect_heap_sequences(sequences, datatype, item)
         }

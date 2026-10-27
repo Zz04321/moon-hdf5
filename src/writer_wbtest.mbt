@@ -1896,7 +1896,7 @@ test "writer rejects invalid time bitfield opaque and sequence types" {
     invalid_fill,
     Some(
       UnsupportedFeature(
-        "custom variable-length fill values are not supported yet",
+        "custom variable-length sequence fills are not supported yet",
       ),
     ),
   )
@@ -2090,46 +2090,50 @@ test "writer rejects filters for variable-length datasets" {
 }
 
 ///|
-test "writer rejects custom variable-length string fills" {
+test "writer round-trips custom variable-length string fills" {
   let writer = Hdf5Writer::new()
-  let chunked = try {
-    writer.add_chunked_dataset(
-      "/strings",
-      [1UL],
-      [1U],
-      VariableStringValues(["value"]),
-      fill_value=VariableStringValues(["missing"]),
-    )
-    None
-  } catch {
-    error => Some(error)
-  }
-  let extensible = try {
-    writer.add_extensible_dataset(
-      "/extensible_strings",
+  writer.add_chunked_dataset(
+    "/strings",
+    [3UL],
+    [2U],
+    VariableStringValues(["value", "", ""]),
+    fill_value=VariableStringValues(["missing"]),
+  )
+  writer.add_extensible_dataset(
+    "/extensible_strings",
+    [0UL],
+    [None],
+    [1U],
+    VariableStringValues([]),
+    fill_value=VariableStringValues(["missing"]),
+  )
+  writer.resize_dataset("/extensible_strings", [4UL])
+
+  let file = Hdf5File::parse(writer.encode())
+  assert_eq(string_values(file.read_dataset("/strings")), ["value", "", ""])
+  assert_eq(string_values(file.read_dataset("/extensible_strings")), [
+    "missing", "missing", "missing", "missing",
+  ])
+
+  let sequence = Datatype::write_vlen_sequence(Datatype::write_integer(true, 4))
+  let unsupported = try {
+    Hdf5Writer::new().add_extensible_dataset(
+      "/sequences",
       [0UL],
       [None],
       [1U],
-      VariableStringValues([]),
-      fill_value=VariableStringValues(["missing"]),
+      StructuredValues(sequence, []),
+      fill_value=StructuredValues(sequence, [Sequence([SignedInteger(1L)])]),
     )
     None
   } catch {
     error => Some(error)
   }
   assert_eq(
-    chunked,
+    unsupported,
     Some(
       UnsupportedFeature(
-        "custom variable-length fill values are not supported yet",
-      ),
-    ),
-  )
-  assert_eq(
-    extensible,
-    Some(
-      UnsupportedFeature(
-        "custom variable-length fill values are not supported yet",
+        "custom variable-length sequence fills are not supported yet",
       ),
     ),
   )

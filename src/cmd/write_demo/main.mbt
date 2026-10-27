@@ -105,6 +105,22 @@ fn run(args : Array[String]) -> Int32 {
       VariableStringValues(["start", "结束"]),
     )
     writer.resize_dataset("/experiment/events", [3UL])
+    writer.add_chunked_dataset(
+      "/experiment/string_fill",
+      [3UL],
+      [2U],
+      VariableStringValues(["value", "", ""]),
+      fill_value=VariableStringValues(["missing"]),
+    )
+    writer.add_extensible_dataset(
+      "/experiment/fill_names",
+      [0UL],
+      [None],
+      [1U],
+      VariableStringValues([]),
+      fill_value=VariableStringValues(["missing"]),
+    )
+    writer.resize_dataset("/experiment/fill_names", [4UL])
     writer.add_attribute("/experiment", "revision", [], UInt64Values([1UL]))
     writer.add_attribute(
       "/experiment/counts",

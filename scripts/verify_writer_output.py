@@ -20,12 +20,14 @@ def verify(path: Path) -> None:
             "counts",
             "events",
             "external",
+            "fill_names",
             "labels",
             "latest",
             "metrics",
             "names",
             "paged_series",
             "series",
+            "string_fill",
         ]
         np.testing.assert_array_equal(
             handle["experiment/counts"][:], [[1, 2, 3], [4, 5, 6]]
@@ -101,6 +103,12 @@ def verify(path: Path) -> None:
         assert events.maxshape == (None,)
         assert events.chunks == (2,)
         assert events.id.get_num_chunks() == 2
+        string_fill = handle["experiment/string_fill"]
+        assert string_fill.fillvalue == b"missing"
+        assert string_fill.asstr()[:].tolist() == ["value", "", ""]
+        fill_names = handle["experiment/fill_names"]
+        assert fill_names.fillvalue == b"missing"
+        assert fill_names.asstr()[:].tolist() == ["missing"] * 4
         unit = handle["experiment/counts"].attrs["unit"]
         assert unit.decode("utf-8").rstrip("\0") == "items"
         assert len(handle["experiment/counts"].attrs) == 1

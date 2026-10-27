@@ -71,6 +71,14 @@ else
 fi
 
 if [ "${SKIP_H5PY:-0}" = "1" ]; then
+  echo "==> Variable-length fill verification skipped (SKIP_H5PY=1)"
+elif [ ! -f testdata/vlen_fills.h5 ]; then
+  echo "==> Variable-length fill verification skipped (fixture unavailable)"
+else
+  "$python" scripts/verify_vlen_fill_fixture.py testdata/vlen_fills.h5
+fi
+
+if [ "${SKIP_H5PY:-0}" = "1" ]; then
   echo "==> NetCDF-4 fixture verification skipped (SKIP_H5PY=1)"
 elif [ ! -f testdata/netcdf4_1_7_5.h5 ]; then
   echo "==> NetCDF-4 fixture verification skipped (fixture unavailable)"

@@ -150,8 +150,8 @@ values, UTF-8 metadata and chunking. Variable-length chunks are always
 allocated within the current shape, so an empty trailing chunk does not depend
 on undefined vlen fill storage. HDF5 1.14.6 rejects filter pipelines for
 variable-length datasets, so the writer now rejects that combination before
-building a file. Custom variable-length fill values remain rejected because
-their heap references require separate fill message ownership rules.
+building a file. At that stage, custom variable-length fill values remained
+rejected; the later fill review below removes that restriction for strings.
 
 ## CLI and examples review — 2026-10-20
 
@@ -165,10 +165,10 @@ executables provide the three runnable examples described in the proposal.
 
 The writer's finite chunked path rejected custom variable-length string fills,
 while the extensible path accepted them and could emit invalid heap references.
-Both entry points now share the same fill validation and reject this unsupported
-case before mutating the builder. Extensible datasets now also validate encoded
-chunk byte size when added, matching finite chunked datasets instead of delaying
-the error until `encode`. Regression tests cover both behaviors.
+At that stage, both entry points shared the same fill validation and rejected
+the case before mutating the builder. Extensible datasets now also validate
+encoded chunk byte size when added, matching finite chunked datasets instead of
+delaying the error until `encode`. Regression tests cover both behaviors.
 
 Public API comments, command examples and proposal wording were checked against
 the implemented behavior. The UTF-8 reader comment now reflects its validation,
@@ -559,7 +559,8 @@ validate their tag and nonzero width; sequence constructors require a
 fixed-size base and recursively copy its datatype. Sequence descriptors use the
 same shared global heap as variable-length strings, with empty values stored as
 zero descriptors and duplicate payloads deduplicated. Custom variable-length
-fills and filter pipelines remain rejected before a file is built.
+sequence fills and variable-length filter pipelines remain rejected before a
+file is built.
 
 Native tests cover little- and big-endian time, offset bitfields, tagged and
 untagged opaque values, empty and repeated sequences, sequence attributes and
@@ -569,3 +570,23 @@ classes, time values and fills, bitfield class and values, opaque tags and
 bytes, sequence dtype, sequence contents and the sequence attribute. Invalid
 width, bit layout, nested-vlen, fill and filter combinations are rejected in
 MoonBit tests.
+
+## Variable-length string fill review — 2026-10-27
+
+The reader now accepts a class-9 variable-length UTF-8 datatype with a custom
+fill message. The fill payload remains a 16-byte descriptor and is resolved
+through the file global heap for unallocated contiguous data, missing chunks,
+point and hyperslab selections, and random-access sources. Variable-length
+sequence fills remain rejected because the HDF5 1.14.6/h5py conversion path
+cannot create the corresponding fill value.
+
+The writer includes custom fill strings in the same global heap planning pass as
+dataset values and attributes, then writes the descriptor in the fill message
+and uses it for chunk initialization. The demo covers a chunked UTF-8 dataset
+and a resized extensible dataset with a custom string fill. h5py 3.13.0/HDF5
+1.14.6 checks the fill metadata and values.
+
+`testdata/vlen_fills.h5` is generated and independently verified with that
+environment. HDF5 1.14.6 requires write intent when h5py materializes a vlen
+fill from an unallocated chunk; MoonBit reads the same file from immutable
+bytes, and the release gate verifies the producer fixture separately.

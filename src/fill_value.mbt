@@ -74,9 +74,9 @@ fn dataset_fill_value(
   guard size == datatype.size else {
     raise InvalidField("fill value size does not match datatype")
   }
-  guard !datatype_contains_vlen(datatype) else {
+  guard datatype.class != 9 || datatype.vlen_is_string else {
     raise UnsupportedFeature(
-      "custom variable-length fill values are not supported yet",
+      "custom variable-length sequence fills are not supported yet",
     )
   }
   reader.read_bytes(size)

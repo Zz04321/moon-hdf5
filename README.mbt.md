@@ -281,7 +281,8 @@ For integer values, `ScaleOffset(0)` selects automatic bit width and a positive
 value fixes the width. For f32/f64 values, the parameter is the number of
 decimal digits retained by HDF5's DSCALE mode. Scale-offset accepts fixed-size
 numeric values, must be the first filter, and cannot be combined with Fletcher32
-for floating-point data.
+for floating-point data. Custom fixed-size and variable-length string fills are
+supported; variable-length sequence fills are rejected.
 
 Run the complete writer example and verify its output independently with h5py:
 
@@ -329,9 +330,9 @@ preserve order and duplicates.
   `ScaleOffset(element_width * 8)` to store an integer chunk unfiltered. Writer
   floating-point data and fill values must be finite, and floating-point
   scale-offset cannot be combined with Fletcher32.
-- Custom variable-length fill values, other writer filters, reference writing
-  and complex-number writing are not supported. Variable-length sequence bases
-  must be fixed-size values.
+- Custom variable-length sequence fills, other writer filters, reference
+  writing and complex-number writing are not supported. Variable-length
+  sequence bases must be fixed-size values.
 - Reference resolution covers legacy object and dataset-region references under
   4- and 8-byte address widths. Region targets must be datasets in the same
   file. Version-4 encoded references and reference writing are not supported.

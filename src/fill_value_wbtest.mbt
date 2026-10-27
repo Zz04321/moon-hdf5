@@ -36,6 +36,28 @@ test "unallocated chunk indexes return fill values" {
 }
 
 ///|
+test "variable-length string fills resolve from the global heap" {
+  let bytes = @fs.read_file_to_bytes("testdata/vlen_fills.h5")
+  let file = Hdf5File::parse(bytes)
+  assert_eq(string_values(file.read_dataset("/contiguous")), [
+    "missing", "missing", "missing", "missing",
+  ])
+  assert_eq(string_values(file.read_dataset("/chunked")), [
+    "first", "fallback", "fallback", "fallback", "fallback", "last",
+  ])
+  assert_eq(string_values(file.read_dataset("/extensible")), [
+    "grow", "grow", "grow", "grow", "grow",
+  ])
+  let sources : Array[&Hdf5Source] = [bytes]
+  let random = Hdf5File::parse_source(sources[0])
+  match
+    random.read_dataset_selection("/chunked", Points([[1UL], [4UL], [5UL]])).values {
+    Strings(values) => assert_eq(values, ["fallback", "fallback", "last"])
+    _ => fail("expected variable-length fill selections")
+  }
+}
+
+///|
 fn fill_test_header(data : Bytes, old~ : Bool = false) -> ObjectHeader {
   {
     _version: 2,
