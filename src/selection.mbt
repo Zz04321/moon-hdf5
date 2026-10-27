@@ -322,6 +322,22 @@ fn read_source_dataset_selection(
   base_address : UInt64,
 ) -> DatasetSelectionResult raise Hdf5Error {
   let (dimensions, indices) = selection_indices(metadata.dataspace, selection)
+  read_source_dataset_indices(
+    source, header, metadata, dimensions, indices, offset_size, length_size, base_address,
+  )
+}
+
+///|
+fn read_source_dataset_indices(
+  source : &Hdf5Source,
+  header : ObjectHeader,
+  metadata : DatasetMetadata,
+  dimensions : Array[UInt64],
+  indices : Array[UInt64],
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> DatasetSelectionResult raise Hdf5Error {
   let payload = match metadata.layout.layout_class {
     0 =>
       selected_payload(
@@ -376,6 +392,22 @@ fn read_dataset_selection(
   base_address : UInt64,
 ) -> DatasetSelectionResult raise Hdf5Error {
   let (dimensions, indices) = selection_indices(metadata.dataspace, selection)
+  read_dataset_indices(
+    bytes, header, metadata, dimensions, indices, offset_size, length_size, base_address,
+  )
+}
+
+///|
+fn read_dataset_indices(
+  bytes : Bytes,
+  header : ObjectHeader,
+  metadata : DatasetMetadata,
+  dimensions : Array[UInt64],
+  indices : Array[UInt64],
+  offset_size : Int32,
+  length_size : Int32,
+  base_address : UInt64,
+) -> DatasetSelectionResult raise Hdf5Error {
   let payload = selected_payload(
     bytes, header, metadata, indices, offset_size, length_size, base_address,
   )

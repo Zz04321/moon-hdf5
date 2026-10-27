@@ -86,7 +86,8 @@ not part of the release gate.
 | datatypes_v200.h5 | Nested compound and array types, vlen sequences and UTF-8 strings, bitfield, opaque, time, object/region references, HDF5 2.0 complex types, structured attributes and fills |
 | netcdf4_1_7_5.h5 | Real netCDF4 1.7.5/libnetcdf 4.10.1/HDF5 2.2.0 output: groups, dimension variables, shuffled/deflated chunks with a v1 B-tree index, UTF-8 strings, numeric values and NetCDF dimension-reference attributes |
 | shared_messages.h5 | HDF5 1.14.6 SOHM tables and heap IDs: internally shared datatype/dataspace fields, whole shared attributes, shared fills, dense attribute B-tree records, and a committed datatype used by a dataset and attribute |
-| references.h5, references_v108.h5 | HDF5 1.14.6 `latest` and v108 object references to a dataset, group, child dataset, root group and committed datatype, plus an attribute reference, null reference, deleted target and region reference |
+| references.h5, references_v108.h5 | HDF5 1.14.6 `latest` and v108 object references to a dataset, group, child dataset, root group and committed datatype, plus an attribute reference, null reference, deleted target and 11 dataset-region references covering none/all, points, regular hyperslabs and block unions |
+| references_layouts_32.h5 | HDF5 1.14.6 `latest` with 4-byte offsets and 8-byte lengths; legacy region references to compact, contiguous and shuffle/deflate chunked datasets |
 | external_storage.h5, external_storage_32.h5 | HDF5 1.14.6 external raw data split across two files and read at a nonzero offset under 8-byte addresses and lengths, plus a 4-byte-address/8-byte-length legacy file; supporting binary slot files are committed beside them |
 
 Group datasets `value_NN` contain `[NN, NN + 100]`. Compact groups must read
@@ -126,10 +127,19 @@ are resolved by MoonBit; the generator also dereferences them with h5py.
 
 `references.h5` and `references_v108.h5` use HDF5 1.14.6 `latest` and v108
 bounds. They cover dataset, group, root, committed-datatype and attribute
-references, a null reference, a deleted-target reference and a region reference.
-MoonBit tests resolve the valid object references in memory and through
-`Hdf5Source`, reject the dangling address, and leave the 12-byte region
-reference encoded.
+references, null and deleted-target references, and 11 dataset-region
+references for 1D and 2D slices, strided/blocked hyperslabs, ordered points,
+block unions, all/empty selections, scalar data, null and dangling targets.
+MoonBit tests resolve and read both reference kinds in memory and through
+`Hdf5Source`. The `latest` fixture uses hyperslab version 3, the v108 fixture
+uses version 1, and synthetic tests cover version 2. The h5py verifier
+independently checks every valid target and selected value.
+
+`references_layouts_32.h5` verifies region references in a 4-byte-address file.
+Each 8-byte reference points to a compact, contiguous or filtered chunked target
+and selects a hyperslab or ordered points. The verifier checks target
+dereferencing and dataset layouts with h5py, then decodes the raw global-heap
+selection bytes according to the HDF5 file-format specification.
 
 `datatypes_v114.h5` and `datatypes_v114_default.h5` exercise HDF5 1.14.6
 datatype messages under both `latest` (version 4) and default (earlier

@@ -13,7 +13,7 @@ their global heap objects on demand. Source-backed file addresses remain
 | Navigation | heap, symbol_table, link, hdf5_file, resolver | Groups, links, paths and cross-file resolution |
 | Dense metadata | fractal_heap, v2_metadata | Fractal heaps and metadata v2 B-trees |
 | Metadata | dataspace, datatype, data_layout | Shapes, types and storage |
-| Values | dataset, selection, chunked, direct_chunks, filter, fill_value, global_heap, attribute, streaming | Value decoding and bounded tile iteration |
+| Values | dataset, selection, region_reference, reference, chunked, direct_chunks, filter, fill_value, global_heap, attribute, streaming | Value decoding, reference resolution and bounded tile iteration |
 | Writing | writer | New-file encoding for groups, datasets and attributes |
 
 Dataset metadata parsing is separate from storage reads and value decoding.
@@ -137,7 +137,22 @@ Reference values remain encoded bytes in the value tree so the decoder stays
 layout-agnostic. `Hdf5File::resolve_object_reference` interprets the eight-byte
 object-reference form as a file address, validates its object header and finds a
 deterministic hard-link path with a bounded hierarchy walk. Null references
-return `None`; dangling addresses and region references are rejected explicitly.
+return `None`; dangling addresses are rejected explicitly.
+
+`Hdf5File::resolve_region_reference` reads the global-heap object named by a
+legacy dataset-region reference, resolves its target dataset in the same file
+and parses the serialized dataspace selection. It supports none/all selections,
+point-selection versions 1–2 and hyperslab versions 1–3, including regular
+stride/count/block selections and irregular block lists. Regular hyperslab axes
+are stored as interleaved start/stride/count/block vectors in version 3. Rank,
+bounds, counts, encoding widths and trailing bytes are validated. The serialized
+reference is `offset_size + 4` bytes, so the same decoder handles the 4- and
+8-byte-address fixtures.
+`read_region_reference` expands the selection to linear indices and reuses the
+normal dataset selection path, so compact, contiguous and chunked storage share
+the same reading and filter behavior, including filtered chunks. Regular
+hyperslabs report their `count * block` shape; points and irregular blocks
+report a flat element count. Version-4 encoded references are not supported.
 HDF5 2.0 datatype-message v5 encodings for compound, array and complex types are
 accepted alongside earlier encodings.
 Fixed strings honor null-terminated, null-padded and space-padded forms plus

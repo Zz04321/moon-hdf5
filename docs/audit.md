@@ -102,8 +102,9 @@ Regression fixtures generated with h5py 3.16.0 and HDF5 2.0.0 cover nested
 compounds, array members, vlen sequences and UTF-8 strings, bitfields, opaque
 values, time, object and region references, and both complex widths and byte
 orders. Structured attributes, custom fixed-size fills and point selections use
-the same decoder. References are intentionally returned as encoded bytes rather
-than resolved objects or selected regions.
+the same decoder. At that stage, references were intentionally returned as
+encoded bytes rather than resolved objects or selected regions; later reviews
+added object- and region-reference resolution.
 
 Parser regressions reject truncated properties, out-of-bounds compound members,
 inconsistent array/complex sizes and invalid tags. Fixed-point subtypes support
@@ -314,7 +315,8 @@ superblocks, storage layouts, chunk indexes, filters, datatypes, selections and
 writer outputs, and separates virtual datasets, external data storage, SWMR,
 parallel HDF5, third-party filters, in-place editing, external-link
 dereferencing in `Hdf5File` and reference resolution as out of scope at that
-time; object-reference resolution was added in the follow-up review below.
+time; object- and region-reference resolution were added in the follow-up
+reviews below.
 
 The proposal wording was aligned with the repository: it targets the HDF5
 1.14.6 common-file profile and the HDF5 File Format Specification v3.0, records
@@ -442,18 +444,34 @@ two-file boundary, missing and truncated sources and direct `Hdf5File`
 rejection. The release gate independently rechecks both fixtures and their slot
 declarations with h5py.
 
-## Object-reference review — 2026-10-27
+## Reference-resolution review — 2026-10-27
 
 An h5py 3.13.0/HDF5 1.14.6 probe confirmed that the supported object-reference
 payload is an eight-byte object-header address. The implementation now exposes
 `Hdf5File::resolve_object_reference`, validates the target header, classifies
 groups, datasets and committed datatypes, and finds a deterministic hard-link
 path with cycle and depth limits. Empty references return `None`; malformed
-lengths, dangling addresses and 12-byte region references are rejected.
+lengths and dangling addresses are rejected. Region references are directed to
+their dedicated API rather than decoded as object references.
 
 `references.h5` and `references_v108.h5` cover dataset, group, child dataset,
 root group, committed datatype, attribute, null, deleted-target and region
 references under latest and v108 bounds. The tests run against both in-memory
 bytes and a random-access source. An independent h5py verifier checks the same
-valid targets and confirms that the deleted target cannot be reopened. Region
-selection decoding and version-4 encoded references remain out of scope.
+valid targets and confirms that the deleted target cannot be reopened.
+
+The region-reference follow-up adds `resolve_region_reference` and
+`read_region_reference`. It reads the reference's global-heap payload, validates
+that the target is a dataset in the same file, and decodes none/all, point and
+regular or irregular hyperslab selections. The committed fixtures contain 11
+region references covering 1D and 2D regular selections, ordered points, block
+unions, all/empty, scalar, null and dangling targets. The `latest` fixture uses
+hyperslab version 3, the v108 fixture uses version 1, and synthetic tests cover
+version 2. A third fixture uses 4-byte offsets and 8-byte lengths with region
+references to compact, contiguous and shuffle/deflate chunked datasets. Its
+serialized 8-byte references and global-heap selections are checked directly
+against the file-format specification; h5py verifies the target objects and
+layout metadata. Malformed tests cover unsupported point versions, oversized
+ranks, out-of-bounds points and blocks, invalid heap identifiers and a truncated
+global heap collection. Version-4 encoded references, object references in
+4-byte-address files and reference writing remain out of scope.

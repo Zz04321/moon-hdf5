@@ -37,7 +37,9 @@ an executable example.
   float16/32/64, string, compound, enum, array, bitfield, opaque, reference,
   variable-length sequence, time and complex values.
 - Resolves eight-byte object references to their target address, object kind and
-  first hard-link path, including references stored in datasets and attributes.
+  first hard-link path; resolves legacy dataset-region references to their
+  target dataset, dataspace selection and selected values, including 4- and
+  8-byte-address files and compact, contiguous or chunked target storage.
 - Supports compact, contiguous and chunked layouts with the common HDF5 chunk
   indexes.
 - Applies deflate, shuffle and Fletcher32 filters, including per-chunk masks.
@@ -129,8 +131,13 @@ Simple values are returned as `Integers`, `UnsignedIntegers`, `Floats`,
 References are returned as encoded bytes. Pass an eight-byte object reference to
 `resolve_object_reference` to obtain its address, kind and first named path. The
 all-zero null reference returns `None`; dangling addresses raise an error.
-Region references remain encoded bytes. To resolve a reference read from a
-file reached through `Hdf5Resolver`, open that file with `resolver.open(node.file)`.
+Pass a legacy dataset-region reference to `resolve_region_reference` to obtain
+its dataset, path, dataspace and selection, or to `read_region_reference` to
+read the selected values. Both return `None` for a null reference; region
+targets must be datasets in the same file. Region-reference storage is
+`offset_size + 4` bytes; selected-value reads reuse the normal selection path,
+including filtered chunks. To resolve a reference read from a file reached
+through `Hdf5Resolver`, open that file with `resolver.open(node.file)`.
 
 `read_dataset_metadata` does not load dataset values. Selection reads support
 compact, contiguous and chunked datasets; chunked reads decode only intersecting
@@ -291,8 +298,11 @@ preserve order and duplicates.
   and non-IEEE floating-point layouts are not supported.
 - Custom variable-length fill values, additional writer filters and reference
   writing are not supported.
-- Reference resolution covers eight-byte object references. Region references,
-  version-4 encoded references and selected regions remain unsupported.
+- Reference resolution covers eight-byte object references and legacy
+  dataset-region references. Region references support 4- and 8-byte file
+  addresses, but region targets must be datasets in the same file. Object
+  references in 4-byte-address files, version-4 encoded references and reference
+  writing are not supported.
 - Variable-length writer datasets cannot use filters; HDF5 1.14.6 rejects this
   combination natively.
 

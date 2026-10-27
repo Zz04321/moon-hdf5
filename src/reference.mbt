@@ -94,17 +94,20 @@ fn Hdf5File::find_reference_path(
 ///|
 /// Resolves an eight-byte HDF5 object reference to its target object.
 ///
-/// The all-zero null reference returns `None`. Region references (12 bytes),
-/// malformed references and dangling addresses raise an error. References are
-/// local to this file; use `Hdf5Resolver` to obtain a file that contains a
-/// remotely linked dataset before resolving its stored references.
+/// The all-zero null reference returns `None`. Region references must be
+/// resolved with `resolve_region_reference`; malformed references and dangling
+/// addresses raise an error. References are local to this file; use
+/// `Hdf5Resolver` to obtain a file that contains a remotely linked dataset
+/// before resolving its stored references.
 pub fn Hdf5File::resolve_object_reference(
   self : Hdf5File,
   reference : Bytes,
 ) -> Hdf5ReferenceTarget? raise Hdf5Error {
   guard reference.length() == 8 else {
     if reference.length() == 12 {
-      raise UnsupportedFeature("region reference resolution is not supported")
+      raise InvalidArgument(
+        "region references require resolve_region_reference",
+      )
     }
     raise InvalidField(
       "object reference must be 8 bytes, found " +
