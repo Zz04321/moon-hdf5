@@ -105,7 +105,7 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | Numeric values | Little-endian int/uint1–8 and IEEE float32/64; standard widths are checked by h5py and nonstandard widths by MoonBit round-trip | Big-endian and nonstandard floating-point output are absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Variable-length sequence output is absent |
 | Structured values | Packed compound, enum and fixed array values | Reference, bitfield, opaque, time and complex output are absent |
-| Filters | Shuffle, deflate and Fletcher32 in HDF5 pipeline order for fixed-size values | Scale-offset and other additional filters, per-chunk caller masks and variable-length filters are absent |
+| Filters | Shuffle, deflate, Fletcher32 and integer scale-offset with automatic or fixed bits, in HDF5 pipeline order for fixed-size values | Floating-point scale-offset, other filters, per-chunk caller masks and variable-length filters are absent; scale-offset must lead the pipeline |
 | Fill values | Default and custom fixed-size fills, including structured fills | Custom variable-length fills are rejected |
 | Extensible datasets | One unlimited axis, in-memory resize and append | MoonBit does not modify an existing file in place |
 

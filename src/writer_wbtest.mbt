@@ -748,6 +748,192 @@ test "writer emits multi-chunk fills and filter pipelines" {
 }
 
 ///|
+test "writer emits integer scale-offset chunks" {
+  let writer = Hdf5Writer::new()
+  writer.add_chunked_dataset(
+    "/auto",
+    [8UL],
+    [4U],
+    Int32Values([10, -7, 12, 13, 100, -7, 101, 102]),
+    fill_value=Int32Values([-7]),
+    filters=[ScaleOffset(0)],
+  )
+  writer.add_chunked_dataset(
+    "/fixed",
+    [6UL],
+    [3U],
+    Int16Values([100, 101, 102, 200, 201, 202]),
+    fill_value=Int16Values([-1]),
+    filters=[ScaleOffset(4)],
+  )
+  writer.add_chunked_dataset(
+    "/pipeline",
+    [6UL],
+    [3U],
+    Int32Values([1000, 1001, 1002, 2000, 2001, 2002]),
+    fill_value=Int32Values([-1]),
+    filters=[ScaleOffset(0), Deflate(6), Fletcher32],
+  )
+  writer.add_chunked_dataset(
+    "/full",
+    [4UL],
+    [2U],
+    Int32Values([-5, -4, -3, -2]),
+    fill_value=Int32Values([0]),
+    filters=[ScaleOffset(32)],
+  )
+  writer.add_chunked_dataset(
+    "/i8",
+    [4UL],
+    [4U],
+    Int8Values([-5, -1, 7, 9]),
+    fill_value=Int8Values([-1]),
+    filters=[ScaleOffset(0)],
+  )
+  writer.add_chunked_dataset(
+    "/u16",
+    [3UL],
+    [3U],
+    UInt16Values([10000, 10001, 10002]),
+    fill_value=UInt16Values([42]),
+    filters=[ScaleOffset(0)],
+  )
+  writer.add_chunked_dataset(
+    "/i64",
+    [3UL],
+    [3U],
+    Int64Values([-(1L << 40), 0L, 1L << 40]),
+    fill_value=Int64Values([-1L]),
+    filters=[ScaleOffset(0)],
+  )
+  writer.add_chunked_dataset(
+    "/u64",
+    [3UL],
+    [3U],
+    UInt64Values([1UL << 40, (1UL << 40) + 1UL, (1UL << 40) + 2UL]),
+    fill_value=UInt64Values([7UL]),
+    filters=[ScaleOffset(0)],
+  )
+  let file = Hdf5File::parse(writer.encode())
+  assert_eq(integer_values(file.read_dataset("/auto")), [
+    10L, -7L, 12L, 13L, 100L, -7L, 101L, 102L,
+  ])
+  assert_eq(integer_values(file.read_dataset("/fixed")), [
+    100L, 101L, 102L, 200L, 201L, 202L,
+  ])
+  assert_eq(integer_values(file.read_dataset("/pipeline")), [
+    1000L, 1001L, 1002L, 2000L, 2001L, 2002L,
+  ])
+  assert_eq(integer_values(file.read_dataset("/full")), [-5L, -4L, -3L, -2L])
+  assert_eq(integer_values(file.read_dataset("/i8")), [-5L, -1L, 7L, 9L])
+  assert_eq(unsigned_values(file.read_dataset("/u16")), [
+    10000UL, 10001UL, 10002UL,
+  ])
+  assert_eq(integer_values(file.read_dataset("/i64")), [
+    -(1L << 40),
+    0L,
+    1L << 40,
+  ])
+  assert_eq(unsigned_values(file.read_dataset("/u64")), [
+    1UL << 40,
+    (1UL << 40) + 1UL,
+    (1UL << 40) + 2UL,
+  ])
+}
+
+///|
+test "writer validates scale-offset filters" {
+  let writer = Hdf5Writer::new()
+  let cases : Array[Hdf5Error?] = [
+    try {
+      writer.add_chunked_dataset(
+        "/float",
+        [1UL],
+        [1U],
+        Float32Values([Float(1.5)]),
+        filters=[ScaleOffset(0)],
+      )
+      None
+    } catch {
+      error => Some(error)
+    },
+    try {
+      writer.add_chunked_dataset("/bits", [1UL], [1U], Int32Values([1]), filters=[
+        ScaleOffset(33),
+      ])
+      None
+    } catch {
+      error => Some(error)
+    },
+    try {
+      writer.add_chunked_dataset("/duplicate", [1UL], [1U], Int32Values([1]), filters=[
+        ScaleOffset(0),
+        ScaleOffset(0),
+      ])
+      None
+    } catch {
+      error => Some(error)
+    },
+    try {
+      writer.add_chunked_dataset("/order", [1UL], [1U], Int32Values([1]), filters=[
+        Deflate(6),
+        ScaleOffset(0),
+      ])
+      None
+    } catch {
+      error => Some(error)
+    },
+    try {
+      writer.add_chunked_dataset("/full_range", [1UL], [1U], Int32Values([0]), filters=[
+        ScaleOffset(0),
+      ])
+      writer.add_chunked_dataset("/wide", [1UL], [1U], UInt32Values([0U]), filters=[
+        ScaleOffset(0),
+      ])
+      None
+    } catch {
+      error => Some(error)
+    },
+  ]
+  assert_eq(cases, [
+    Some(
+      UnsupportedFeature(
+        "scale-offset writer filter requires fixed-point integer values",
+      ),
+    ),
+    Some(InvalidArgument("scale-offset minimum bits exceed the datatype width")),
+    Some(InvalidArgument("scale-offset must be the first writer filter")),
+    Some(InvalidArgument("scale-offset must be the first writer filter")),
+    None,
+  ])
+}
+
+///|
+test "writer rejects automatic full-range scale-offset chunks" {
+  let writer = Hdf5Writer::new()
+  writer.add_chunked_dataset(
+    "/values",
+    [2UL],
+    [2U],
+    Int8Values([-128, 127]),
+    fill_value=Int8Values([0]),
+    filters=[ScaleOffset(0)],
+  )
+  let result = try {
+    writer.encode() |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    result,
+    Some(
+      UnsupportedFeature("scale-offset automatic bits require full precision"),
+    ),
+  )
+}
+
+///|
 test "writer validates chunk metadata filters and fill types" {
   let writer = Hdf5Writer::new()
   let cases : Array[Hdf5Error?] = [

@@ -85,6 +85,14 @@ HDF5 bypasses filtering and stores raw element bytes. Floating-point
 scale-offset remains unsupported. Decoded chunks must exactly match the full
 chunk shape, including edge padding.
 
+The writer emits integer scale-offset as the first filter in a chunk pipeline.
+It excludes fill values from the minimum and maximum, computes automatic bits
+from the resulting span, writes the 21-byte header and packs differences
+most-significant-bit first. Fill values become the all-ones marker. A configured
+full-width filter stores raw element bytes. Automatic full-range chunks are
+rejected because HDF5 1.14.6 cannot decode the header form it emits for that
+case, so callers must select the raw full-width path explicitly.
+
 Layout v4 compact/contiguous storage follows the v3 encoding. Single-chunk
 indexes store a direct address and, when filtered, a byte length and mask.
 Implicit indexes address an early-allocated array of unfiltered chunks; the
@@ -236,7 +244,8 @@ IEEE float32/64, and fixed-width or variable-length UTF-8 strings. Variable
 strings use 16-byte descriptors and a shared global heap collection; empty
 strings use the zero descriptor and repeated strings share one heap object.
 Filters remain limited to fixed-size writer values because HDF5 1.14.6 rejects
-filter pipelines on variable-length datasets.
+filter pipelines on variable-length datasets. Integer scale-offset supports
+automatic or fixed bit counts and must precede shuffle, deflate and Fletcher32.
 Narrow integer constructors validate every value before truncating it to the
 encoded width. Structured values reuse the reader's recursive `Datatype` and
 `DatasetValue` model. The writer encodes version-three compound, enum and array

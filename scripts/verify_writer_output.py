@@ -5,6 +5,11 @@ import h5py
 import numpy as np
 
 
+def filter_records(dataset):
+    plist = dataset.id.get_create_plist()
+    return [plist.get_filter(index) for index in range(plist.get_nfilters())]
+
+
 def verify(path: Path) -> None:
     with h5py.File(path, "r") as handle:
         assert list(handle) == ["experiment", "metadata", "structured", "types"]
@@ -124,6 +129,44 @@ def verify(path: Path) -> None:
         assert chunked_i16.shuffle
         assert chunked_i16.compression == "gzip"
         assert chunked_i16.fletcher32
+        scaleoffset_i32 = handle["types/scaleoffset_i32"]
+        np.testing.assert_array_equal(
+            scaleoffset_i32[:], [10, -7, 12, 13, 100, -7, 101, 102]
+        )
+        assert scaleoffset_i32.fillvalue == -7
+        (filter_id, flags, parameters, name), = filter_records(scaleoffset_i32)
+        assert (filter_id, flags, name) == (6, 1, b"scaleoffset")
+        assert parameters[:8] == (2, 0, 4, 0, 4, 1, 0, 1)
+        assert parameters[8] == 0xFFFFFFF9
+        scaleoffset_pipeline = handle["types/scaleoffset_pipeline"]
+        np.testing.assert_array_equal(
+            scaleoffset_pipeline[:], [100, 101, 102, 200, 201, 202]
+        )
+        assert scaleoffset_pipeline.fillvalue == -1
+        assert scaleoffset_pipeline.fletcher32
+        records = filter_records(scaleoffset_pipeline)
+        assert [(record[0], record[1], record[3]) for record in records] == [
+            (6, 1, b"scaleoffset"),
+            (1, 0, b"deflate"),
+            (3, 0, b"fletcher32"),
+        ]
+        assert records[0][2][:8] == (2, 4, 3, 0, 2, 1, 0, 1)
+        assert records[0][2][8] == 0xFFFF
+        scaleoffset_u64 = handle["types/scaleoffset_u64"]
+        np.testing.assert_array_equal(
+            scaleoffset_u64[:], [1 << 40, (1 << 40) + 1, (1 << 40) + 2]
+        )
+        assert scaleoffset_u64.fillvalue == 7
+        (filter_id, flags, parameters, name), = filter_records(scaleoffset_u64)
+        assert (filter_id, flags, name) == (6, 1, b"scaleoffset")
+        assert parameters[:8] == (2, 0, 3, 0, 8, 0, 0, 1)
+        assert parameters[8:10] == (7, 0)
+        scaleoffset_full = handle["types/scaleoffset_full"]
+        np.testing.assert_array_equal(scaleoffset_full[:], [-5, -4, -3, -2])
+        assert scaleoffset_full.fillvalue == 0
+        (filter_id, flags, parameters, name), = filter_records(scaleoffset_full)
+        assert (filter_id, flags, name) == (6, 1, b"scaleoffset")
+        assert parameters[:8] == (2, 32, 2, 0, 4, 1, 0, 1)
         growing_f32 = handle["types/growing_f32"]
         np.testing.assert_array_equal(growing_f32[:], [1.25, 2.5, 3.75, -1.0])
         assert growing_f32.dtype == np.dtype("<f4")

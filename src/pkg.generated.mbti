@@ -297,6 +297,7 @@ pub(all) enum Hdf5WriteFilter {
   Shuffle
   Deflate(Int32)
   Fletcher32
+  ScaleOffset(Int32)
 } derive(Eq, @debug.Debug)
 pub fn Hdf5WriteFilter::equal(Self, Self) -> Bool
 pub fn Hdf5WriteFilter::not_equal(Self, Self) -> Bool

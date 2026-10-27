@@ -149,6 +149,38 @@ fn run(args : Array[String]) -> Int32 {
       fill_value=Int16Values([-7]),
       filters=[Shuffle, Deflate(6), Fletcher32],
     )
+    writer.add_chunked_dataset(
+      "/types/scaleoffset_i32",
+      [8UL],
+      [4U],
+      Int32Values([10, -7, 12, 13, 100, -7, 101, 102]),
+      fill_value=Int32Values([-7]),
+      filters=[ScaleOffset(0)],
+    )
+    writer.add_chunked_dataset(
+      "/types/scaleoffset_pipeline",
+      [6UL],
+      [3U],
+      Int16Values([100, 101, 102, 200, 201, 202]),
+      fill_value=Int16Values([-1]),
+      filters=[ScaleOffset(4), Deflate(6), Fletcher32],
+    )
+    writer.add_chunked_dataset(
+      "/types/scaleoffset_u64",
+      [3UL],
+      [3U],
+      UInt64Values([1UL << 40, (1UL << 40) + 1UL, (1UL << 40) + 2UL]),
+      fill_value=UInt64Values([7UL]),
+      filters=[ScaleOffset(0)],
+    )
+    writer.add_chunked_dataset(
+      "/types/scaleoffset_full",
+      [4UL],
+      [2U],
+      Int32Values([-5, -4, -3, -2]),
+      fill_value=Int32Values([0]),
+      filters=[ScaleOffset(32)],
+    )
     writer.add_extensible_dataset(
       "/types/growing_f32",
       [0UL],

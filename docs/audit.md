@@ -407,20 +407,29 @@ are unpacked most-significant bit first, added to the stored minimum and written
 back in the datatype's declared byte order. Dataset and hyperslab reads share
 the normal chunk-decoding path.
 
-Floating-point scale-offset remains explicitly unsupported, as does writer
-output for this filter. A filtered header whose per-chunk bit count equals the
-full element width is rejected: HDF5 1.14.6 can emit that automatic full-range
-encoding but fails to read it back. Files requiring a genuine full-precision
-representation use the configured full-width path, which stores unfiltered
-elements.
+The writer now emits the same integer filter for 1–8-byte signed and unsigned
+values. `ScaleOffset(0)` computes per-chunk bits from the span excluding fills;
+a positive value fixes the bit count. The writer stores the 21-byte minimum
+header, packs most-significant-bit first and uses the all-ones fill marker. A
+configured full-width filter bypasses filtering and stores raw elements.
+Automatic full-range chunks are rejected because HDF5 1.14.6 cannot read the
+header form it emits for that case; callers must request the full-width raw
+path explicitly. Scale-offset must be the first writer filter.
+
+Floating-point scale-offset remains explicitly unsupported. A reader header
+whose per-chunk bit count equals the full element width is rejected because it
+is not interoperable with HDF5 1.14.6.
 
 `testdata/scaleoffset.h5` is generated and independently verified with h5py
 3.13.0/HDF5 1.14.6. It covers automatic bits over two chunks with an
 unallocated fill chunk, fixed bits, fill values inside an allocated chunk,
 an all-fill chunk, configured full precision, signed and unsigned big-endian
 values, both signednesses at widths 1, 4 and 8, and unsigned 8-byte values with
-a large minimum. wasm/native tests exercise full reads and a hyperslab; the
-release gate checks the filter parameters and values with h5py.
+a large minimum. Writer tests cover both signednesses at every width, automatic
+and fixed bits, fills, full precision, pipeline order and invalid inputs.
+wasm/native tests exercise full reads and a hyperslab; the release gate writes
+automatic, fixed, pipeline, 8-byte unsigned and full-precision datasets and
+checks their values and filter parameters with h5py.
 
 ## Shared object header messages — 2026-10-27
 

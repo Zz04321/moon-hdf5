@@ -160,6 +160,8 @@ pub(all) enum Hdf5WriteFilter {
   Shuffle
   Deflate(Int32)
   Fletcher32
+  /// Integer scale-offset; zero selects automatic bits.
+  ScaleOffset(Int32)
 } derive(Eq, @debug.Debug)
 
 ///|
@@ -1063,10 +1065,11 @@ fn validate_write_filters(
   let mut saw_shuffle = false
   let mut saw_deflate = false
   let mut saw_fletcher = false
+  let mut saw_scaleoffset = false
   for filter in filters {
     match filter {
       Shuffle => {
-        guard !saw_shuffle && !saw_deflate && !saw_fletcher else {
+        guard !saw_shuffle && !saw_deflate && !saw_fletcher && !saw_scaleoffset else {
           raise InvalidArgument("shuffle must be the first writer filter")
         }
         saw_shuffle = true
@@ -1082,6 +1085,15 @@ fn validate_write_filters(
           raise InvalidArgument("duplicate Fletcher32 writer filter")
         }
         saw_fletcher = true
+      }
+      ScaleOffset(minbits) => {
+        guard !saw_scaleoffset && !saw_shuffle && !saw_deflate && !saw_fletcher else {
+          raise InvalidArgument("scale-offset must be the first writer filter")
+        }
+        guard minbits >= 0 else {
+          raise InvalidArgument("invalid scale-offset writer filter")
+        }
+        saw_scaleoffset = true
       }
     }
   }
@@ -1105,6 +1117,19 @@ fn validate_writer_filters_for_values(
     raise UnsupportedFeature(
       "filters are not supported for variable-length datasets",
     )
+  }
+  for filter in filters {
+    match filter {
+      ScaleOffset(minbits) => {
+        let (element_size, _) = writer_scaleoffset_layout(values)
+        guard minbits <= element_size * 8 else {
+          raise InvalidArgument(
+            "scale-offset minimum bits exceed the datatype width",
+          )
+        }
+      }
+      _ => ()
+    }
   }
 }
 
@@ -2185,10 +2210,229 @@ fn encode_fill_value(fill : Hdf5WriteValues) -> Bytes raise Hdf5Error {
 }
 
 ///|
+fn writer_scaleoffset_layout(
+  values : Hdf5WriteValues,
+) -> (Int32, Bool) raise Hdf5Error {
+  match values {
+    Int8Values(_) => (1, true)
+    Int16Values(_) => (2, true)
+    Int32Values(_) => (4, true)
+    Int64Values(_) => (8, true)
+    UInt8Values(_) => (1, false)
+    UInt16Values(_) => (2, false)
+    UInt32Values(_) => (4, false)
+    UInt64Values(_) => (8, false)
+    _ =>
+      raise UnsupportedFeature(
+        "scale-offset writer filter requires fixed-point integer values",
+      )
+  }
+}
+
+///|
+fn scaleoffset_read_raw(data : Bytes, offset : Int32, size : Int32) -> UInt64 {
+  let mut value = 0UL
+  for index in 0..<size {
+    value = value | (data[offset + index].to_uint64() << (index * 8))
+  }
+  value
+}
+
+///|
+fn scaleoffset_bit_mask(size : Int32) -> UInt64 {
+  if size == 8 {
+    0xFFFFFFFFFFFFFFFFUL
+  } else {
+    (1UL << (size * 8)) - 1UL
+  }
+}
+
+///|
+fn scaleoffset_ceil_log2(value : UInt64) -> Int32 {
+  let mut remaining = value - 1UL
+  let mut bits = 0
+  while remaining > 0UL {
+    bits = bits + 1
+    remaining = remaining >> 1
+  }
+  bits
+}
+
+///|
+fn scaleoffset_min_max(
+  data : Bytes,
+  element_size : Int32,
+  signed : Bool,
+  fill_raw : UInt64,
+) -> (UInt64, UInt64) {
+  let bits = element_size * 8
+  let count = data.length() / element_size
+  let mut found = false
+  let mut min_raw = 0UL
+  let mut max_raw = 0UL
+  let mut min_value = 0L
+  let mut max_value = 0L
+  for index in 0..<count {
+    let raw = scaleoffset_read_raw(data, index * element_size, element_size)
+    if raw == fill_raw {
+      continue
+    }
+    if signed {
+      let value = decode_signed_bits(raw, bits)
+      if !found {
+        min_raw = raw
+        max_raw = raw
+        min_value = value
+        max_value = value
+        found = true
+      } else {
+        if value < min_value {
+          min_value = value
+          min_raw = raw
+        }
+        if value > max_value {
+          max_value = value
+          max_raw = raw
+        }
+      }
+    } else if !found {
+      min_raw = raw
+      max_raw = raw
+      found = true
+    } else {
+      if raw < min_raw {
+        min_raw = raw
+      }
+      if raw > max_raw {
+        max_raw = raw
+      }
+    }
+  }
+  (min_raw, max_raw)
+}
+
+///|
+fn scaleoffset_client_data(
+  minbits : Int32,
+  element_size : Int32,
+  signed : Bool,
+  chunk_elements : Int32,
+  fill : Bytes,
+) -> Array[UInt32] {
+  let parameters : Array[UInt32] = Array::make(20, 0U)
+  parameters[0] = 2U
+  parameters[1] = minbits.reinterpret_as_uint()
+  parameters[2] = chunk_elements.reinterpret_as_uint()
+  parameters[4] = element_size.reinterpret_as_uint()
+  parameters[5] = if signed { 1U } else { 0U }
+  parameters[7] = 1U
+  for index in 0..<element_size {
+    parameters[8 + index / 4] = parameters[8 + index / 4] |
+      (fill[index].to_uint() << (index % 4 * 8))
+  }
+  parameters
+}
+
+///|
+fn encode_scaleoffset_chunk(
+  data : Bytes,
+  configured_bits : Int32,
+  element_size : Int32,
+  signed : Bool,
+  fill : Bytes,
+) -> Bytes raise Hdf5Error {
+  guard element_size >= 1 &&
+    element_size <= 8 &&
+    data.length() % element_size == 0 &&
+    fill.length() == element_size else {
+    raise InvalidField("invalid scale-offset writer chunk")
+  }
+  let bits = element_size * 8
+  if configured_bits == bits {
+    return data
+  }
+  let count = data.length() / element_size
+  let fill_raw = scaleoffset_read_raw(fill, 0, element_size)
+  let (min_raw, max_raw) = scaleoffset_min_max(
+    data, element_size, signed, fill_raw,
+  )
+  let value_mask = scaleoffset_bit_mask(element_size)
+  let difference = (max_raw - min_raw) & value_mask
+  let minbits = if configured_bits == 0 {
+    let span = difference + 1UL
+    let computed = scaleoffset_ceil_log2(span + 1UL)
+    guard computed < bits else {
+      raise UnsupportedFeature(
+        "scale-offset automatic bits require full precision",
+      )
+    }
+    computed
+  } else {
+    configured_bits
+  }
+  guard minbits >= 0 && minbits < bits else {
+    raise InvalidArgument("invalid scale-offset minimum bits")
+  }
+  let output_size = 21L + count.to_int64() * minbits.to_int64() / 8L + 1L
+  guard output_size <= 0x7FFFFFFFL else {
+    raise InvalidField("scale-offset writer chunk is too large")
+  }
+  let output = FixedArray::make(output_size.to_int(), b'\x00')
+  let encoded_bits = minbits.reinterpret_as_uint()
+  for index in 0..<4 {
+    output[index] = ((encoded_bits >> (index * 8)) & 0xFFU).to_byte()
+  }
+  output[4] = 8
+  for index in 0..<8 {
+    output[5 + index] = ((min_raw >> (index * 8)) & 0xFFUL).to_byte()
+  }
+  let packed_mask = if minbits == 0 { 0UL } else { (1UL << minbits) - 1UL }
+  let mut bit_index = 0
+  for index in 0..<count {
+    let raw = scaleoffset_read_raw(data, index * element_size, element_size)
+    let packed = if raw == fill_raw {
+      packed_mask
+    } else {
+      (raw - min_raw) & value_mask & packed_mask
+    }
+    let mut remaining = minbits
+    while remaining > 0 {
+      let byte_index = bit_index / 8
+      let bit_offset = bit_index % 8
+      let available = 8 - bit_offset
+      let take = if remaining < available { remaining } else { available }
+      let part = (packed >> (remaining - take)) & ((1UL << take) - 1UL)
+      output[21 + byte_index] = (output[21 + byte_index].to_uint() |
+      (part.to_uint() << (available - take))).to_byte()
+      bit_index = bit_index + take
+      remaining = remaining - take
+    }
+  }
+  output.unsafe_reinterpret_as_bytes()
+}
+
+///|
+fn writer_chunk_element_count(
+  chunk_dimensions : Array[UInt32],
+) -> Int32 raise Hdf5Error {
+  let mut count = 1L
+  for dimension in chunk_dimensions {
+    guard dimension > 0U && count <= 0x7FFFFFFFL / dimension.to_int64() else {
+      raise InvalidField("writer chunk is too large")
+    }
+    count = count * dimension.to_int64()
+  }
+  count.to_int()
+}
+
+///|
 fn encode_filter_pipeline(
   filters : Array[Hdf5WriteFilter],
   element_size : Int32,
-) -> Bytes {
+  chunk_elements : Int32,
+  values : Hdf5WriteValues,
+  fill : Bytes,
+) -> Bytes raise Hdf5Error {
   let buffer = @buffer.Buffer::Buffer()
   buffer.write_byte(b'\x02')
   buffer.write_byte(filters.length().to_byte())
@@ -2210,6 +2454,21 @@ fn encode_filter_pipeline(
         buffer.write_uint16_le(3)
         buffer.write_uint16_le(0)
         buffer.write_uint16_le(0)
+      }
+      ScaleOffset(minbits) => {
+        let (size, signed) = writer_scaleoffset_layout(values)
+        guard size == element_size else {
+          raise InvalidField("scale-offset datatype size mismatch")
+        }
+        let parameters = scaleoffset_client_data(
+          minbits, size, signed, chunk_elements, fill,
+        )
+        buffer.write_uint16_le(6)
+        buffer.write_uint16_le(1)
+        buffer.write_uint16_le(20)
+        for parameter in parameters {
+          buffer.write_uint_le(parameter)
+        }
       }
     }
   }
@@ -2262,13 +2521,22 @@ fn encode_chunk_filters(
   data : Bytes,
   filters : Array[Hdf5WriteFilter],
   element_size : Int32,
-) -> Bytes {
+  values : Hdf5WriteValues,
+  fill : Bytes,
+) -> Bytes raise Hdf5Error {
   let mut output = data
   for filter in filters {
     output = match filter {
       Shuffle => shuffle_chunk(output, element_size)
       Deflate(level) => @zlib.zlib(output[:], level~)
       Fletcher32 => add_fletcher32(output)
+      ScaleOffset(minbits) => {
+        let (size, signed) = writer_scaleoffset_layout(values)
+        guard size == element_size else {
+          raise InvalidField("scale-offset datatype size mismatch")
+        }
+        encode_scaleoffset_chunk(output, minbits, size, signed, fill)
+      }
     }
   }
   output
@@ -2432,6 +2700,8 @@ fn encode_dataset_chunks(
         chunk_buffers[index].unsafe_reinterpret_as_bytes(),
         filters,
         encoded.element_size,
+        dataset.values,
+        fill,
       )
     } else {
       b""
@@ -3715,6 +3985,10 @@ fn Hdf5Writer::object_payload(
           write_header_message(buffer, msg_fill_value, encode_fill_value(fill))
         None => ()
       }
+      let filter_fill = match dataset.fill_value {
+        Some(fill) => encode_write_values(fill).payload
+        None => Bytes::make(encoded.element_size, b'\x00')
+      }
       match dataset.storage {
         WritableContiguous => {
           let address = if encoded.payload.length() == 0 {
@@ -3733,7 +4007,13 @@ fn Hdf5Writer::object_payload(
             write_header_message(
               buffer,
               msg_filter_pipeline,
-              encode_filter_pipeline(filters, encoded.element_size),
+              encode_filter_pipeline(
+                filters,
+                encoded.element_size,
+                writer_chunk_element_count(chunk_dimensions),
+                dataset.values,
+                filter_fill,
+              ),
             )
           }
           write_header_message(
@@ -3751,7 +4031,13 @@ fn Hdf5Writer::object_payload(
             write_header_message(
               buffer,
               msg_filter_pipeline,
-              encode_filter_pipeline(filters, encoded.element_size),
+              encode_filter_pipeline(
+                filters,
+                encoded.element_size,
+                writer_chunk_element_count(chunk_dimensions),
+                dataset.values,
+                filter_fill,
+              ),
             )
           }
           write_header_message(

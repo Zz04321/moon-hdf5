@@ -43,8 +43,8 @@ an executable example.
   selected values, including compact, contiguous or chunked target storage.
 - Supports compact, contiguous and chunked layouts with the common HDF5 chunk
   indexes.
-- Applies deflate, shuffle, Fletcher32 and integer scale-offset filters,
-  including per-chunk masks and scale-offset fill markers.
+- Reads and writes deflate, shuffle, Fletcher32 and integer scale-offset
+  filters, including per-chunk masks and scale-offset fill markers.
 - Provides metadata-only access, hyperslab selection and ordered point
   selection.
 - Resolves chained soft and external links across registered sources, with
@@ -226,6 +226,16 @@ writer.append_dataset(
 )
 
 ///|
+writer.add_chunked_dataset(
+  "/experiment/codes",
+  [6UL],
+  [3U],
+  @lib.Int32Values([1000, 1001, 1002, 2000, 2001, 2002]),
+  fill_value=@lib.Int32Values([-1]),
+  filters=[@lib.ScaleOffset(0), @lib.Deflate(6)],
+)
+
+///|
 writer.add_attribute(
   "/experiment/counts",
   "unit",
@@ -258,6 +268,10 @@ writer demo includes a 2500-attribute object, a group with both dense links and
 dense attributes including a variable-length string attribute, exactly eight
 oversized links and attributes that exercise compact OCHK continuations, and a
 20-attribute object spanning multiple continuation chunks.
+
+`ScaleOffset(0)` selects automatic integer bit width; a positive value fixes
+the width. Scale-offset must be the first filter in a pipeline and accepts only
+fixed-point integer values.
 
 Run the complete writer example and verify its output independently with h5py:
 
@@ -299,11 +313,12 @@ preserve order and duplicates.
   metadata is stored inline; shared-message support is reader-only.
 - Numeric storage wider than 8 bytes and binary floating-point normalizations
   other than implied MSB are not supported.
-- Reader scale-offset support is limited to fixed-point integers; floating-point
-  scale-offset chunks are rejected. The writer emits deflate, shuffle and
-  Fletcher32 filters only.
-- Custom variable-length fill values, additional writer filters and reference
-  writing are not supported.
+- Scale-offset support is limited to fixed-point integers; floating-point
+  scale-offset is rejected. The writer requires scale-offset to be the first
+  filter and rejects automatic bit reduction when a chunk needs full precision;
+  use `ScaleOffset(element_width * 8)` to store that chunk unfiltered.
+- Custom variable-length fill values, other writer filters and reference writing
+  are not supported.
 - Reference resolution covers legacy object and dataset-region references under
   4- and 8-byte address widths. Region targets must be datasets in the same
   file. Version-4 encoded references and reference writing are not supported.
