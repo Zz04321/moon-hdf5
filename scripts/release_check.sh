@@ -55,11 +55,35 @@ else
 fi
 
 if [ "${SKIP_H5PY:-0}" = "1" ]; then
+  echo "==> Numeric layout fixture verification skipped (SKIP_H5PY=1)"
+elif [ ! -f testdata/numeric_layouts.h5 ]; then
+  echo "==> Numeric layout fixture verification skipped (fixture unavailable)"
+else
+  "$python" scripts/verify_numeric_layouts_fixture.py testdata/numeric_layouts.h5
+fi
+
+if [ "${SKIP_H5PY:-0}" = "1" ]; then
   echo "==> NetCDF-4 fixture verification skipped (SKIP_H5PY=1)"
 elif [ ! -f testdata/netcdf4_1_7_5.h5 ]; then
   echo "==> NetCDF-4 fixture verification skipped (fixture unavailable)"
 else
   "$python" scripts/verify_netcdf4_fixture.py testdata/netcdf4_1_7_5.h5
+fi
+
+if [ "${SKIP_H5PY:-0}" = "1" ]; then
+  echo "==> External raw-data fixture verification skipped (SKIP_H5PY=1)"
+elif [ ! -f testdata/external_storage.h5 ]; then
+  echo "==> External raw-data fixture verification skipped (fixture unavailable)"
+else
+  "$python" scripts/verify_external_storage_fixture.py testdata/external_storage.h5
+fi
+
+if [ "${SKIP_H5PY:-0}" = "1" ]; then
+  echo "==> Shared-message fixture verification skipped (SKIP_H5PY=1)"
+elif [ ! -f testdata/shared_messages.h5 ]; then
+  echo "==> Shared-message fixture verification skipped (fixture unavailable)"
+else
+  "$python" scripts/verify_shared_messages_fixture.py testdata/shared_messages.h5
 fi
 
 echo "Release checks passed."

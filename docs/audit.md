@@ -7,11 +7,11 @@ were subsequently fixed and covered by regression tests.
 
 | Priority | Evidence | Finding and next action |
 | --- | --- | --- |
-| Fixed | Regression tested | Nonstandard integer precision/offset and floating-point fields now raise `UnsupportedFeature`. Standard integer widths and IEEE floats retain both byte orders. Dataset and attribute decoding share this validation. |
+| Fixed | Regression tested / h5py verified | Fixed-point datatypes now honor declared bit offset and 1–64 bit precision within 8/16/32/64-bit storage, including signed values, both byte orders, attributes, fills and enum bases. IEEE binary16 is decoded alongside binary32/64. Non-IEEE floating-point layouts and unsupported integer widths or padding flags remain explicit errors. |
 | Fixed | Regression tested / CLI verified | Attribute-info heap/index addresses now distinguish dense from compact storage. Compact and dense attributes read normally, with and without creation-order tracking. CLI displays attribute-read errors with their object path. |
 | Fixed | Regression tested | Dataspace/chunk products now check limits before multiplication. Dataset byte sizes are bounded before reading/allocating storage, and chunk copies validate byte capacity before narrowing offsets. Zero-dimensional arrays remain empty regardless of dimension order. |
 | Fixed | Regression tested | V2 continuation parsing included the checksum in the message region, so a short trailing gap caused a bogus message and EOF. Parsing now excludes signature/checksum, uses the correct prefix size with creation-order tracking, and checks complete chunk bounds before reading. |
-| Fixed | Regression tested | Unallocated contiguous storage now returns default/custom fills; empty/null data does not dereference addresses. Allocated data remains unchanged; external storage and disabled fills are explicitly rejected when applicable. |
+| Fixed | Regression tested | Unallocated contiguous storage now returns default/custom fills; empty/null data does not dereference addresses. Allocated data remains unchanged; `Hdf5File` rejects external raw data, while `Hdf5Resolver` reads the supported contiguous subset. Disabled fills are explicitly rejected when applicable. |
 | Fixed | Regression tested / process verified | CLI errors now go to stderr and return 1; usage errors return 2, successful reads return 0. Dataset and attribute failures affect the overall exit status without suppressing other dataset output. |
 | Fixed | Regression tested | Supported metadata checksums are now verified with HDF5 lookup3: superblocks v2/v3, object-header chunks and continuations, v2 B-tree headers/nodes, fractal-heap headers/direct/indirect blocks, fixed arrays and extensible arrays. Corruption tests assert `InvalidField`. |
 | Fixed | Regression tested / h5py verified | Filtered fractal heaps now decode deflate, shuffle and Fletcher32 pipelines for direct blocks, including filtered indirect-block entries and direct-block checksums. Indirectly accessed huge objects are resolved through v2 B-tree record types 1 and 2, with direct huge IDs also supported. |
@@ -25,9 +25,9 @@ format conformance; out-of-scope structures remain.
 
 Generate with h5py, then run `moon run src/cmd/main --target native -- <file.h5>`:
 
-- Numeric offset: copy `h5py.h5t.STD_I32LE`, set precision 16 and offset 8,
-  create a one-element dataset with the low-level API and write an int32 `[42]`.
-  h5py reads `[42]`.
+- Numeric offset: create low-level signed and unsigned datasets with declared
+  precision and offset, including negative values, big-endian storage, a custom
+  attribute and an unallocated custom fill. h5py must read the declared values.
 - Dense attributes: open with `libver=('v108', 'v108')`, create `value=[42]`
   with `track_order=False`, add scalar attributes `attr_0` through `attr_11`.
 - Object header: with those bounds, create root datasets `signed`, `big_endian`,
@@ -106,9 +106,9 @@ the same decoder. References are intentionally returned as encoded bytes rather
 than resolved objects or selected regions.
 
 Parser regressions reject truncated properties, out-of-bounds compound members,
-inconsistent array/complex sizes and invalid tags. Numeric
-subtypes retain the existing restriction to standard full-width integer and IEEE
-float layouts.
+inconsistent array/complex sizes and invalid tags. Fixed-point subtypes support
+declared bit offset and precision within 8/16/32/64-bit storage; other integer
+widths, padding flags and non-IEEE float layouts remain unsupported.
 
 ## Writer MVP review — 2026-10-20
 
@@ -365,3 +365,78 @@ implementation of CF conventions, scale/offset conversion, unlimited-dimension
 bookkeeping beyond the encoded HDF5 metadata, or MATLAB files. Generation is
 documented in [testdata/README.md](../testdata/README.md) and is not a release
 prerequisite.
+
+## Numeric layout review — 2026-10-27
+
+Integer decoding now applies the datatype's declared bit offset and precision
+before signed interpretation. The shared path covers ordinary datasets, nested
+compound and array members, attributes and fixed-size fills; enum member tables
+and enum payloads use the layout of their recursively parsed integer base.
+Regression coverage includes signed little- and big-endian values, unsigned
+20-bit values, negative sign extension, custom attributes, an unallocated custom
+fill and a synthetic enum with a nonstandard base layout. The committed
+`numeric_layouts.h5` fixture is generated with h5py 3.13.0/HDF5 1.14.6 and
+independently rechecked by a verifier in the release gate.
+
+IEEE binary16 is decoded by exact bit mapping to binary32, including normal,
+subnormal, signed-zero, infinity and NaN encodings. The fixture covers both byte
+orders, finite range limits and binary16 attributes and fills. Binary32 and
+binary64 continue to use direct bit reinterpretation.
+
+The supported storage widths remain 8, 16, 32 and 64 bits. Valid precision must
+be positive and contained with its offset in the storage width. Other widths,
+integer padding flags and non-IEEE floating-point layouts continue to raise
+`UnsupportedFeature` or `InvalidField` rather than returning a guessed value.
+
+## Shared object header messages — 2026-10-27
+
+The reader now follows HDF5 1.14.6 file-wide shared object header messages. It
+parses the superblock-extension SOHM table and SMTB indexes, resolves wrapper
+versions 1–3, reads v3 heap IDs from the matching fractal heap and follows
+committed object-header targets with cycle detection. Top-level object-header
+messages are resolved before dataset and attribute decoding.
+
+Attributes support three independent levels: a shared attribute wrapper, flag
+`0x01` for an internally shared datatype, and flag `0x02` for an internally
+shared dataspace. Dense attribute B-tree records marked shared use the SOHM
+attribute heap; unshared records continue to use the object's attribute heap.
+The same context is threaded through compact, dense and random-access source
+paths. Custom fills also resolve through the SOHM fill index.
+
+`testdata/shared_messages.h5` is generated with h5py 3.13.0/HDF5 1.14.6 and
+independently checked by `scripts/verify_shared_messages_fixture.py`. It covers
+internally shared datatype/dataspace fields, whole shared attributes, shared
+fills, committed datatype targets, 13-record dense attribute indexes in two
+groups, a chunked dataset and both read paths. The verifier also checks the raw
+SOHM signatures and shared flags in the object header and dense B-tree records.
+Writing SOHM metadata remains unsupported; the writer emits inline metadata.
+
+## External raw-data storage review — 2026-10-27
+
+`Hdf5Resolver` now reads contiguous external raw-data datasets in addition to
+following external links. This is a post-v1.0 extension; `Hdf5File` still rejects
+the storage because it has no file-manager boundary. Every external filename
+must be registered as an `Hdf5Source`, using the same exact, relative and
+basename lookup rules as external links. Slots are concatenated in declaration
+order, each slot's in-file offset is applied, and full reads, hyperslabs and
+ordered-point selections can cross slot boundaries, including boundaries that
+split an element. `DatasetChunkIterator` uses the resolver-aware selection path,
+so tiles can cross external files without materializing the complete dataset.
+
+The initial parser skipped one reserved byte in the external data message
+instead of the required three, so allocated/used slot counts were decoded
+incorrectly. The fixed parser uses address-width filename offsets and validates
+that the message-level slot count is nonempty and within its allocation. A
+source shorter than a declared slot returns its available prefix and zero-fills
+the remainder, matching an h5py/HDF5 1.14.6 probe. Filters, external chunked
+layouts and remote URLs remain explicitly unsupported, as does writer output for
+external data.
+
+The committed `external_storage.h5` fixture was generated with h5py
+3.13.0/HDF5 1.14.6. `/multi` splits `int32[8]` across two external files, while
+`/offset` reads `int32[4]` at byte offset 16. `external_storage_32.h5` repeats a
+small dataset with 4-byte addresses and 8-byte lengths. wasm/native tests cover full
+reads, metadata, hyperslab and point selections, chunk iteration across the
+two-file boundary, missing and truncated sources and direct `Hdf5File`
+rejection. The release gate independently rechecks both fixtures and their slot
+declarations with h5py.

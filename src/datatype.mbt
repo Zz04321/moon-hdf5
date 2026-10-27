@@ -171,13 +171,14 @@ fn parse_datatype_reader(
     bit_offset = offset
     bit_precision = precision
     if class == 0 {
-      guard (size == 1 || size == 2 || size == 4 || size == 8) &&
-        offset == 0 &&
-        precision == size * 8 &&
-        (bit_field_0 & 0xF6) == 0 &&
-        bit_field_1 == 0 &&
-        bit_field_2 == 0 else {
-        raise UnsupportedFeature("nonstandard integer layout is not supported")
+      guard size == 1 || size == 2 || size == 4 || size == 8 else {
+        raise UnsupportedFeature("integer width is not 1, 2, 4 or 8 bytes")
+      }
+      guard (bit_field_0 & 0xF6) == 0 && bit_field_1 == 0 && bit_field_2 == 0 else {
+        raise UnsupportedFeature("integer datatype flags are not supported")
+      }
+      guard precision > 0 && offset + precision <= size * 8 else {
+        raise InvalidField("invalid integer offset or precision")
       }
     } else {
       let exponent_position = reader.read_u8().to_int()
@@ -185,7 +186,13 @@ fn parse_datatype_reader(
       let mantissa_position = reader.read_u8().to_int()
       let mantissa_size = reader.read_u8().to_int()
       let exponent_bias = reader.read_u32_le()
-      let ieee_fields = if size == 4 {
+      let ieee_fields = if size == 2 {
+        bit_field_1 == 15 &&
+        exponent_position == 10 &&
+        exponent_size == 5 &&
+        mantissa_size == 10 &&
+        exponent_bias == 15U
+      } else if size == 4 {
         bit_field_1 == 31 &&
         exponent_position == 23 &&
         exponent_size == 8 &&
@@ -378,9 +385,9 @@ fn parse_datatype_reader(
         base.little_endian,
       )
       let value = if base.signed {
-        EnumValue::Signed(decode_signed(raw, base.size))
+        EnumValue::Signed(decode_integer_signed(raw, base))
       } else {
-        EnumValue::Unsigned(raw)
+        EnumValue::Unsigned(decode_integer_unsigned(raw, base))
       }
       enum_members.push({ name: names[index], value, })
     }

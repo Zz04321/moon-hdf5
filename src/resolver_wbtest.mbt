@@ -66,9 +66,7 @@ test "resolver reports missing targets and link cycles" {
   }
   assert_eq(
     missing_error,
-    Some(
-      InvalidField("external link target file is not registered: missing.h5"),
-    ),
+    Some(InvalidField("external target file is not registered: missing.h5")),
   )
 
   let first_writer = Hdf5Writer::new()

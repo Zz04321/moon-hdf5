@@ -27,22 +27,10 @@ let msg_external_data_files : Int32 = 0x0007
 let msg_data_layout : Int32 = 0x0008
 
 ///|
-let _msg_bogus : Int32 = 0x0009
-
-///|
-let _msg_group_info : Int32 = 0x000A
-
-///|
 let msg_filter_pipeline : Int32 = 0x000B
 
 ///|
 let msg_attribute : Int32 = 0x000C
-
-///|
-let _msg_object_comment : Int32 = 0x000D
-
-///|
-let _msg_shared_message_table : Int32 = 0x000F
 
 ///|
 let msg_object_continuation : Int32 = 0x0010
@@ -51,13 +39,7 @@ let msg_object_continuation : Int32 = 0x0010
 let msg_symbol_table : Int32 = 0x0011
 
 ///|
-let _msg_modification_time : Int32 = 0x0012
-
-///|
 let msg_attribute_info : Int32 = 0x0015
-
-///|
-let _msg_object_reference_count : Int32 = 0x0016
 
 ///|
 let undefined_address : UInt64 = 0xFFFFFFFFFFFFFFFFUL

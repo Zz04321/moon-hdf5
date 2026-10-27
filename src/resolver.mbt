@@ -24,8 +24,8 @@ priv struct ResolverSource {
 }
 
 ///|
-/// Resolves paths across a root HDF5 source and registered external-link
-/// targets. Sources are kept in memory and parsed on demand.
+/// Resolves paths across a root HDF5 source and registered external-link or
+/// external-raw-data targets. Sources are kept in memory and parsed on demand.
 pub struct Hdf5Resolver {
   priv sources : Array[ResolverSource]
 }
@@ -254,9 +254,7 @@ fn Hdf5Resolver::external_source_name(
   if basename != normalized {
     guard self.source_index(basename) is None else { return basename }
   }
-  raise InvalidField(
-    "external link target file is not registered: " + target_file,
-  )
+  raise InvalidField("external target file is not registered: " + target_file)
 }
 
 ///|
@@ -370,7 +368,8 @@ pub fn Hdf5Resolver::resolve(
 }
 
 ///|
-/// Reads a dataset through the resolver, including external-link targets.
+/// Reads a dataset through the resolver, including external-link targets and
+/// contiguous external raw-data storage.
 pub fn Hdf5Resolver::read_dataset(
   self : Hdf5Resolver,
   path : String,
@@ -379,7 +378,17 @@ pub fn Hdf5Resolver::read_dataset(
   guard node.kind == Dataset else {
     raise InvalidField("object is not a dataset: " + path)
   }
-  self.open(node.file).read_dataset(node.path)
+  let file = self.open(node.file)
+  let header = file.object_header_at(node.address)
+  if header.first(msg_external_data_files) is Some(_) {
+    let metadata = read_dataset_metadata(
+      header,
+      file.superblock.offset_size,
+      file.superblock.length_size,
+    )
+    return self.read_external_dataset(node.file, file, header, metadata)
+  }
+  file.read_dataset(node.path)
 }
 
 ///|
@@ -396,7 +405,7 @@ pub fn Hdf5Resolver::read_dataset_metadata(
 }
 
 ///|
-/// Reads a dataset selection through the resolver.
+/// Reads a dataset selection through the resolver, including external raw data.
 pub fn Hdf5Resolver::read_dataset_selection(
   self : Hdf5Resolver,
   path : String,
@@ -406,11 +415,28 @@ pub fn Hdf5Resolver::read_dataset_selection(
   guard node.kind == Dataset else {
     raise InvalidField("object is not a dataset: " + path)
   }
-  self.open(node.file).read_dataset_selection(node.path, selection)
+  let file = self.open(node.file)
+  let header = file.object_header_at(node.address)
+  if header.first(msg_external_data_files) is Some(_) {
+    let metadata = read_dataset_metadata(
+      header,
+      file.superblock.offset_size,
+      file.superblock.length_size,
+    )
+    return self.read_external_dataset_selection(
+      node.file,
+      file,
+      header,
+      metadata,
+      selection,
+    )
+  }
+  file.read_dataset_selection(node.path, selection)
 }
 
 ///|
-/// Creates a bounded-memory dataset iterator through the resolver.
+/// Creates a bounded-memory dataset iterator through the resolver, including
+/// tiles backed by contiguous external raw-data storage.
 pub fn Hdf5Resolver::chunk_iterator(
   self : Hdf5Resolver,
   path : String,
@@ -420,7 +446,21 @@ pub fn Hdf5Resolver::chunk_iterator(
   guard node.kind == Dataset else {
     raise InvalidField("object is not a dataset: " + path)
   }
-  self.open(node.file).chunk_iterator(node.path, tile_dimensions)
+  let file = self.open(node.file)
+  let header = file.object_header_at(node.address)
+  let metadata = read_dataset_metadata(
+    header,
+    file.superblock.offset_size,
+    file.superblock.length_size,
+  )
+  make_dataset_chunk_iterator(
+    file,
+    header,
+    metadata,
+    tile_dimensions,
+    Some(self),
+    node.file,
+  )
 }
 
 ///|

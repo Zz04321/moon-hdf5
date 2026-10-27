@@ -108,6 +108,20 @@ test "version three enum names are not padded" {
 }
 
 ///|
+test "enum base integer precision and offset affect member values" {
+  let datatype = parse_datatype_data(
+    b"\x38\x01\x00\x00\x04\x00\x00\x00\x10\x08\x00\x00\x04\x00\x00\x00\x08\x00\x10\x00A\x00\x00\x2a\x00\x00",
+  )
+  assert_eq(datatype.enum_members.length(), 1)
+  assert_eq(datatype.enum_members[0].name, "A")
+  assert_eq(datatype.enum_members[0].value, EnumValue::Signed(42L))
+  match decode_values(b"", b"\x00\x2a\x00\x00", 1, datatype, 8, 8, 0UL) {
+    Enums(values) => assert_eq(values, ["A"])
+    _ => abort("expected enum values")
+  }
+}
+
+///|
 test "malformed enum datatypes are rejected" {
   let cases : Array[(Bytes, Hdf5Error)] = [
     (
@@ -151,10 +165,29 @@ test "unknown enum payload values are rejected" {
     vlen_is_string: false,
     enum_members: [{ name: "ONE", value: EnumValue::Signed(1L), }],
     compound_members: [],
-    base_types: [],
+    base_types: [
+      {
+        class: 0,
+        version: 1,
+        size: 4,
+        signed: true,
+        little_endian: true,
+        vlen_is_string: false,
+        enum_members: [],
+        compound_members: [],
+        base_types: [],
+        array_dimensions: [],
+        bit_offset: 0,
+        bit_precision: 32,
+        string_padding: 0,
+        string_charset: 0,
+        opaque_tag: "",
+        reference_kind: 0,
+      },
+    ],
     array_dimensions: [],
     bit_offset: 0,
-    bit_precision: 0,
+    bit_precision: 32,
     string_padding: 0,
     string_charset: 0,
     opaque_tag: "",

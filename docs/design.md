@@ -33,6 +33,19 @@ address and kind. An explicit visited set rejects soft/external-link cycles and
 a depth bound limits indirection chains. `Hdf5File` retains its single-source
 behavior and still reports external links as unresolved.
 
+External raw-data storage follows the same boundary. `Hdf5File` rejects it
+because the dataset bytes live outside the parsed file. `Hdf5Resolver` parses
+the external data message, resolves each registered filename with the same
+exact/relative/basename rules used for external links, and concatenates slots in
+declaration order while applying each slot's file offset. Full reads and
+selection reads are supported across slot boundaries. `DatasetChunkIterator`
+uses the resolver-aware selection path, so tile iteration is bounded by one tile
+even when a tile crosses external files. This post-v1.0 extension is limited to
+contiguous, unfiltered storage; remote URLs and external chunked layouts are
+rejected. A registered source shorter than its declared slot contributes its
+available prefix and zero-fills the remainder, matching HDF5 external-storage
+reads.
+
 `DatasetChunkIterator` divides a dataset into caller-selected tiles without
 materializing the complete dataset. Each tile is read through the same validated
 selection path, so memory is bounded by the tile result plus a decoded storage
@@ -54,8 +67,9 @@ validating direct-block checksums. Indirect huge records are located through
 the heap's v2 B-tree. Chunked reads initialize the output with fill bytes before copying
 allocated chunks. Unallocated contiguous data uses
 the same fill initialization; empty/null data does not dereference addresses.
-Allocated storage is read as stored, and external dataset storage is explicitly
-rejected. Byte cursors, object headers, message constants and chunk-index
+Allocated storage is read as stored. Single-file reads explicitly reject
+external dataset storage, which is available only through `Hdf5Resolver` as
+described above. Byte cursors, object headers, message constants and chunk-index
 records remain internal implementation details.
 
 The high-level reader parses filter-pipeline messages v1/v2 and reverses active
@@ -103,14 +117,17 @@ inputs are rejected. See [audit.md](audit.md).
 Invalid selections and writer inputs raise `InvalidArgument`, keeping caller
 errors distinct from malformed file metadata.
 
-Numeric metadata is checked before decoding: integers require full-width bits
-with zero offset; floats require standard IEEE binary32/binary64 fields.
-Enum datatypes recursively parse an integer base type and require the enum and
-base sizes to agree. Member names use the version 1/2 8-byte padding rule or
-the version 3 single-NUL encoding; values follow the base type's signedness,
-width and byte order. Datasets and attributes decode enum payloads to member
-names and reject values with no matching member. Empty member lists, empty or
-unterminated names and non-integer bases are rejected.
+Fixed-point metadata accepts any positive precision contained in an 8-, 16-,
+32- or 64-bit storage unit. Decoding shifts out the declared bit offset, masks
+the precision and sign-extends signed values from their effective width; the
+same path covers datasets, attributes, fills and nested values. Floats require
+standard IEEE binary16, binary32 or binary64 fields. Enum datatypes recursively parse an
+integer base type and require the enum and base sizes to agree. Member names use
+the version 1/2 8-byte padding rule or the version 3 single-NUL encoding; values
+follow the base type's signedness, offset, precision and byte order. Datasets
+and attributes decode enum payloads to member names and reject values with no
+matching member. Empty member lists, empty or unterminated names and non-integer
+bases are rejected.
 The remaining standard datatype classes use recursive `Datatype` metadata and
 `DatasetValue` values. Compound members retain names and byte offsets; array
 dimensions and vlen sequence bases retain their nested datatypes. Bitfields
@@ -124,9 +141,19 @@ ASCII/UTF-8 character sets. Callers that construct the public `Datatype` record
 directly must initialize its recursive metadata fields.
 Attribute-info heap/index addresses determine dense storage independently of
 creation-order tracking, and dense records are read through the same fractal
-heap and metadata v2 B-tree helpers as groups. Unsupported numeric layouts raise
-an error, including when used in attributes; the inspector prints attribute
+heap and metadata v2 B-tree helpers as groups. Non-IEEE floats, unsupported
+integer storage widths and integer padding flags raise an error, including when
+used in attributes; the inspector prints attribute
 errors with their path.
+
+The reader resolves file-wide shared object header messages through the
+superblock-extension SOHM table, its SMTB indexes and their fractal heaps.
+Wrapper versions 1–3 cover both SOHM heap IDs and committed object-header
+targets. A dense attribute B-tree record marked shared reads its payload from
+the SOHM attribute heap rather than the object's own attribute heap. Attribute
+flags may additionally share the embedded datatype and dataspace. Resolution is
+cycle-checked and malformed indexes, heap IDs and checksums are rejected. The
+writer does not emit shared messages; its metadata remains inline.
 
 Public interfaces are generated in `src/pkg.generated.mbti`. Tests use committed
 h5py fixtures and synthetic messages. Local validation covers wasm and native;
@@ -162,7 +189,8 @@ creation-order value and a `lookup3` name hash. Link and attribute collections
 are planned separately, so a group can use both. The writer does not emit dense
 indirect or huge heap blocks, a creation-order index or a free-space manager.
 Sets outside those bounds retain link or attribute messages in compact form and
-use OCHK continuations when the object header exceeds one chunk.
+use OCHK continuations when the object header exceeds one chunk. Writer output
+does not include a SOHM table or shared-message wrappers.
 
 The writer calculates all object, continuation, dense-metadata, global-heap and
 raw-data addresses before encoding checksummed metadata. Soft links may use

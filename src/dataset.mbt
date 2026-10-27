@@ -124,11 +124,10 @@ fn read_uint_at(
 }
 
 ///|
-fn decode_signed(raw : UInt64, size : Int32) -> Int64 {
-  if size == 8 {
+fn decode_signed_bits(raw : UInt64, bits : Int32) -> Int64 {
+  if bits == 64 {
     return raw.reinterpret_as_int64()
   }
-  let bits = size * 8
   let sign_bit = 1UL << (bits - 1)
   let value = raw.reinterpret_as_int64()
   if (raw & sign_bit) != 0UL {
@@ -139,13 +138,49 @@ fn decode_signed(raw : UInt64, size : Int32) -> Int64 {
 }
 
 ///|
+fn float16_to_float(bits : UInt32) -> Float {
+  let sign = (bits >> 15) & 1U
+  let exponent = ((bits >> 10) & 0x1FU).reinterpret_as_int()
+  let fraction = bits & 0x3FFU
+  let binary32 = if exponent == 0 {
+    if fraction == 0U {
+      sign << 31
+    } else {
+      let mut normalized = fraction
+      let mut unbiased = -14
+      while (normalized & 0x400U) == 0U {
+        normalized = normalized << 1
+        unbiased = unbiased - 1
+      }
+      (sign << 31) |
+      ((unbiased + 127).reinterpret_as_uint() << 23) |
+      ((normalized & 0x3FFU) << 13)
+    }
+  } else if exponent == 0x1F {
+    (sign << 31) | (0xFFU << 23) | (fraction << 13)
+  } else {
+    (sign << 31) |
+    ((exponent + 112).reinterpret_as_uint() << 23) |
+    (fraction << 13)
+  }
+  Float::reinterpret_from_uint(binary32)
+}
+
+///|
 fn read_float_at(
   bytes : Bytes,
   offset : Int32,
   size : Int32,
   little_endian : Bool,
 ) -> Double raise Hdf5Error {
-  if size == 4 {
+  if size == 2 {
+    let bits = if little_endian {
+      bytes.unsafe_read_uint16_le(offset)
+    } else {
+      bytes.unsafe_read_uint16_be(offset)
+    }
+    float16_to_float(bits.to_uint()).to_double()
+  } else if size == 4 {
     let bits = if little_endian {
       bytes.unsafe_read_uint32_le(offset)
     } else {
@@ -156,7 +191,7 @@ fn read_float_at(
     let bits = read_uint_at(bytes, offset, 8, little_endian)
     bits.reinterpret_as_double()
   } else {
-    raise UnsupportedFeature("floating-point width is not 4 or 8 bytes")
+    raise UnsupportedFeature("floating-point width is not 2, 4 or 8 bytes")
   }
 }
 
@@ -201,10 +236,15 @@ fn read_fixed_string_at(
 
 ///|
 fn enum_value_name(raw : UInt64, datatype : Datatype) -> String raise Hdf5Error {
-  let value = if datatype.signed {
-    EnumValue::Signed(decode_signed(raw, datatype.size))
+  guard datatype.base_types.length() == 1 &&
+    datatype.base_types[0].class == datatype_class_fixed_point() else {
+    raise InvalidField("enum datatype is missing its integer base type")
+  }
+  let base = datatype.base_types[0]
+  let value = if base.signed {
+    EnumValue::Signed(decode_integer_signed(raw, base))
   } else {
-    EnumValue::Unsigned(raw)
+    EnumValue::Unsigned(decode_integer_unsigned(raw, base))
   }
   for enum_member in datatype.enum_members {
     if enum_member.value == value {
@@ -239,6 +279,37 @@ fn masked_value(raw : UInt64, offset : Int32, precision : Int32) -> UInt64 {
 }
 
 ///|
+fn decode_integer_unsigned(
+  raw : UInt64,
+  datatype : Datatype,
+) -> UInt64 raise Hdf5Error {
+  guard datatype.size == 1 ||
+    datatype.size == 2 ||
+    datatype.size == 4 ||
+    datatype.size == 8 else {
+    raise UnsupportedFeature("integer width is not 1, 2, 4 or 8 bytes")
+  }
+  guard datatype.bit_offset >= 0 &&
+    datatype.bit_precision > 0 &&
+    datatype.bit_precision <= 64 &&
+    datatype.bit_offset + datatype.bit_precision <= datatype.size * 8 else {
+    raise InvalidField("invalid integer offset or precision")
+  }
+  masked_value(raw, datatype.bit_offset, datatype.bit_precision)
+}
+
+///|
+fn decode_integer_signed(
+  raw : UInt64,
+  datatype : Datatype,
+) -> Int64 raise Hdf5Error {
+  decode_signed_bits(
+    decode_integer_unsigned(raw, datatype),
+    datatype.bit_precision,
+  )
+}
+
+///|
 fn decode_dataset_value(
   source : &Hdf5Source?,
   bytes : Bytes,
@@ -258,9 +329,9 @@ fn decode_dataset_value(
         datatype.little_endian,
       )
       if datatype.signed {
-        SignedInteger(decode_signed(raw, datatype.size))
+        SignedInteger(decode_integer_signed(raw, datatype))
       } else {
-        UnsignedInteger(raw)
+        UnsignedInteger(decode_integer_unsigned(raw, datatype))
       }
     }
     1 =>
@@ -487,20 +558,19 @@ fn decode_values(
             datatype.size,
             datatype.little_endian,
           )
-          values.push(decode_signed(raw, datatype.size))
+          values.push(decode_integer_signed(raw, datatype))
         }
         Integers(values)
       } else {
         let values : Array[UInt64] = []
         for i in 0..<n {
-          values.push(
-            read_uint_at(
-              payload,
-              i * datatype.size,
-              datatype.size,
-              datatype.little_endian,
-            ),
+          let raw = read_uint_at(
+            payload,
+            i * datatype.size,
+            datatype.size,
+            datatype.little_endian,
           )
+          values.push(decode_integer_unsigned(raw, datatype))
         }
         UnsignedIntegers(values)
       }
@@ -640,7 +710,7 @@ fn read_dataset_values(
     raise UnsupportedFeature("filters require chunked storage")
   }
   if header.first(msg_external_data_files) is Some(_) {
-    raise UnsupportedFeature("external dataset storage is not supported yet")
+    raise UnsupportedFeature("external dataset storage requires Hdf5Resolver")
   }
   let count = dataspace.element_count()
   guard datatype.size > 0 &&

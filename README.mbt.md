@@ -20,7 +20,8 @@ This is not a read-only library.
   values and one extensible dimension.
 - In-place editing of an existing file is not implemented. `Hdf5File` parses
   external-link metadata without opening another file; `Hdf5Resolver` resolves
-  those links when the target sources are registered.
+  those links and reads contiguous external raw-data storage when the target
+  sources are registered.
 
 The public reader and writer entry points are listed in
 [`src/pkg.generated.mbti`](src/pkg.generated.mbti); see [Writing](#writing) for
@@ -29,7 +30,11 @@ an executable example.
 ## Features
 
 - Reads groups, datasets, attributes, links and common HDF5 metadata versions.
-- Decodes numeric, string, compound, enum, array, bitfield, opaque, reference,
+- Resolves shared object header messages (SOHM), including shared attributes,
+  datatypes, dataspaces, fills and committed datatype targets. Inline, dense
+  and source-backed attribute paths are supported.
+- Decodes fixed-point values with declared bit offset/precision, IEEE
+  float16/32/64, string, compound, enum, array, bitfield, opaque, reference,
   variable-length sequence, time and complex values.
 - Supports compact, contiguous and chunked layouts with the common HDF5 chunk
   indexes.
@@ -38,6 +43,8 @@ an executable example.
   selection.
 - Resolves chained soft and external links across registered sources, with
   cycle and indirection limits.
+- Provides a resolver-only extension for contiguous external raw-data storage,
+  including multiple external files, in-file offsets, full reads and selections.
 - Reads datasets through a bounded-memory chunk iterator for edge-clipped tiles
   and early termination.
 - Creates new files with groups, attributes, hard, soft and external links,
@@ -129,6 +136,18 @@ targets. Path resolution follows hard, soft and external links, supports chained
 links, rejects cycles, and reports an unregistered target explicitly. The
 returned `Hdf5ResolvedNode` records the target source name, canonical path,
 address and object kind.
+
+`Hdf5Resolver` also reads datasets whose raw bytes use contiguous external
+storage. Every referenced external file must be registered with `add_source`
+using the name stored in the HDF5 file. The reader concatenates external slots
+in declaration order and applies their file offsets, so full reads, hyperslabs
+and point selections work across slot boundaries under 4- or 8-byte addresses
+with 8-byte lengths. Slot boundaries need not align with element boundaries.
+This is a post-v1.0 extension: `Hdf5File` rejects external raw data, and
+filters, chunked external storage, and remote URLs are not supported for it.
+`DatasetChunkIterator` reads edge-clipped tiles through the same selection
+path. As in HDF5, missing tail bytes in a declared slot are read as zeroes while
+the available prefix is returned unchanged.
 
 `chunk_iterator` splits a dataset into caller-selected tiles. Each `next` call
 returns the tile origin, its edge-clipped shape and decoded values. Memory is
@@ -245,9 +264,6 @@ Coordinates are zero-based. Hyperslabs use comma-separated `start`, `count` and
 `stride` vectors. Point selections use semicolon-separated coordinates and
 preserve order and duplicates.
 
-Focused examples are available in `src/cmd/metadata_demo`,
-`src/cmd/selection_demo` and `src/cmd/write_demo`.
-
 ## Limitations
 
 - Whole-dataset reads and single selection results remain memory resident even
@@ -259,8 +275,14 @@ Focused examples are available in `src/cmd/metadata_demo`,
   BTHD/BTLF leaf index per collection; dense indirect/huge blocks,
   creation-order indexes and a free-space manager are not written. Larger sets
   fall back to compact OCHK continuation storage.
-- External dataset storage is not supported; `Hdf5Resolver` resolves external
-  links, not external raw data.
+- External raw-data storage is a resolver-only post-v1.0 extension. Every
+  external file must be registered as an `Hdf5Source`; `Hdf5File` rejects the
+  dataset. Only contiguous, unfiltered external slots are read, with no remote
+  URLs, chunked external storage or writer support. Tile iteration is supported.
+- The writer does not emit a SOHM table or shared-message wrappers. All writer
+  metadata is stored inline; shared-message support is reader-only.
+- Integer storage widths other than 8, 16, 32 or 64 bits, integer padding flags
+  and non-IEEE floating-point layouts are not supported.
 - Custom variable-length fill values, additional writer filters and reference
   writing are not supported.
 - Variable-length writer datasets cannot use filters; HDF5 1.14.6 rejects this
@@ -283,14 +305,17 @@ moon test --target native
 
 Run `scripts/release_check.sh` to include interface and formatting checks,
 documentation generation, package contents, the writer demo and independent
-h5py verification, including the committed NetCDF-4 producer fixture. Set
-`H5PY_PYTHON` when h5py is installed in a specific environment, or
-`SKIP_H5PY=1` to omit the Python interoperability checks.
+h5py verification, including the committed NetCDF-4 producer fixture and the
+external raw-data and shared-message fixtures. Set `H5PY_PYTHON` when h5py is
+installed in a specific environment, or `SKIP_H5PY=1` to omit the Python
+interoperability checks.
 
 The v1.0 release gate runs the writer demo and verifies its output with h5py
 3.13.0/HDF5 1.14.6, then verifies the NetCDF-4 fixture produced by netCDF4
-1.7.5/libnetcdf 4.10.1/HDF5 2.2.0. The HDF5 1.14.6 default and `latest`
-datatype fixtures use the pinned environment documented in
+1.7.5/libnetcdf 4.10.1/HDF5 2.2.0 and the numeric-layout fixture. It also
+verifies the post-v1.0 external raw-data fixture set and the shared-message
+fixture. The HDF5 1.14.6 default and `latest` datatype fixtures use the pinned
+environment documented in
 [testdata/README.md](testdata/README.md); fixture tests compare decoded
 semantics because binary hashes are not stable.
 

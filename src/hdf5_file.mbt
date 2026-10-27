@@ -32,22 +32,31 @@ pub struct Hdf5File {
   priv bytes : Bytes
   priv superblock : Superblock
   priv source : &Hdf5Source?
+  priv shared_messages : SharedMessageContext
 }
 
 ///|
 /// Parses an HDF5 file from in-memory bytes.
 pub fn Hdf5File::parse(bytes : Bytes) -> Hdf5File raise Hdf5Error {
-  { bytes, superblock: parse_superblock(bytes), source: None, }
+  let superblock = parse_superblock(bytes)
+  {
+    bytes,
+    superblock,
+    source: None,
+    shared_messages: parse_shared_message_context(bytes, None, superblock),
+  }
 }
 
 ///|
 /// Parses an HDF5 file from a random-access source.
 ///
 pub fn Hdf5File::parse_source(source : &Hdf5Source) -> Hdf5File raise Hdf5Error {
+  let superblock = parse_source_superblock(source)
   {
     bytes: b"",
-    superblock: parse_source_superblock(source),
+    superblock,
     source: Some(source),
+    shared_messages: parse_shared_message_context(b"", Some(source), superblock),
   }
 }
 
@@ -69,7 +78,7 @@ fn Hdf5File::object_header_at(
   self : Hdf5File,
   address : UInt64,
 ) -> ObjectHeader raise Hdf5Error {
-  match self.source {
+  let header = match self.source {
     None =>
       parse_object_header(
         self.bytes,
@@ -87,6 +96,7 @@ fn Hdf5File::object_header_at(
         self.superblock.base_address,
       )
   }
+  self.shared_messages.resolve_object_header(header, address)
 }
 
 ///|
@@ -386,6 +396,7 @@ pub fn Hdf5File::attributes(
         self.superblock.offset_size,
         self.superblock.length_size,
         self.superblock.base_address,
+        shared_messages=Some(self.shared_messages),
       )
     None =>
       read_attributes(
@@ -394,6 +405,7 @@ pub fn Hdf5File::attributes(
         self.superblock.offset_size,
         self.superblock.length_size,
         self.superblock.base_address,
+        shared_messages=Some(self.shared_messages),
       )
   }
 }

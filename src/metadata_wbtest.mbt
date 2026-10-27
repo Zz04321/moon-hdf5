@@ -1,25 +1,70 @@
 ///|
-test "nonstandard numeric layouts are explicitly rejected" {
+test "integer precision and bit offsets decode through every value path" {
   let file = Hdf5File::parse(
     @fs.read_file_to_bytes("testdata/numeric_layouts.h5"),
   )
-  for name in ["offset", "precision", "custom_float"] {
-    let error = try {
-      file.read_dataset("/" + name) |> ignore
-      None
-    } catch {
-      error => Some(error)
-    }
-    assert_true(error is Some(UnsupportedFeature(_)))
-  }
   for name in ["offset", "precision"] {
+    let expected = [42L, -2L, -32768L]
+    assert_eq(integer_values(file.read_dataset("/" + name)), expected)
+    match find_attribute(file.attributes("/" + name), "custom").values {
+      Some(Integers(values)) => assert_eq(values, expected)
+      _ => abort("expected signed custom-integer attribute")
+    }
+  }
+  let expected_unsigned = [0UL, 1UL, 703710UL, 1048575UL]
+  assert_eq(unsigned_values(file.read_dataset("/unsigned")), expected_unsigned)
+  match find_attribute(file.attributes("/unsigned"), "custom").values {
+    Some(UnsignedIntegers(values)) => assert_eq(values, expected_unsigned)
+    _ => abort("expected unsigned custom-integer attribute")
+  }
+  let expected_big_endian = [-2L, 42L, 524287L]
+  assert_eq(
+    integer_values(file.read_dataset("/big_endian")),
+    expected_big_endian,
+  )
+  match find_attribute(file.attributes("/big_endian"), "custom").values {
+    Some(Integers(values)) => assert_eq(values, expected_big_endian)
+    _ => abort("expected big-endian custom-integer attribute")
+  }
+  assert_eq(integer_values(file.read_dataset("/fill")), [-2L, -2L, -2L])
+
+  let error = try {
+    file.read_dataset("/custom_float") |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_true(error is Some(UnsupportedFeature(_)))
+}
+
+///|
+test "invalid integer storage and bit layouts are rejected" {
+  let cases : Array[(Bytes, Hdf5Error)] = [
+    (
+      b"\x10\x08\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00",
+      InvalidField("invalid integer offset or precision"),
+    ),
+    (
+      b"\x10\x08\x00\x00\x04\x00\x00\x00\x20\x00\x01\x00",
+      InvalidField("invalid integer offset or precision"),
+    ),
+    (
+      b"\x10\x08\x00\x00\x03\x00\x00\x00\x00\x00\x18\x00",
+      UnsupportedFeature("integer width is not 1, 2, 4 or 8 bytes"),
+    ),
+    (
+      b"\x10\x0a\x00\x00\x04\x00\x00\x00\x00\x00\x20\x00",
+      UnsupportedFeature("integer datatype flags are not supported"),
+    ),
+  ]
+  for (data, expected) in cases {
     let error = try {
-      file.attributes("/" + name) |> ignore
+      parse_datatype_data(data) |> ignore
       None
     } catch {
       error => Some(error)
     }
-    assert_true(error is Some(UnsupportedFeature(_)))
+    assert_eq(error, Some(expected))
   }
 }
 
@@ -137,13 +182,33 @@ test "standard numeric widths and byte orders remain readable" {
         [1UL, 42UL],
       )
     }
-    for width in [4, 8] {
+    for width in [2, 4, 8] {
       assert_eq(
         float_values(file.read_dataset("/" + endian + "_f" + width.to_string())),
         [1.0, 42.0],
       )
     }
   }
+  let half = float_values(file.read_dataset("/half_special"))
+  assert_eq(half, [
+    1.0, -2.5, 65504.0, 6.103515625e-05, 5.960464477539063e-08, 0.0, 0.0,
+  ])
+  assert_true(1.0 / half[6] < 0.0)
+  match find_attribute(file.attributes("/half_special"), "custom").values {
+    Some(Floats(values)) => assert_eq(values, [1.0, -2.5, 65504.0])
+    _ => abort("expected binary16 attribute")
+  }
+  assert_eq(float_values(file.read_dataset("/half_fill")), [-2.5, -2.5, -2.5])
+}
+
+///|
+test "binary16 special bit patterns convert without arithmetic rounding" {
+  assert_eq(float16_to_float(0x3C00U).to_double(), 1.0)
+  assert_eq(float16_to_float(0x7BFFU).to_double(), 65504.0)
+  assert_eq(float16_to_float(0x0001U).to_double(), 5.960464477539063e-08)
+  assert_true(float16_to_float(0x7C00U).is_inf())
+  assert_true(float16_to_float(0xFC00U).to_double() < 0.0)
+  assert_true(float16_to_float(0x7E00U).is_nan())
 }
 
 ///|

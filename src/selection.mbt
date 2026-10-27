@@ -152,7 +152,7 @@ fn selected_payload(
   let datatype = metadata.datatype
   guard datatype.size > 0 else { raise InvalidField("invalid datatype size") }
   if header.first(msg_external_data_files) is Some(_) {
-    raise UnsupportedFeature("external dataset storage is not supported yet")
+    raise UnsupportedFeature("external dataset storage requires Hdf5Resolver")
   }
   let filters = match header.first(msg_filter_pipeline) {
     Some(message) => parse_filters(message)
@@ -254,7 +254,7 @@ fn source_contiguous_payload(
     raise InvalidField("expected contiguous dataset storage")
   }
   if header.first(msg_external_data_files) is Some(_) {
-    raise UnsupportedFeature("external dataset storage is not supported yet")
+    raise UnsupportedFeature("external dataset storage requires Hdf5Resolver")
   }
   if header.first(msg_filter_pipeline) is Some(_) {
     raise UnsupportedFeature("filters require chunked storage")

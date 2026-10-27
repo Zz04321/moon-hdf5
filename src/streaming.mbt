@@ -21,6 +21,8 @@ pub struct DatasetChunkIterator {
   priv tile_dimensions : Array[UInt64]
   priv mut next_index : Int64
   priv total_tiles : Int64
+  priv resolver : Hdf5Resolver?
+  priv referring_file : String
 }
 
 ///|
@@ -79,6 +81,28 @@ fn dataset_tile_count(
 }
 
 ///|
+fn make_dataset_chunk_iterator(
+  file : Hdf5File,
+  header : ObjectHeader,
+  metadata : DatasetMetadata,
+  tile_dimensions : Array[UInt64],
+  resolver : Hdf5Resolver?,
+  referring_file : String,
+) -> DatasetChunkIterator raise Hdf5Error {
+  let total_tiles = dataset_tile_count(metadata.dataspace, tile_dimensions)
+  {
+    file,
+    header,
+    metadata,
+    tile_dimensions: tile_dimensions.copy(),
+    next_index: 0L,
+    total_tiles,
+    resolver,
+    referring_file,
+  }
+}
+
+///|
 /// Creates a bounded-memory iterator over a dataset.
 pub fn Hdf5File::chunk_iterator(
   self : Hdf5File,
@@ -95,15 +119,7 @@ pub fn Hdf5File::chunk_iterator(
     self.superblock.offset_size,
     self.superblock.length_size,
   )
-  let total_tiles = dataset_tile_count(metadata.dataspace, tile_dimensions)
-  {
-    file: self,
-    header,
-    metadata,
-    tile_dimensions: tile_dimensions.copy(),
-    next_index: 0L,
-    total_tiles,
-  }
+  make_dataset_chunk_iterator(self, header, metadata, tile_dimensions, None, "")
 }
 
 ///|
@@ -111,6 +127,22 @@ fn DatasetChunkIterator::read_selection(
   self : DatasetChunkIterator,
   selection : DatasetSelection,
 ) -> DatasetSelectionResult raise Hdf5Error {
+  if self.header.first(msg_external_data_files) is Some(_) {
+    let resolver = match self.resolver {
+      Some(resolver) => resolver
+      None =>
+        raise UnsupportedFeature(
+          "external dataset storage requires Hdf5Resolver",
+        )
+    }
+    return resolver.read_external_dataset_selection(
+      self.referring_file,
+      self.file,
+      self.header,
+      self.metadata,
+      selection,
+    )
+  }
   let file = self.file
   match file.source {
     Some(source) =>
