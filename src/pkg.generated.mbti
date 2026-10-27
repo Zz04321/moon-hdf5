@@ -177,6 +177,7 @@ pub(all) struct Datatype {
 } derive(@debug.Debug)
 pub fn Datatype::to_repr(Self) -> @debug.Repr
 pub fn Datatype::write_array(Self, Array[UInt64]) -> Self raise Hdf5Error
+pub fn Datatype::write_bitfield(Int32, Int32, offset? : Int32, little_endian? : Bool) -> Self raise Hdf5Error
 pub fn Datatype::write_compound(Array[(String, Self)]) -> Self raise Hdf5Error
 pub fn Datatype::write_enum(Self, Array[EnumMember]) -> Self raise Hdf5Error
 pub fn Datatype::write_fixed_string(Int32) -> Self raise Hdf5Error
@@ -184,6 +185,9 @@ pub fn Datatype::write_float(Int32) -> Self raise Hdf5Error
 pub fn Datatype::write_float_with_order(Int32, Bool) -> Self raise Hdf5Error
 pub fn Datatype::write_integer(Bool, Int32) -> Self raise Hdf5Error
 pub fn Datatype::write_integer_with_order(Bool, Int32, Bool) -> Self raise Hdf5Error
+pub fn Datatype::write_opaque(Int32, String) -> Self raise Hdf5Error
+pub fn Datatype::write_time(Int32, little_endian? : Bool) -> Self raise Hdf5Error
+pub fn Datatype::write_vlen_sequence(Self) -> Self raise Hdf5Error
 
 pub(all) struct EnumMember {
   name : String

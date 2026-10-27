@@ -549,3 +549,23 @@ demo includes the same cases, and h5py 3.13.0/HDF5 1.14.6 independently checks
 dtypes such as `>i2`, `>u8`, `>f4` and `>f8`, compound field offsets and byte
 orders, enum metadata, values and fill values. Nonstandard floating-point writer
 layouts remain unsupported.
+
+## Structured writer extension review — 2026-10-27
+
+The writer now emits HDF5 time, bitfield, opaque and variable-length-sequence
+datatypes in addition to compound, enum and fixed-array values. Time and
+bitfield constructors validate widths, offsets and precisions; opaque values
+validate their tag and nonzero width; sequence constructors require a
+fixed-size base and recursively copy its datatype. Sequence descriptors use the
+same shared global heap as variable-length strings, with empty values stored as
+zero descriptors and duplicate payloads deduplicated. Custom variable-length
+fills and filter pipelines remain rejected before a file is built.
+
+Native tests cover little- and big-endian time, offset bitfields, tagged and
+untagged opaque values, empty and repeated sequences, sequence attributes and
+structured compounds containing the new types. The writer demo includes the
+same cases. h5py 3.13.0/HDF5 1.14.6 independently checks the HDF5 datatype
+classes, time values and fills, bitfield class and values, opaque tags and
+bytes, sequence dtype, sequence contents and the sequence attribute. Invalid
+width, bit layout, nested-vlen, fill and filter combinations are rejected in
+MoonBit tests.

@@ -244,6 +244,73 @@ fn run(args : Array[String]) -> Int32 {
       fill_value=StructuredValues(big_i16, [@lib.SignedInteger(-999L)]),
     )
     writer.resize_dataset("/types/big_fill", [4UL])
+    let unix_time = @lib.Datatype::write_time(8)
+    writer.add_dataset(
+      "/types/time",
+      [3UL],
+      StructuredValues(unix_time, [
+        @lib.Time(0UL),
+        @lib.Time(1700000000UL),
+        @lib.Time(42UL),
+      ]),
+    )
+    writer.add_extensible_dataset(
+      "/types/time_fill",
+      [1UL],
+      [None],
+      [2U],
+      StructuredValues(unix_time, [@lib.Time(7UL)]),
+      fill_value=StructuredValues(unix_time, [@lib.Time(99UL)]),
+    )
+    writer.resize_dataset("/types/time_fill", [3UL])
+    writer.add_dataset(
+      "/types/bitfield",
+      [3UL],
+      StructuredValues(@lib.Datatype::write_bitfield(2, 12), [
+        @lib.Bitfield(0UL),
+        @lib.Bitfield(240UL),
+        @lib.Bitfield(0xFFFUL),
+      ]),
+    )
+    writer.add_chunked_dataset(
+      "/types/opaque",
+      [2UL],
+      [1U],
+      StructuredValues(@lib.Datatype::write_opaque(4, "MOON|V4"), [
+        @lib.Opaque(b"\x00\x01\xfe\xff"),
+        @lib.Opaque(b"MOON"),
+      ]),
+      filters=[Shuffle, Deflate(6)],
+    )
+    let int_sequence = @lib.Datatype::write_vlen_sequence(
+      @lib.Datatype::write_integer(true, 4),
+    )
+    writer.add_dataset(
+      "/types/sequences",
+      [4UL],
+      StructuredValues(int_sequence, [
+        @lib.Sequence([]),
+        @lib.Sequence([
+          @lib.SignedInteger(1L),
+          @lib.SignedInteger(-2L),
+          @lib.SignedInteger(3L),
+        ]),
+        @lib.Sequence([
+          @lib.SignedInteger(1L),
+          @lib.SignedInteger(-2L),
+          @lib.SignedInteger(3L),
+        ]),
+        @lib.Sequence([@lib.SignedInteger(-1L), @lib.SignedInteger(0L)]),
+      ]),
+    )
+    writer.add_attribute(
+      "/types/sequences",
+      "prototype",
+      [],
+      StructuredValues(int_sequence, [
+        @lib.Sequence([@lib.SignedInteger(7L), @lib.SignedInteger(8L)]),
+      ]),
+    )
     writer.add_chunked_dataset(
       "/types/chunked_i16",
       [5UL],

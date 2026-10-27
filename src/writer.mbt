@@ -25,6 +25,9 @@ fn writer_datatype(
   size : Int32,
   signed~ : Bool = false,
   little_endian~ : Bool = true,
+  bit_offset~ : Int32 = 0,
+  bit_precision~ : Int32 = 0,
+  opaque_tag~ : String = "",
   enum_members~ : Array[EnumMember] = [],
   compound_members~ : Array[CompoundMember] = [],
   base_types~ : Array[Datatype] = [],
@@ -41,8 +44,10 @@ fn writer_datatype(
     compound_members,
     base_types,
     array_dimensions,
-    bit_offset: 0,
-    bit_precision: if class == 0 || class == 1 {
+    bit_offset,
+    bit_precision: if bit_precision > 0 {
+      bit_precision
+    } else if class == 0 || class == 1 {
       size * 8
     } else {
       0
@@ -64,7 +69,7 @@ fn writer_datatype(
     } else {
       0
     },
-    opaque_tag: "",
+    opaque_tag,
     reference_kind: 0,
   }
 }
@@ -108,6 +113,79 @@ pub fn Datatype::write_float_with_order(
     raise InvalidArgument("writer floating-point datatype width is invalid")
   }
   writer_datatype(1, size, little_endian~)
+}
+
+///|
+/// Creates an HDF5 time datatype backed by an unsigned integer.
+pub fn Datatype::write_time(
+  size : Int32,
+  little_endian~ : Bool = true,
+) -> Datatype raise Hdf5Error {
+  guard size == 1 || size == 2 || size == 4 || size == 8 else {
+    raise InvalidArgument("writer time datatype width is invalid")
+  }
+  writer_datatype(2, size, little_endian~, bit_precision=size * 8)
+}
+
+///|
+/// Creates a bitfield datatype with a declared offset and precision.
+pub fn Datatype::write_bitfield(
+  size : Int32,
+  precision : Int32,
+  offset~ : Int32 = 0,
+  little_endian~ : Bool = true,
+) -> Datatype raise Hdf5Error {
+  guard (size == 1 || size == 2 || size == 4 || size == 8) &&
+    precision > 0 &&
+    precision <= 64 &&
+    offset >= 0 &&
+    offset <= size * 8 - precision else {
+    raise InvalidArgument("writer bitfield layout is invalid")
+  }
+  writer_datatype(
+    4,
+    size,
+    little_endian~,
+    bit_offset=offset,
+    bit_precision=precision,
+  )
+}
+
+///|
+/// Creates an opaque datatype with an optional ASCII tag.
+pub fn Datatype::write_opaque(
+  size : Int32,
+  tag : String,
+) -> Datatype raise Hdf5Error {
+  guard size > 0 else {
+    raise InvalidArgument("writer opaque datatype width is invalid")
+  }
+  let encoded = @utf8.encode(tag)
+  for byte in encoded {
+    guard byte > b'\x00' && byte < b'\x80' else {
+      raise InvalidArgument("opaque datatype tag must be non-NUL ASCII")
+    }
+  }
+  let padded = if encoded.length() == 0 {
+    0
+  } else {
+    round_up_to_eight(encoded.length() + 1)
+  }
+  guard padded <= 255 else {
+    raise InvalidArgument("opaque datatype tag is too long")
+  }
+  writer_datatype(5, size, opaque_tag=tag)
+}
+
+///|
+/// Creates a variable-length sequence datatype with a fixed-size base type.
+pub fn Datatype::write_vlen_sequence(
+  base : Datatype,
+) -> Datatype raise Hdf5Error {
+  guard !datatype_contains_vlen(base) else {
+    raise InvalidArgument("writer variable-length sequence base is invalid")
+  }
+  writer_datatype(9, 16, base_types=[base])
 }
 
 ///|
@@ -273,6 +351,7 @@ priv struct EncodedChunkEntry {
 priv struct WritableGlobalHeap {
   address : UInt64
   strings : Array[String]
+  sequences : Array[Bytes]
 }
 
 ///|
@@ -555,11 +634,53 @@ fn validate_writer_datatype(
         raise InvalidArgument("writer floating-point datatype is unsupported")
       }
     }
+    2 => {
+      guard (
+          datatype.size == 1 ||
+          datatype.size == 2 ||
+          datatype.size == 4 ||
+          datatype.size == 8
+        ) &&
+        datatype.bit_precision > 0 &&
+        datatype.bit_precision <= datatype.size * 8 else {
+        raise InvalidArgument("writer time datatype is unsupported")
+      }
+    }
     3 => {
       guard datatype.size <= 65535 &&
         datatype.string_padding == 1 &&
         datatype.string_charset == 1 else {
         raise InvalidArgument("writer string datatype is unsupported")
+      }
+    }
+    4 => {
+      guard (
+          datatype.size == 1 ||
+          datatype.size == 2 ||
+          datatype.size == 4 ||
+          datatype.size == 8
+        ) &&
+        datatype.bit_precision > 0 &&
+        datatype.bit_precision <= 64 &&
+        datatype.bit_offset >= 0 &&
+        datatype.bit_offset <= datatype.size * 8 - datatype.bit_precision else {
+        raise InvalidArgument("writer bitfield datatype is unsupported")
+      }
+    }
+    5 => {
+      let encoded = @utf8.encode(datatype.opaque_tag)
+      for byte in encoded {
+        guard byte > b'\x00' && byte < b'\x80' else {
+          raise InvalidArgument("writer opaque datatype tag is invalid")
+        }
+      }
+      guard (if encoded.length() == 0 {
+          0
+        } else {
+          round_up_to_eight(encoded.length() + 1)
+        }) <=
+        255 else {
+        raise InvalidArgument("writer opaque datatype tag is too long")
       }
     }
     6 => {
@@ -621,6 +742,20 @@ fn validate_writer_datatype(
           }
         }
       }
+    }
+    9 => {
+      guard datatype.size == 16 &&
+        !datatype.vlen_is_string &&
+        datatype.base_types.length() == 1 else {
+        raise InvalidArgument("writer variable-length sequence is invalid")
+      }
+      let base = datatype.base_types[0]
+      guard !datatype_contains_vlen(base) else {
+        raise InvalidArgument(
+          "writer variable-length sequence base must be fixed-size",
+        )
+      }
+      validate_writer_datatype(base, depth + 1)
     }
     10 => {
       guard datatype.base_types.length() == 1 &&
@@ -689,12 +824,40 @@ fn validate_structured_value(
         )
       }
     }
+    2 => {
+      guard value is Time(number) else {
+        raise InvalidArgument("structured time value has the wrong kind")
+      }
+      if datatype.bit_precision < 64 {
+        guard number < 1UL << datatype.bit_precision else {
+          raise InvalidArgument("structured time is out of range")
+        }
+      }
+    }
     3 => {
       guard value is Text(text) else {
         raise InvalidArgument("structured string value has the wrong kind")
       }
       guard @utf8.encode(text).length() <= datatype.size else {
         raise InvalidArgument("structured string exceeds its width")
+      }
+    }
+    4 => {
+      guard value is Bitfield(number) else {
+        raise InvalidArgument("structured bitfield value has the wrong kind")
+      }
+      if datatype.bit_precision < 64 {
+        guard number < 1UL << datatype.bit_precision else {
+          raise InvalidArgument("structured bitfield is out of range")
+        }
+      }
+    }
+    5 => {
+      guard value is Opaque(bytes) else {
+        raise InvalidArgument("structured opaque value has the wrong kind")
+      }
+      guard bytes.length() == datatype.size else {
+        raise InvalidArgument("structured opaque value has the wrong size")
       }
     }
     6 => {
@@ -720,6 +883,17 @@ fn validate_structured_value(
       guard datatype.enum_members.search_by(enum_item => enum_item.name == name)
         is Some(_) else {
         raise InvalidArgument("enum value does not match any member")
+      }
+    }
+    9 => {
+      guard value is Sequence(items) else {
+        raise InvalidArgument(
+          "variable-length sequence value has the wrong kind",
+        )
+      }
+      let base = datatype.base_types[0]
+      for item in items {
+        validate_structured_value(item, base, depth + 1)
       }
     }
     10 => {
@@ -1228,7 +1402,7 @@ fn validated_write_fill(
 ) -> Hdf5WriteValues? raise Hdf5Error {
   match fill_value {
     Some(fill) => {
-      guard !(values is VariableStringValues(_)) else {
+      guard !writer_values_contain_vlen(values) else {
         raise UnsupportedFeature(
           "custom variable-length fill values are not supported yet",
         )
@@ -1419,7 +1593,10 @@ fn default_structured_value(
   match datatype.class {
     0 => if datatype.signed { SignedInteger(0L) } else { UnsignedInteger(0UL) }
     1 => FloatingPoint(0.0)
+    2 => Time(0UL)
     3 => Text("")
+    4 => Bitfield(0UL)
+    5 => Opaque(Bytes::make(datatype.size, b'\x00'))
     6 =>
       Compound(
         datatype.compound_members.map(field => {
@@ -1441,6 +1618,7 @@ fn default_structured_value(
       }
       Enumeration(datatype.enum_members[index].name)
     }
+    9 => Sequence([])
     10 => {
       let base = datatype.base_types[0]
       Elements(
@@ -1877,7 +2055,47 @@ fn encode_writer_datatype(datatype : Datatype) -> Bytes raise Hdf5Error {
       )
     1 =>
       encode_float_datatype(datatype.size, little_endian=datatype.little_endian)
+    2 => {
+      let buffer = @buffer.Buffer::Buffer(size_hint=12)
+      buffer.write_byte(b'\x12')
+      buffer.write_byte(if datatype.little_endian { b'\x00' } else { b'\x01' })
+      buffer.write_byte(b'\x00')
+      buffer.write_byte(b'\x00')
+      buffer.write_uint_le(datatype.size.reinterpret_as_uint())
+      buffer.write_uint16_le(datatype.bit_precision.to_uint16())
+      buffer.to_bytes()
+    }
     3 => encode_string_datatype(datatype.size)
+    4 => {
+      let buffer = @buffer.Buffer::Buffer(size_hint=14)
+      buffer.write_byte(b'\x14')
+      buffer.write_byte(if datatype.little_endian { b'\x00' } else { b'\x01' })
+      buffer.write_byte(b'\x00')
+      buffer.write_byte(b'\x00')
+      buffer.write_uint_le(datatype.size.reinterpret_as_uint())
+      buffer.write_uint16_le(datatype.bit_offset.to_uint16())
+      buffer.write_uint16_le(datatype.bit_precision.to_uint16())
+      buffer.to_bytes()
+    }
+    5 => {
+      let tag = @utf8.encode(datatype.opaque_tag)
+      let padded = if tag.length() == 0 {
+        0
+      } else {
+        round_up_to_eight(tag.length() + 1)
+      }
+      let buffer = @buffer.Buffer::Buffer(size_hint=8 + padded)
+      buffer.write_byte(b'\x15')
+      buffer.write_byte(padded.to_byte())
+      buffer.write_byte(b'\x00')
+      buffer.write_byte(b'\x00')
+      buffer.write_uint_le(datatype.size.reinterpret_as_uint())
+      if padded > 0 {
+        writer_write_bytes(buffer, tag)
+        writer_write_zeros(buffer, padded - tag.length())
+      }
+      buffer.to_bytes()
+    }
     6 => {
       let buffer = @buffer.Buffer::Buffer()
       buffer.write_byte(b'\x36')
@@ -1920,6 +2138,16 @@ fn encode_writer_datatype(datatype : Datatype) -> Bytes raise Hdf5Error {
       }
       buffer.to_bytes()
     }
+    9 => {
+      let buffer = @buffer.Buffer::Buffer()
+      buffer.write_byte(b'\x19')
+      buffer.write_byte(b'\x00')
+      buffer.write_byte(b'\x00')
+      buffer.write_byte(b'\x00')
+      buffer.write_uint_le(datatype.size.reinterpret_as_uint())
+      writer_write_bytes(buffer, encode_writer_datatype(datatype.base_types[0]))
+      buffer.to_bytes()
+    }
     10 => {
       let buffer = @buffer.Buffer::Buffer()
       buffer.write_byte(b'\x3a')
@@ -1942,6 +2170,7 @@ fn encode_writer_datatype(datatype : Datatype) -> Bytes raise Hdf5Error {
 fn encode_structured_value(
   datatype : Datatype,
   value : DatasetValue,
+  heap~ : WritableGlobalHeap = empty_writable_heap(),
 ) -> Bytes raise Hdf5Error {
   validate_structured_value(value, datatype, 0)
   let buffer = @buffer.Buffer::Buffer(size_hint=datatype.size)
@@ -1975,6 +2204,17 @@ fn encode_structured_value(
           }
         _ => ()
       }
+    2 =>
+      match value {
+        Time(number) =>
+          write_uint_width(
+            buffer,
+            number,
+            datatype.size,
+            little_endian=datatype.little_endian,
+          )
+        _ => ()
+      }
     3 =>
       match value {
         Text(text) => {
@@ -1982,6 +2222,22 @@ fn encode_structured_value(
           writer_write_bytes(buffer, encoded)
           writer_write_zeros(buffer, datatype.size - encoded.length())
         }
+        _ => ()
+      }
+    4 =>
+      match value {
+        Bitfield(number) =>
+          write_uint_width(
+            buffer,
+            number << datatype.bit_offset,
+            datatype.size,
+            little_endian=datatype.little_endian,
+          )
+        _ => ()
+      }
+    5 =>
+      match value {
+        Opaque(bytes) => writer_write_bytes(buffer, bytes)
         _ => ()
       }
     6 =>
@@ -1993,6 +2249,7 @@ fn encode_structured_value(
             let encoded = encode_structured_value(
               field.datatype,
               fields[index].value,
+              heap~,
             )
             output.blit_from_bytes(field.offset, encoded, 0, encoded.length())
           }
@@ -2019,13 +2276,38 @@ fn encode_structured_value(
         }
         _ => ()
       }
+    9 =>
+      match value {
+        Sequence(items) =>
+          if items.length() == 0 {
+            buffer.write_uint_le(0U)
+            buffer.write_uint64_le(0UL)
+            buffer.write_uint_le(0U)
+          } else {
+            let encoded = @buffer.Buffer::Buffer()
+            let base = datatype.base_types[0]
+            for item in items {
+              writer_write_bytes(
+                encoded,
+                encode_structured_value(base, item, heap~),
+              )
+            }
+            let data = encoded.to_bytes()
+            buffer.write_uint_le(items.length().reinterpret_as_uint())
+            buffer.write_uint64_le(heap.address)
+            buffer.write_uint_le(
+              writable_sequence_heap_index(heap, data).reinterpret_as_uint(),
+            )
+          }
+        _ => ()
+      }
     10 =>
       match value {
         Elements(items) =>
           for item in items {
             writer_write_bytes(
               buffer,
-              encode_structured_value(datatype.base_types[0], item),
+              encode_structured_value(datatype.base_types[0], item, heap~),
             )
           }
         _ => ()
@@ -2063,7 +2345,7 @@ fn encode_variable_string_datatype() -> Bytes {
 
 ///|
 fn empty_writable_heap() -> WritableGlobalHeap {
-  { address: 0UL, strings: [], }
+  { address: 0UL, strings: [], sequences: [], }
 }
 
 ///|
@@ -2076,6 +2358,22 @@ fn writable_heap_index(
     None => {
       guard heap.address == 0UL else {
         raise InvalidField("variable string is missing from the global heap")
+      }
+      0
+    }
+  }
+}
+
+///|
+fn writable_sequence_heap_index(
+  heap : WritableGlobalHeap,
+  value : Bytes,
+) -> Int32 raise Hdf5Error {
+  match heap.sequences.search_by(item => item == value) {
+    Some(index) => heap.strings.length() + index + 1
+    None => {
+      guard heap.address == 0UL else {
+        raise InvalidField("variable sequence is missing from the global heap")
       }
       0
     }
@@ -2175,7 +2473,10 @@ fn encode_write_values(
     }
     StructuredValues(datatype, items) => {
       for item in items {
-        writer_write_bytes(payload, encode_structured_value(datatype, item))
+        writer_write_bytes(
+          payload,
+          encode_structured_value(datatype, item, heap~),
+        )
       }
       (encode_writer_datatype(datatype), datatype.size)
     }
@@ -4483,6 +4784,56 @@ fn collect_heap_strings(
 }
 
 ///|
+fn collect_heap_sequences(
+  output : Array[Bytes],
+  datatype : Datatype,
+  value : DatasetValue,
+) -> Unit raise Hdf5Error {
+  match datatype.class {
+    6 =>
+      match value {
+        Compound(fields) =>
+          for index in 0..<fields.length() {
+            collect_heap_sequences(
+              output,
+              datatype.compound_members[index].datatype,
+              fields[index].value,
+            )
+          }
+        _ => ()
+      }
+    9 =>
+      match value {
+        Sequence(items) =>
+          if items.length() > 0 {
+            let base = datatype.base_types[0]
+            let encoded = @buffer.Buffer::Buffer()
+            for item in items {
+              writer_write_bytes(encoded, encode_structured_value(base, item))
+            }
+            let data = encoded.to_bytes()
+            if !output.contains(data) {
+              guard output.length() < 65535 else {
+                raise InvalidField("writer global heap has too many objects")
+              }
+              output.push(data)
+            }
+          }
+        _ => ()
+      }
+    10 =>
+      match value {
+        Elements(items) =>
+          for item in items {
+            collect_heap_sequences(output, datatype.base_types[0], item)
+          }
+        _ => ()
+      }
+    _ => ()
+  }
+}
+
+///|
 fn Hdf5Writer::global_heap_strings(
   self : Hdf5Writer,
 ) -> Array[String] raise Hdf5Error {
@@ -4497,9 +4848,39 @@ fn Hdf5Writer::global_heap_strings(
 }
 
 ///|
+fn Hdf5Writer::global_heap_sequences(
+  self : Hdf5Writer,
+) -> Array[Bytes] raise Hdf5Error {
+  let sequences : Array[Bytes] = []
+  for dataset in self.datasets {
+    match dataset.values {
+      StructuredValues(datatype, items) =>
+        for item in items {
+          collect_heap_sequences(sequences, datatype, item)
+        }
+      _ => ()
+    }
+  }
+  for attribute in self.attributes {
+    match attribute.values {
+      StructuredValues(datatype, items) =>
+        for item in items {
+          collect_heap_sequences(sequences, datatype, item)
+        }
+      _ => ()
+    }
+  }
+  sequences
+}
+
+///|
 fn encode_global_heap(heap : WritableGlobalHeap) -> Bytes raise Hdf5Error {
-  if heap.strings.length() == 0 {
+  let object_count = heap.strings.length() + heap.sequences.length()
+  if object_count == 0 {
     return b""
+  }
+  guard object_count <= 65535 else {
+    raise InvalidField("writer global heap has too many objects")
   }
   let mut used_size = 16
   for item in heap.strings {
@@ -4508,6 +4889,12 @@ fn encode_global_heap(heap : WritableGlobalHeap) -> Bytes raise Hdf5Error {
       raise InvalidField("writer global heap is too large")
     }
     used_size = used_size + 16 + round_up_to_eight(length)
+  }
+  for item in heap.sequences {
+    guard used_size <= 0x7FFFFFFF - 16 - round_up_to_eight(item.length()) else {
+      raise InvalidField("writer global heap is too large")
+    }
+    used_size = used_size + 16 + round_up_to_eight(item.length())
   }
   let collection_size_64 = (used_size.to_int64() + 16L + 4095L) / 4096L * 4096L
   guard collection_size_64 <= 0x7FFFFFFFL else {
@@ -4519,9 +4906,11 @@ fn encode_global_heap(heap : WritableGlobalHeap) -> Bytes raise Hdf5Error {
   buffer.write_byte(b'\x01')
   writer_write_zeros(buffer, 3)
   buffer.write_uint64_le(collection_size.to_uint64())
-  for index in 0..<heap.strings.length() {
-    let encoded = @utf8.encode(heap.strings[index])
-    buffer.write_uint16_le((index + 1).to_uint16())
+  let mut object_index = 0
+  for item in heap.strings {
+    let encoded = @utf8.encode(item)
+    object_index = object_index + 1
+    buffer.write_uint16_le(object_index.to_uint16())
     buffer.write_uint16_le(0)
     buffer.write_uint_le(0U)
     buffer.write_uint64_le(encoded.length().to_uint64())
@@ -4530,6 +4919,15 @@ fn encode_global_heap(heap : WritableGlobalHeap) -> Bytes raise Hdf5Error {
       buffer,
       round_up_to_eight(encoded.length()) - encoded.length(),
     )
+  }
+  for item in heap.sequences {
+    object_index = object_index + 1
+    buffer.write_uint16_le(object_index.to_uint16())
+    buffer.write_uint16_le(0)
+    buffer.write_uint_le(0U)
+    buffer.write_uint64_le(item.length().to_uint64())
+    writer_write_bytes(buffer, item)
+    writer_write_zeros(buffer, round_up_to_eight(item.length()) - item.length())
   }
   buffer.write_uint16_le(0)
   buffer.write_uint16_le(0)
@@ -4567,15 +4965,17 @@ fn assign_writable_addresses(
     offset = writer_align(offset + lengths[index])
   }
   let strings = writer.global_heap_strings()
+  let sequences = writer.global_heap_sequences()
   let heap = {
-    address: if strings.length() == 0 {
+    address: if strings.length() == 0 && sequences.length() == 0 {
       0UL
     } else {
       offset.to_uint64()
     },
     strings,
+    sequences,
   }
-  if heap.strings.length() > 0 {
+  if heap.strings.length() > 0 || heap.sequences.length() > 0 {
     offset = writer_align(offset + encode_global_heap(heap).length())
   }
   let dense : Array[WritableDenseMetadata] = []

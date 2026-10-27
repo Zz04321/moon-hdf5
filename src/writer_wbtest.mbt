@@ -1664,6 +1664,245 @@ test "writer round-trips big-endian numeric enum and mixed compound values" {
 }
 
 ///|
+test "writer round-trips time bitfield and opaque values" {
+  let writer = Hdf5Writer::new()
+  let time = Datatype::write_time(8)
+  let big_time = Datatype::write_time(4, little_endian=false)
+  let flags = Datatype::write_bitfield(2, 12, offset=4)
+  let opaque_type = Datatype::write_opaque(4, "MOON|V4")
+  let untagged = Datatype::write_opaque(3, "")
+  writer.add_dataset(
+    "/time",
+    [3UL],
+    StructuredValues(time, [Time(0UL), Time(1700000000UL), Time(42UL)]),
+  )
+  writer.add_dataset(
+    "/big_time",
+    [2UL],
+    StructuredValues(big_time, [Time(0UL), Time(0x01020304UL)]),
+  )
+  writer.add_dataset(
+    "/flags",
+    [3UL],
+    StructuredValues(flags, [Bitfield(0UL), Bitfield(1UL), Bitfield(0xABCUL)]),
+  )
+  writer.add_chunked_dataset(
+    "/opaque",
+    [2UL],
+    [1U],
+    StructuredValues(opaque_type, [Opaque(b"\x00\x01\xfe\xff"), Opaque(b"MOON")]),
+    filters=[Shuffle, Deflate(6)],
+  )
+  writer.add_dataset(
+    "/untagged",
+    [1UL],
+    StructuredValues(untagged, [Opaque(b"abc")]),
+  )
+
+  let record_type = Datatype::write_compound([
+    ("when", time),
+    ("flags", flags),
+    ("blob", opaque_type),
+  ])
+  let record = Compound([
+    { name: "when", value: Time(1700000000UL), },
+    { name: "flags", value: Bitfield(0x345UL), },
+    { name: "blob", value: Opaque(b"DATA"), },
+  ])
+  writer.add_dataset("/record", [1UL], StructuredValues(record_type, [record]))
+  writer.add_attribute(
+    "/record",
+    "flag_marker",
+    [],
+    StructuredValues(flags, [Bitfield(0x7FFUL)]),
+  )
+  writer.add_extensible_dataset(
+    "/time_fill",
+    [1UL],
+    [None],
+    [2U],
+    StructuredValues(time, [Time(7UL)]),
+    fill_value=StructuredValues(time, [Time(99UL)]),
+  )
+  writer.resize_dataset("/time_fill", [3UL])
+
+  let file = Hdf5File::parse(writer.encode())
+  let time_dataset = file.read_dataset("/time")
+  assert_eq(time_dataset.datatype.class, 2)
+  assert_eq(time_dataset.datatype.bit_precision, 64)
+  assert_eq(structured_values(time_dataset), [
+    Time(0UL),
+    Time(1700000000UL),
+    Time(42UL),
+  ])
+  let big_time_dataset = file.read_dataset("/big_time")
+  assert_eq(big_time_dataset.datatype.little_endian, false)
+  assert_eq(structured_values(big_time_dataset), [Time(0UL), Time(0x01020304UL)])
+  let flag_dataset = file.read_dataset("/flags")
+  assert_eq(flag_dataset.datatype.class, 4)
+  assert_eq(flag_dataset.datatype.bit_offset, 4)
+  assert_eq(flag_dataset.datatype.bit_precision, 12)
+  assert_eq(structured_values(flag_dataset), [
+    Bitfield(0UL),
+    Bitfield(1UL),
+    Bitfield(0xABCUL),
+  ])
+  let opaque_dataset = file.read_dataset("/opaque")
+  assert_eq(opaque_dataset.datatype.class, 5)
+  assert_eq(opaque_dataset.datatype.opaque_tag, "MOON|V4")
+  assert_eq(structured_values(opaque_dataset), [
+    Opaque(b"\x00\x01\xfe\xff"),
+    Opaque(b"MOON"),
+  ])
+  assert_eq(file.read_dataset("/untagged").datatype.opaque_tag, "")
+  assert_eq(structured_values(file.read_dataset("/record")), [record])
+  let attributes = file.attributes("/record")
+  match attributes.search_by(attribute => attribute.name == "flag_marker") {
+    Some(index) =>
+      match attributes[index].values {
+        Some(Structured(values)) => assert_eq(values, [Bitfield(0x7FFUL)])
+        _ => abort("expected bitfield attribute")
+      }
+    None => abort("expected bitfield attribute")
+  }
+  assert_eq(structured_values(file.read_dataset("/time_fill")), [
+    Time(7UL),
+    Time(99UL),
+    Time(99UL),
+  ])
+}
+
+///|
+test "writer round-trips variable-length sequences" {
+  let writer = Hdf5Writer::new()
+  let sequence = Datatype::write_vlen_sequence(Datatype::write_integer(true, 4))
+  writer.add_dataset(
+    "/sequences",
+    [4UL],
+    StructuredValues(sequence, [
+      Sequence([]),
+      Sequence([SignedInteger(1L), SignedInteger(-2L), SignedInteger(3L)]),
+      Sequence([SignedInteger(1L), SignedInteger(-2L), SignedInteger(3L)]),
+      Sequence([SignedInteger(-1L), SignedInteger(0L)]),
+    ]),
+  )
+  writer.add_attribute(
+    "/sequences",
+    "prototype",
+    [],
+    StructuredValues(sequence, [
+      Sequence([SignedInteger(7L), SignedInteger(8L)]),
+    ]),
+  )
+
+  let file = Hdf5File::parse(writer.encode())
+  let dataset = file.read_dataset("/sequences")
+  assert_eq(dataset.datatype.class, 9)
+  assert_eq(dataset.datatype.vlen_is_string, false)
+  assert_eq(dataset.datatype.base_types[0].size, 4)
+  assert_eq(structured_values(dataset), [
+    Sequence([]),
+    Sequence([SignedInteger(1L), SignedInteger(-2L), SignedInteger(3L)]),
+    Sequence([SignedInteger(1L), SignedInteger(-2L), SignedInteger(3L)]),
+    Sequence([SignedInteger(-1L), SignedInteger(0L)]),
+  ])
+  let attributes = file.attributes("/sequences")
+  match attributes[0].values {
+    Some(Structured(values)) =>
+      assert_eq(values, [Sequence([SignedInteger(7L), SignedInteger(8L)])])
+    _ => abort("expected variable-length sequence attribute")
+  }
+}
+
+///|
+test "writer rejects invalid time bitfield opaque and sequence types" {
+  let invalid_time : Hdf5Error? = try {
+    Datatype::write_time(3) |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  let invalid_bitfield : Hdf5Error? = try {
+    Datatype::write_bitfield(2, 13, offset=4) |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  let invalid_opaque : Hdf5Error? = try {
+    Datatype::write_opaque(0, "") |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  let nested_sequence : Hdf5Error? = try {
+    let base = Datatype::write_vlen_sequence(Datatype::write_integer(true, 4))
+    Datatype::write_vlen_sequence(base) |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    invalid_time,
+    Some(InvalidArgument("writer time datatype width is invalid")),
+  )
+  assert_eq(
+    invalid_bitfield,
+    Some(InvalidArgument("writer bitfield layout is invalid")),
+  )
+  assert_eq(
+    invalid_opaque,
+    Some(InvalidArgument("writer opaque datatype width is invalid")),
+  )
+  assert_eq(
+    nested_sequence,
+    Some(InvalidArgument("writer variable-length sequence base is invalid")),
+  )
+
+  let writer = Hdf5Writer::new()
+  let sequence = Datatype::write_vlen_sequence(Datatype::write_integer(true, 4))
+  let filtered = try {
+    writer.add_chunked_dataset(
+      "/sequences",
+      [1UL],
+      [1U],
+      StructuredValues(sequence, [Sequence([SignedInteger(1L)])]),
+      filters=[Deflate(6)],
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    filtered,
+    Some(
+      UnsupportedFeature(
+        "filters are not supported for variable-length datasets",
+      ),
+    ),
+  )
+  let invalid_fill = try {
+    writer.add_chunked_dataset(
+      "/fill",
+      [1UL],
+      [1U],
+      StructuredValues(sequence, [Sequence([])]),
+      fill_value=StructuredValues(sequence, [Sequence([SignedInteger(1L)])]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    invalid_fill,
+    Some(
+      UnsupportedFeature(
+        "custom variable-length fill values are not supported yet",
+      ),
+    ),
+  )
+}
+
+///|
 test "writer appends and fills extensible enums" {
   let writer = Hdf5Writer::new()
   let state = Datatype::write_enum(Datatype::write_integer(false, 1), [

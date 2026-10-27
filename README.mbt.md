@@ -184,8 +184,8 @@ Source file addresses use 64-bit offsets and can exceed 2 GiB.
 
 `Hdf5Writer` builds a complete new file in memory. It supports signed and
 unsigned 1–8-byte integers in either byte order, IEEE float32/64 in either byte
-order, fixed or variable-length UTF-8 strings, and structured compound, enum
-and fixed-array values.
+order, fixed or variable-length UTF-8 strings, and structured compound, enum,
+fixed-array, time, bitfield, opaque and variable-length-sequence values.
 
 ```moonbit nocheck
 ///|
@@ -258,20 +258,24 @@ them, and `Hdf5Resolver` resolves them when the target source is registered;
 `Hdf5File` alone leaves the link unresolved. The
 writer rejects link messages whose encoded metadata exceeds HDF5's 16-bit message
 size. `Datatype::write_integer`, `write_float`, `write_fixed_string`,
-`write_enum`, `write_array` and `write_compound` construct supported structured
-writer types. Use `write_integer_with_order` and `write_float_with_order` when a
+`write_enum`, `write_array`, `write_compound`, `write_time`, `write_bitfield`,
+`write_opaque` and `write_vlen_sequence` construct supported structured writer
+types. Use `write_integer_with_order` and `write_float_with_order` when a
 structured value needs big-endian storage; the standard constructors remain
-little-endian. Groups and objects with attributes use dense storage when they
-contain 9–65,535 links or attributes and every encoded heap object is at most
-4 KiB. Dense groups use an FRHP fractal heap with one FHDB direct block and a
-BTHD/BTLF name index; dense attributes use the same heap layout and their own
-name index. The writer does not emit dense indirect or huge heap blocks,
-creation-order indexes or a free-space manager. Metadata outside those bounds
-remains compact and is split across checksummed OCHK continuation chunks. The
-writer demo includes a 2500-attribute object, a group with both dense links and
-dense attributes including a variable-length string attribute, exactly eight
-oversized links and attributes that exercise compact OCHK continuations, and a
-20-attribute object spanning multiple continuation chunks.
+little-endian. Variable-length sequences use a fixed-size base type, and empty,
+repeated and nested-in-compound sequence values are supported. Strings and
+sequence payloads share one global heap collection. Groups and objects with
+attributes use dense storage when they contain 9–65,535 links or attributes and
+every encoded heap object is at most 4 KiB. Dense groups use an FRHP fractal
+heap with one FHDB direct block and a BTHD/BTLF name index; dense attributes use
+the same heap layout and their own name index. The writer does not emit dense
+indirect or huge heap blocks, creation-order indexes or a free-space manager.
+Metadata outside those bounds remains compact and is split across checksummed
+OCHK continuation chunks. The writer demo includes a 2500-attribute object, a
+group with both dense links and dense attributes including a variable-length
+string attribute, exactly eight oversized links and attributes that exercise
+compact OCHK continuations, and a 20-attribute object spanning multiple
+continuation chunks.
 
 For integer values, `ScaleOffset(0)` selects automatic bit width and a positive
 value fixes the width. For f32/f64 values, the parameter is the number of
@@ -325,8 +329,9 @@ preserve order and duplicates.
   `ScaleOffset(element_width * 8)` to store an integer chunk unfiltered. Writer
   floating-point data and fill values must be finite, and floating-point
   scale-offset cannot be combined with Fletcher32.
-- Custom variable-length fill values, other writer filters and reference writing
-  are not supported.
+- Custom variable-length fill values, other writer filters, reference writing
+  and complex-number writing are not supported. Variable-length sequence bases
+  must be fixed-size values.
 - Reference resolution covers legacy object and dataset-region references under
   4- and 8-byte address widths. Region targets must be datasets in the same
   file. Version-4 encoded references and reference writing are not supported.

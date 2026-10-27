@@ -163,6 +163,60 @@ def verify(path: Path) -> None:
         assert big_fill.dtype == np.dtype(">i2")
         assert big_fill.fillvalue == -999
         np.testing.assert_array_equal(big_fill[:], [7, -999, -999, -999])
+        time_id = h5py.h5d.open(handle.id, b"/types/time")
+        time_type = time_id.get_type()
+        assert time_type.get_class() == h5py.h5t.TIME
+        assert time_type.get_size() == 8
+        time_values = np.empty((3,), dtype="<u8")
+        time_id.read(h5py.h5s.ALL, h5py.h5s.ALL, time_values, mtype=time_type)
+        np.testing.assert_array_equal(time_values, [0, 1700000000, 42])
+        time_fill_id = h5py.h5d.open(handle.id, b"/types/time_fill")
+        time_fill_type = time_fill_id.get_type()
+        time_fill_values = np.empty((3,), dtype="<u8")
+        time_fill_id.read(
+            h5py.h5s.ALL,
+            h5py.h5s.ALL,
+            time_fill_values,
+            mtype=time_fill_type,
+        )
+        np.testing.assert_array_equal(time_fill_values, [7, 99, 99])
+        bitfield = handle["types/bitfield"]
+        assert bitfield.id.get_type().get_class() == h5py.h5t.BITFIELD
+        assert bitfield.dtype == np.dtype("<u2")
+        bitfield_values = np.empty((3,), dtype="<u2")
+        bitfield.id.read(
+            h5py.h5s.ALL,
+            h5py.h5s.ALL,
+            bitfield_values,
+            mtype=bitfield.id.get_type(),
+        )
+        np.testing.assert_array_equal(bitfield_values, [0, 240, 0xFFF])
+        opaque = handle["types/opaque"]
+        assert opaque.id.get_type().get_class() == h5py.h5t.OPAQUE
+        assert opaque.id.get_type().get_tag() == b"MOON|V4"
+        assert opaque.dtype == np.dtype("V4")
+        opaque_values = np.empty((2,), dtype="V4")
+        opaque.id.read(
+            h5py.h5s.ALL,
+            h5py.h5s.ALL,
+            opaque_values,
+            mtype=opaque.id.get_type(),
+        )
+        assert [bytes(item) for item in opaque_values] == [
+            b"\x00\x01\xfe\xff",
+            b"MOON",
+        ]
+        assert opaque.compression == "gzip"
+        assert opaque.shuffle
+        sequences = handle["types/sequences"]
+        assert sequences.dtype == h5py.vlen_dtype(np.dtype("<i4"))
+        assert [item.tolist() for item in sequences[:]] == [
+            [],
+            [1, -2, 3],
+            [1, -2, 3],
+            [-1, 0],
+        ]
+        assert sequences.attrs["prototype"].tolist() == [7, 8]
         chunked_i16 = handle["types/chunked_i16"]
         np.testing.assert_array_equal(chunked_i16[:], [-7, 2, -7, 4, -7])
         assert chunked_i16.dtype == np.dtype("<i2")

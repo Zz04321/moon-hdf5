@@ -244,10 +244,11 @@ builder validates absolute paths, duplicate objects, links and attributes,
 dataspace rank and element counts, fixed-string widths and encoded link-message
 sizes before allocating output.
 Supported values are signed/unsigned integers stored in 1–8 bytes in either byte
-order, IEEE float32/64 in either byte order, and fixed-width or
-variable-length UTF-8 strings. Variable
-strings use 16-byte descriptors and a shared global heap collection; empty
-strings use the zero descriptor and repeated strings share one heap object.
+order, IEEE float32/64 in either byte order, fixed-width or variable-length
+UTF-8 strings, time, bitfield, opaque and variable-length sequence values.
+Variable strings and sequences use 16-byte descriptors and a shared global heap
+collection; empty values use the zero descriptor and repeated payloads share one
+heap object. Sequence bases must be fixed-size datatypes.
 Filter pipelines remain limited to fixed-size writer values because HDF5 1.14.6
 rejects them on variable-length datasets. Integer scale-offset supports
 automatic or fixed bit counts. Floating-point scale-offset supports f32/f64
@@ -255,10 +256,13 @@ decimal digits. Scale-offset must precede shuffle, deflate and supported
 Fletcher32 combinations.
 Narrow integer constructors validate every value before truncating it to the
 encoded width. Structured values reuse the reader's recursive `Datatype` and
-`DatasetValue` model. The writer encodes version-three compound, enum and array
-datatype descriptions; compound members are packed in declaration order, enums
-use an integer base, and arrays can recursively contain any supported
-fixed-size writer type. Each numeric member preserves its declared byte order,
+`DatasetValue` model. The writer emits version-three compound, enum and array
+datatype messages and version-one time, bitfield, opaque and variable-length
+sequence messages. Compound members are packed in declaration order, enums use
+an integer base, arrays can recursively contain any supported fixed-size writer
+type, and sequence bases are encoded recursively under the same fixed-size
+rule. Bitfield values are written at their declared bit offset and validated
+against their precision. Each numeric member preserves its declared byte order,
 including enum-member tables and values nested inside compounds or arrays.
 Finite chunked datasets use v4 layouts and fixed-array indexes. Large fixed
 arrays use paged data blocks with allocation bitmaps and per-page checksums.
