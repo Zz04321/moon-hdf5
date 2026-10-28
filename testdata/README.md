@@ -1,6 +1,7 @@
 # Test fixtures
 
-Tests use committed, generated `.h5` files without Python or native HDF5.
+Tests use committed, generated `.h5` and `.mat` files without Python or native
+HDF5.
 Older fixtures have no committed generator; these scripts only regenerate
 the listed regression files.
 
@@ -32,7 +33,7 @@ The HDF5 1.14.6 baseline fixture uses its own pinned environment:
 
 ```sh
 python3 -m venv /tmp/moon-hdf5-h5py
-/tmp/moon-hdf5-h5py/bin/pip install h5py==3.13.0 numpy==2.5.4
+/tmp/moon-hdf5-h5py/bin/pip install h5py==3.13.0 numpy==2.5.4 hdf5storage==0.2.2
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_datatype_fixtures.py v114
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_metadata_fixtures.py
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_external_storage_fixture.py
@@ -40,12 +41,18 @@ python3 -m venv /tmp/moon-hdf5-h5py
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_reference_fixtures.py
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_scaleoffset_fixture.py
 /tmp/moon-hdf5-h5py/bin/python scripts/generate_vlen_fill_fixture.py
+/tmp/moon-hdf5-h5py/bin/python scripts/generate_hard_link_fixture.py
+/tmp/moon-hdf5-h5py/bin/python scripts/generate_matlab73_fixture.py
 /tmp/moon-hdf5-h5py/bin/python \
   scripts/verify_numeric_layouts_fixture.py testdata/numeric_layouts.h5
 /tmp/moon-hdf5-h5py/bin/python \
   scripts/verify_scaleoffset_fixture.py testdata/scaleoffset.h5
 /tmp/moon-hdf5-h5py/bin/python \
   scripts/verify_vlen_fill_fixture.py testdata/vlen_fills.h5
+/tmp/moon-hdf5-h5py/bin/python \
+  scripts/verify_hard_links_fixture.py testdata/hard_links.h5
+/tmp/moon-hdf5-h5py/bin/python \
+  scripts/verify_matlab73_fixture.py testdata/matlab73_compatible.mat
 ```
 
 The generator refuses to produce the v114 fixtures from any other HDF5 version.
@@ -92,6 +99,8 @@ not part of the release gate.
 | datatypes_v114_default.h5 | HDF5 1.14.6 default bounds with the same datatype matrix using earlier datatype-message versions |
 | datatypes_v200.h5 | Nested compound and array types, vlen sequences and UTF-8 strings, bitfield, opaque, time, object/region references, HDF5 2.0 complex types, structured attributes and fills |
 | vlen_fills.h5 | HDF5 1.14.6 UTF-8 variable-length fills on unallocated contiguous data, sparsely allocated chunks and a resized extensible dataset |
+| hard_links.h5 | HDF5 1.14.6 group with two hard-link paths and a recursive alias; verifies that both named paths expose the same dataset and that ancestor aliases terminate traversal |
+| matlab73_compatible.mat | hdf5storage 0.2.2 MATLAB 7.3-compatible output under HDF5 1.14.6: `MATLAB_class` for double, int32, logical, char and struct values; `MATLAB_int_decode`, `MATLAB_fields` and `MATLAB_empty`; scalar, vector, empty-array and hyperslab reads |
 | netcdf4_1_7_5.h5 | Real netCDF4 1.7.5/libnetcdf 4.10.1/HDF5 2.2.0 output: groups, dimension variables, shuffled/deflated chunks with a v1 B-tree index, UTF-8 strings, numeric values and NetCDF dimension-reference attributes |
 | shared_messages.h5 | HDF5 1.14.6 SOHM tables and heap IDs: internally shared datatype/dataspace fields, whole shared attributes, shared fills, dense attribute B-tree records, and a committed datatype used by a dataset and attribute |
 | references.h5, references_v108.h5 | HDF5 1.14.6 `latest` and v108 object references to a dataset, group, child dataset, root group and committed datatype, plus an attribute reference, null reference, deleted target and 11 dataset-region references covering none/all, points, regular hyperslabs and block unions |
@@ -113,6 +122,17 @@ unallocated contiguous dataset returns four `missing` values, the chunked
 dataset fills its missing chunks and elements with `fallback`, and the resized
 extensible dataset returns five `grow` values. HDF5 1.14.6 requires write intent
 to materialize the chunked fill through h5py; immutable MoonBit reads do not.
+
+`hard_links.h5` stores `/a` and `/b` as two names for one group, with `/a/loop`
+as a recursive alias. `walk()` lists all named paths without following the
+ancestor alias indefinitely. The h5py verifier checks the shared object address
+and every readable dataset alias.
+
+`matlab73_compatible.mat` is MATLAB 7.3-compatible output produced by
+hdf5storage, not a file emitted by MATLAB itself. Its committed test verifies
+the encoded HDF5 structures and MATLAB metadata attributes; it does not promise
+MATLAB array orientation, type conversion or other MAT-file data-model
+semantics.
 
 Small groups isolate fill behavior; header continuation regressions use their
 own fixture. See [the audit](../docs/audit.md) for resolved and remaining issues.

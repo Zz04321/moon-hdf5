@@ -418,15 +418,15 @@ fn Hdf5File::walk_group(
   self : Hdf5File,
   path : String,
   address : UInt64,
-  visited : Array[UInt64],
+  ancestors : Array[UInt64],
   nodes : Array[Hdf5Node],
   depth : Int32,
 ) -> Unit raise Hdf5Error {
   guard depth < 128 else { raise InvalidField("group hierarchy is too deep") }
-  if visited.contains(address) {
+  if ancestors.contains(address) {
     return
   }
-  visited.push(address)
+  ancestors.push(address)
   let header = self.object_header_at(address)
   for link in self.links(header) {
     let child_path = join_path(path, link.name)
@@ -456,7 +456,7 @@ fn Hdf5File::walk_group(
           self.walk_group(
             child_path,
             link.object_header_address,
-            visited,
+            ancestors,
             nodes,
             depth + 1,
           )
@@ -464,6 +464,7 @@ fn Hdf5File::walk_group(
       }
     }
   }
+  ancestors.pop() |> ignore
 }
 
 ///|

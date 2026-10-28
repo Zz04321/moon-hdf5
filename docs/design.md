@@ -64,7 +64,11 @@ indirect blocks, managed/tiny/direct-huge/indirect-huge heap IDs, and
 leaf/internal v2 B-tree nodes are bounds checked. Filtered heaps decode each
 direct block and huge object through the heap's stored pipeline before
 validating direct-block checksums. Indirect huge records are located through
-the heap's v2 B-tree. Chunked reads initialize the output with fill bytes before copying
+the heap's v2 B-tree. `Hdf5File::walk` follows every named hard-link path, so
+aliases to the same group are all visible. It tracks addresses on the current
+ancestor path rather than using a global visited set: recursive aliases stop,
+while sibling aliases retain their distinct paths. A depth bound also rejects
+excessively deep hierarchies. Chunked reads initialize the output with fill bytes before copying
 allocated chunks. Unallocated contiguous data uses
 the same fill initialization; empty/null data does not dereference addresses.
 Allocated storage is read as stored. Single-file reads explicitly reject

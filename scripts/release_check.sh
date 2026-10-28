@@ -103,6 +103,23 @@ else
 fi
 
 if [ "${SKIP_H5PY:-0}" = "1" ]; then
+  echo "==> Hard-link fixture verification skipped (SKIP_H5PY=1)"
+elif [ ! -f testdata/hard_links.h5 ]; then
+  echo "==> Hard-link fixture verification skipped (fixture unavailable)"
+else
+  "$python" scripts/verify_hard_links_fixture.py testdata/hard_links.h5
+fi
+
+if [ "${SKIP_H5PY:-0}" = "1" ]; then
+  echo "==> MATLAB-compatible fixture verification skipped (SKIP_H5PY=1)"
+elif [ ! -f testdata/matlab73_compatible.mat ]; then
+  echo "==> MATLAB-compatible fixture verification skipped (fixture unavailable)"
+else
+  "$python" scripts/verify_matlab73_fixture.py \
+    testdata/matlab73_compatible.mat
+fi
+
+if [ "${SKIP_H5PY:-0}" = "1" ]; then
   echo "==> Reference fixture verification skipped (SKIP_H5PY=1)"
 elif [ ! -f testdata/references.h5 ] ||
   [ ! -f testdata/references_v108.h5 ] ||

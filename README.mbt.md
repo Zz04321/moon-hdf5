@@ -30,6 +30,8 @@ an executable example.
 ## Features
 
 - Reads groups, datasets, attributes, links and common HDF5 metadata versions.
+- Enumerates every named hard-link path to a group while stopping recursive
+  aliases at the current ancestor chain.
 - Resolves shared object header messages (SOHM), including shared attributes,
   datatypes, dataspaces, fills and committed datatype targets. Inline, dense
   and source-backed attribute paths are supported.
@@ -362,17 +364,17 @@ moon test --target native
 
 Run `scripts/release_check.sh` to include interface and formatting checks,
 documentation generation, package contents, the writer demo and independent
-h5py verification, including the committed NetCDF-4 producer fixture and the
-external raw-data and shared-message fixtures. Set `H5PY_PYTHON` when h5py is
-installed in a specific environment, or `SKIP_H5PY=1` to omit the Python
-interoperability checks.
+h5py verification, including the hard-link and MATLAB 7.3-compatible fixtures,
+the committed NetCDF-4 producer fixture, and the external raw-data and
+shared-message fixtures. Set `H5PY_PYTHON` when h5py is installed in a specific
+environment, or `SKIP_H5PY=1` to omit the Python interoperability checks.
 
 The v1.0 release gate runs the writer demo and verifies its output with h5py
-3.13.0/HDF5 1.14.6, then verifies the NetCDF-4 fixture produced by netCDF4
-1.7.5/libnetcdf 4.10.1/HDF5 2.2.0 and the numeric-layout fixture. It also
-verifies the post-v1.0 external raw-data fixture set and the shared-message
-fixture. The HDF5 1.14.6 default and `latest` datatype fixtures use the pinned
-environment documented in
+3.13.0/HDF5 1.14.6, then verifies the numeric-layout, hard-link and MATLAB
+7.3-compatible fixtures. It also verifies the NetCDF-4 fixture produced by
+netCDF4 1.7.5/libnetcdf 4.10.1/HDF5 2.2.0, the post-v1.0 external raw-data
+fixture set and the shared-message fixture. The HDF5 1.14.6 default and `latest`
+datatype fixtures use the pinned environment documented in
 [testdata/README.md](testdata/README.md); fixture tests compare decoded
 semantics because binary hashes are not stable.
 
