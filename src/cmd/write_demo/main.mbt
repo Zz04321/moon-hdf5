@@ -223,6 +223,37 @@ fn run(args : Array[String]) -> Int32 {
       VariableStringValues(["UTF-8 标签"]),
     )
     writer.add_group("/types")
+    let committed_sensor_type = @lib.Datatype::write_compound([
+      ("id", @lib.Datatype::write_integer(true, 4)),
+      ("value", @lib.Datatype::write_float(8)),
+    ])
+    writer.add_committed_datatype("/types/sensor_type", committed_sensor_type)
+    let sensor_prototype = @lib.Compound([
+      { name: "id", value: @lib.SignedInteger(1L), },
+      { name: "value", value: @lib.FloatingPoint(1.25), },
+    ])
+    writer.add_dataset(
+      "/types/sensors",
+      [2UL],
+      StructuredValues(committed_sensor_type, [
+        sensor_prototype,
+        @lib.Compound([
+          { name: "id", value: @lib.SignedInteger(2L), },
+          { name: "value", value: @lib.FloatingPoint(-3.5), },
+        ]),
+      ]),
+    )
+    writer.add_attribute(
+      "/types/sensors",
+      "prototype",
+      [],
+      StructuredValues(committed_sensor_type, [sensor_prototype]),
+    )
+    writer.add_committed_datatype(
+      "/types/count_type",
+      @lib.Datatype::write_integer(false, 2),
+    )
+    writer.add_attribute("/types/sensors", "count", [], UInt16Values([3U]))
     writer.add_attribute("/types", "revision", [], UInt64Values([1UL]))
     writer.add_attribute("/types", "i8_marker", [], Int8Values([-5]))
     writer.add_attribute(

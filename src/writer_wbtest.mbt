@@ -551,6 +551,155 @@ test "writer shares attributes through SOHM" {
 }
 
 ///|
+test "writer references committed datatypes from datasets and attributes" {
+  let writer = Hdf5Writer::new()
+  let record_type = Datatype::write_compound([
+    ("id", Datatype::write_integer(true, 4)),
+    ("value", Datatype::write_float(8)),
+  ])
+  let count_type = Datatype::write_integer(false, 8)
+  writer.add_committed_datatype("/types/record", record_type)
+  writer.add_committed_datatype("/types/count", count_type)
+  writer.add_dataset(
+    "/records",
+    [1UL],
+    StructuredValues(record_type, [
+      Compound([
+        { name: "id", value: SignedInteger(7L), },
+        { name: "value", value: FloatingPoint(2.5), },
+      ]),
+    ]),
+  )
+  writer.add_attribute("/records", "count", [], UInt64Values([3UL]))
+
+  let bytes = writer.encode() catch {
+    error => abort("encode failed: " + error.message())
+  }
+  let file = Hdf5File::parse(bytes) catch {
+    error => abort("parse failed: " + error.message())
+  }
+  let record_address = file.resolve("/types/record").address
+  assert_eq(file.resolve("/types/record").kind, Datatype)
+  assert_eq(file.resolve("/types/count").kind, Datatype)
+
+  let type_header = parse_object_header(bytes, record_address, 8, 8, 0UL)
+  assert_true(type_header.first(msg_dataspace) is None)
+  assert_true(type_header.first(msg_data_layout) is None)
+  match type_header.first(msg_datatype) {
+    Some(message) => {
+      assert_eq(message.flags.to_int() & shared_message_flag, 0)
+      assert_eq(message.data, encode_writer_datatype(record_type))
+    }
+    None => abort("committed datatype has no datatype message")
+  }
+
+  let dataset_header = parse_object_header(
+    bytes,
+    file.resolve("/records").address,
+    8,
+    8,
+    0UL,
+  )
+  match dataset_header.first(msg_datatype) {
+    Some(message) => {
+      assert_eq(
+        message.flags.to_int() & shared_message_flag,
+        shared_message_flag,
+      )
+      let datatype_reader = Reader::new(message.data)
+      assert_eq(datatype_reader.read_u8(), b'\x03')
+      assert_eq(datatype_reader.read_u8(), b'\x02')
+      assert_eq(datatype_reader.read_uint_le(8), record_address)
+      assert_eq(datatype_reader.remaining(), 0)
+    }
+    None => abort("dataset has no datatype message")
+  }
+  match dataset_header.first(msg_attribute) {
+    Some(message) => {
+      let attribute_reader = Reader::new(message.data)
+      assert_eq(attribute_reader.read_u8(), b'\x03')
+      assert_eq(attribute_reader.read_u8().to_int() & 0x01, 0x01)
+      let name_size = attribute_reader.read_u16_le().to_int()
+      let datatype_size = attribute_reader.read_u16_le().to_int()
+      let _dataspace_size = attribute_reader.read_u16_le()
+      let _encoding = attribute_reader.read_u8()
+      attribute_reader.skip(name_size)
+      let datatype_reader = Reader::new(
+        attribute_reader.read_bytes(datatype_size),
+      )
+      assert_eq(datatype_reader.read_u8(), b'\x03')
+      assert_eq(datatype_reader.read_u8(), b'\x02')
+      assert_eq(
+        datatype_reader.read_uint_le(8),
+        file.resolve("/types/count").address,
+      )
+    }
+    None => abort("dataset has no attribute message")
+  }
+
+  let record = file.read_dataset("/records")
+  assert_eq(record.datatype.class, 6)
+  assert_eq(record.datatype.compound_members.map(field => field.name), [
+    "id", "value",
+  ])
+  match record.values {
+    Structured(
+      [
+        Compound(
+          [
+            { name: "id", value: SignedInteger(7L), },
+            { name: "value", value: FloatingPoint(2.5), },
+          ]
+        ),
+      ]
+    ) => ()
+    _ => abort("expected committed compound values")
+  }
+  match file.attributes("/records")[0].values {
+    Some(UnsignedIntegers(values)) => assert_eq(values, [3UL])
+    _ => abort("expected committed integer attribute")
+  }
+}
+
+///|
+test "writer validates committed datatype paths" {
+  let writer = Hdf5Writer::new()
+  let value_type = Datatype::write_integer(true, 4)
+  writer.add_group("/types")
+  writer.add_committed_datatype("/types/value", value_type)
+  let root = try {
+    writer.add_committed_datatype("/", value_type)
+    None
+  } catch {
+    error => Some(error)
+  }
+  let duplicate = try {
+    writer.add_committed_datatype("/types/value", value_type)
+    None
+  } catch {
+    error => Some(error)
+  }
+  let child = try {
+    writer.add_dataset("/types/value/child", [], Int64Values([1L]))
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    root,
+    Some(InvalidArgument("a datatype cannot replace the root group")),
+  )
+  assert_eq(
+    duplicate,
+    Some(InvalidArgument("writer object path already exists")),
+  )
+  assert_eq(
+    child,
+    Some(InvalidArgument("writer path conflicts with a committed datatype")),
+  )
+}
+
+///|
 test "writer round-trips object reference datasets and attributes" {
   let writer = Hdf5Writer::new()
   writer.add_dataset(

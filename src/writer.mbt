@@ -324,6 +324,13 @@ priv struct WritableDataset {
 }
 
 ///|
+priv struct WritableCommittedDatatype {
+  path : String
+  datatype : Datatype
+  data : Bytes
+}
+
+///|
 priv struct WritableAttribute {
   object_path : String
   name : String
@@ -364,6 +371,7 @@ priv struct WritableLinkOrderCounter {
 pub struct Hdf5Writer {
   priv groups : Array[String]
   priv datasets : Array[WritableDataset]
+  priv committed_datatypes : Array[WritableCommittedDatatype]
   priv attributes : Array[WritableAttribute]
   priv soft_links : Array[WritableSoftLink]
   priv external_links : Array[WritableExternalLink]
@@ -377,6 +385,7 @@ pub struct Hdf5Writer {
 priv enum WritableObjectKind {
   WritableGroup
   WritableDatasetObject(Int32)
+  WritableCommittedDatatype(Int32)
 }
 
 ///|
@@ -484,6 +493,7 @@ pub fn Hdf5Writer::new() -> Hdf5Writer {
   {
     groups: ["/"],
     datasets: [],
+    committed_datatypes: [],
     attributes: [],
     soft_links: [],
     external_links: [],
@@ -1217,7 +1227,9 @@ fn validate_write_values(
 ///|
 fn Hdf5Writer::has_object(self : Hdf5Writer, path : String) -> Bool {
   self.groups.contains(path) ||
-  self.datasets.search_by(dataset => dataset.path == path) is Some(_)
+  self.datasets.search_by(dataset => dataset.path == path) is Some(_) ||
+  self.committed_datatypes.search_by(datatype => datatype.path == path)
+  is Some(_)
 }
 
 ///|
@@ -1375,6 +1387,12 @@ fn Hdf5Writer::ensure_groups(
     guard self.datasets.search_by(dataset => dataset.path == current) is None else {
       raise InvalidArgument("writer path conflicts with a dataset")
     }
+    guard self.committed_datatypes.search_by(datatype => {
+        datatype.path == current
+      })
+      is None else {
+      raise InvalidArgument("writer path conflicts with a committed datatype")
+    }
     guard !self.has_soft_link(current) else {
       raise InvalidArgument("writer path conflicts with a soft link")
     }
@@ -1395,6 +1413,30 @@ pub fn Hdf5Writer::add_group(
   path : String,
 ) -> Unit raise Hdf5Error {
   self.ensure_groups(canonical_writer_path(path))
+}
+
+///|
+/// Adds a named committed datatype at `path`.
+///
+/// Datasets and unshared attributes whose encoded datatype matches this type
+/// reference it through a committed-datatype shared message.
+pub fn Hdf5Writer::add_committed_datatype(
+  self : Hdf5Writer,
+  path : String,
+  datatype : Datatype,
+) -> Unit raise Hdf5Error {
+  let normalized = canonical_writer_path(path)
+  guard normalized != "/" else {
+    raise InvalidArgument("a datatype cannot replace the root group")
+  }
+  guard !self.has_entry(normalized) else {
+    raise InvalidArgument("writer object path already exists")
+  }
+  validate_writer_datatype(datatype, 0)
+  let data = encode_writer_datatype(datatype)
+  self.ensure_groups(writer_parent_path(normalized))
+  self.record_link(normalized)
+  self.committed_datatypes.push({ path: normalized, datatype, data, })
 }
 
 ///|
@@ -4704,7 +4746,8 @@ fn encode_external_link(
 }
 
 ///|
-fn encode_attribute(
+fn Hdf5Writer::encode_attribute(
+  self : Hdf5Writer,
   attribute : WritableAttribute,
   heap : WritableGlobalHeap,
   objects : Array[WritableObject],
@@ -4712,22 +4755,27 @@ fn encode_attribute(
   let encoded = encode_write_values(attribute.values, heap~, objects~)
   let name = @utf8.encode(attribute.name)
   let dataspace = encode_dataspace(attribute.dimensions)
+  let (datatype, flags) = match
+    self.committed_datatype_address(encoded.datatype, objects) {
+    Some(address) => (encode_writer_committed_message(address), b'\x01')
+    None => (encoded.datatype, b'\x00')
+  }
   let buffer = @buffer.Buffer::Buffer(
     size_hint=9 +
       name.length() +
-      encoded.datatype.length() +
+      datatype.length() +
       dataspace.length() +
       encoded.payload.length(),
   )
   buffer.write_byte(b'\x03')
-  buffer.write_byte(b'\x00')
+  buffer.write_byte(flags)
   buffer.write_uint16_le((name.length() + 1).to_uint16())
-  buffer.write_uint16_le(encoded.datatype.length().to_uint16())
+  buffer.write_uint16_le(datatype.length().to_uint16())
   buffer.write_uint16_le(dataspace.length().to_uint16())
   buffer.write_byte(b'\x01')
   writer_write_bytes(buffer, name)
   buffer.write_byte(b'\x00')
-  writer_write_bytes(buffer, encoded.datatype)
+  writer_write_bytes(buffer, datatype)
   writer_write_bytes(buffer, dataspace)
   writer_write_bytes(buffer, encoded.payload)
   buffer.to_bytes()
@@ -4904,6 +4952,33 @@ fn encode_writer_shared_message(heap_id : Bytes) -> Bytes raise Hdf5Error {
 }
 
 ///|
+fn encode_writer_committed_message(address : UInt64) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=10)
+  buffer.write_byte(b'\x03')
+  buffer.write_byte(b'\x02')
+  buffer.write_uint64_le(address)
+  buffer.to_bytes()
+}
+
+///|
+fn Hdf5Writer::committed_datatype_address(
+  self : Hdf5Writer,
+  datatype_data : Bytes,
+  objects : Array[WritableObject],
+) -> UInt64? raise Hdf5Error {
+  match
+    self.committed_datatypes.search_by(datatype => {
+      datatype.data == datatype_data
+    }) {
+    Some(index) =>
+      Some(
+        find_writable_object(objects, self.committed_datatypes[index].path).address,
+      )
+    None => None
+  }
+}
+
+///|
 fn Hdf5Writer::dense_attribute_entries(
   self : Hdf5Writer,
   path : String,
@@ -4921,7 +4996,7 @@ fn Hdf5Writer::dense_attribute_entries(
           shared_message_flag.to_byte(),
           Some(shared_attribute.id),
         )
-      None => (encode_attribute(attribute, heap, objects), b'\x00', None)
+      None => (self.encode_attribute(attribute, heap, objects), b'\x00', None)
     }
     entries.push({
       name: attribute.name,
@@ -5183,7 +5258,7 @@ fn Hdf5Writer::shared_attribute_candidates(
   let empty_id = Bytes::make(8, b'\x00')
   for object in objects {
     for attribute in self.object_attributes(object.path) {
-      let data = encode_attribute(attribute, heap, objects)
+      let data = self.encode_attribute(attribute, heap, objects)
       if data.length() <= writer_shared_max_managed_size {
         attributes.push({
           path: object.path,
@@ -5225,7 +5300,7 @@ fn Hdf5Writer::shared_fill_candidates(
           None => ()
         }
       }
-      WritableGroup => ()
+      WritableGroup | WritableCommittedDatatype(_) => ()
     }
   }
   fills
@@ -5989,6 +6064,12 @@ fn Hdf5Writer::object_payload(
         }
       }
     }
+    WritableCommittedDatatype(index) =>
+      write_header_message(
+        buffer,
+        msg_datatype,
+        encode_writer_datatype(self.committed_datatypes[index].datatype),
+      )
     WritableDatasetObject(index) => {
       let dataset = self.datasets[index]
       let encoded = encode_write_values(dataset.values, heap~, objects~)
@@ -6004,7 +6085,16 @@ fn Hdf5Writer::object_payload(
           _ => encode_dataspace(dataset.dimensions)
         },
       )
-      write_header_message(buffer, msg_datatype, encoded.datatype)
+      match self.committed_datatype_address(encoded.datatype, objects) {
+        Some(address) =>
+          write_header_message_with_flags(
+            buffer,
+            msg_datatype,
+            encode_writer_committed_message(address),
+            shared_message_flag.to_byte(),
+          )
+        None => write_header_message(buffer, msg_datatype, encoded.datatype)
+      }
       match dataset.fill_value {
         Some(fill) =>
           match writer_shared_fill(fills, object.path) {
@@ -6186,6 +6276,16 @@ fn initial_writable_objects(writer : Hdf5Writer) -> Array[WritableObject] {
         dimensions: dataset.dimensions.copy(),
         maximum_dimensions: dataset.maximum_dimensions.copy(),
       }),
+    })
+  }
+  for index in 0..<writer.committed_datatypes.length() {
+    let datatype = writer.committed_datatypes[index]
+    objects.push({
+      path: datatype.path,
+      kind: WritableCommittedDatatype(index),
+      address: 0UL,
+      raw_address: 0UL,
+      dataspace: None,
     })
   }
   objects
@@ -6584,7 +6684,7 @@ fn assign_writable_addresses(
             writer.dense_link_entries(object, objects, track_order=true),
           ),
         )
-      WritableDatasetObject(_) => ()
+      WritableDatasetObject(_) | WritableCommittedDatatype(_) => ()
     }
     candidates.push(
       (
@@ -6642,7 +6742,7 @@ fn assign_writable_addresses(
           _ => ()
         }
       }
-      WritableGroup => ()
+      WritableGroup | WritableCommittedDatatype(_) => ()
     }
   }
   for index in 0..<objects.length() {
@@ -6694,7 +6794,7 @@ fn assign_writable_addresses(
           }
         }
       }
-      WritableGroup => ()
+      WritableGroup | WritableCommittedDatatype(_) => ()
     }
   }
   let shared = if has_shared_messages {
@@ -6713,7 +6813,7 @@ fn assign_writable_addresses(
         Some(index) => writer.object_attributes(candidate.path)[index]
         None => raise InvalidField("writer shared attribute disappeared")
       }
-      let data = encode_attribute(attribute, heap, objects)
+      let data = writer.encode_attribute(attribute, heap, objects)
       guard data.length() <= writer_shared_max_managed_size else {
         raise InvalidField("writer shared attribute changed size")
       }
@@ -6924,7 +7024,7 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
           eof = writer_align(object.raw_address.to_int() + payload.length())
         }
       }
-      WritableGroup => ()
+      WritableGroup | WritableCommittedDatatype(_) => ()
     }
   }
   let shared_payloads : Array[(UInt64, Bytes)] = []

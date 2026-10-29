@@ -183,6 +183,12 @@ def verify_file(path: Path) -> None:
             "experiment": h5py.h5o.get_info(handle["experiment"].id).addr,
             "types": h5py.h5o.get_info(handle["types"].id).addr,
         }
+        committed_addresses = {
+            "sensor_type": h5py.h5o.get_info(
+                handle["types/sensor_type"].id
+            ).addr,
+            "sensors": h5py.h5o.get_info(handle["types/sensors"].id).addr,
+        }
         series = handle["experiment/series"]
         np.testing.assert_array_equal(
             series[:], [[10, 11], [20, 21], [30, 31], [-1, -1]]
@@ -267,6 +273,17 @@ def verify_file(path: Path) -> None:
         assert handle["types"].attrs["complex_marker"] == np.complex64(-1.5 + 2.5j)
         assert handle["types"].attrs["complex_marker"].dtype == np.dtype("<c8")
         assert handle["types"].attrs["revision"] == np.uint64(1)
+        sensor_type = handle["types/sensor_type"]
+        assert isinstance(sensor_type, h5py.Datatype)
+        sensor_dtype = np.dtype([("id", "<i4"), ("value", "<f8")])
+        assert sensor_type.dtype == sensor_dtype
+        assert handle["types/count_type"].dtype == np.dtype("<u2")
+        sensors = handle["types/sensors"]
+        assert sensors.dtype == sensor_dtype
+        assert sensors[:].tolist() == [(1, 1.25), (2, -3.5)]
+        assert sensors.attrs["count"] == np.uint16(3)
+        prototype = sensors.attrs["prototype"]
+        assert prototype["id"] == 1 and prototype["value"] == 1.25
         chunked_complex = handle["types/chunked_complex64"]
         assert chunked_complex.fillvalue == np.complex64(-1 - 2j)
         assert chunked_complex.chunks == (2,)
@@ -645,6 +662,26 @@ def verify_file(path: Path) -> None:
     assert attribute_ids["experiment"] <= attribute_ids["types"], (
         "equal attributes do not reuse one SOHM heap ID"
     )
+    sensor_messages = object_header_messages(data, committed_addresses["sensors"])
+    datatype_messages = [
+        (flags, payload)
+        for kind, flags, payload in sensor_messages
+        if kind == 0x03
+    ]
+    assert len(datatype_messages) == 1, "sensor dataset has no unique datatype"
+    flags, payload = datatype_messages[0]
+    assert flags & SHARED_FLAG, "sensor dataset datatype is not shared"
+    assert payload[:2] == b"\x03\x02", "sensor datatype is not committed"
+    assert int.from_bytes(payload[2:10], "little") == committed_addresses["sensor_type"]
+
+    committed_messages = object_header_messages(
+        data, committed_addresses["sensor_type"]
+    )
+    assert [kind for kind, _, _ in committed_messages] == [0x03]
+    _, committed_flags, committed_payload = committed_messages[0]
+    assert not committed_flags & SHARED_FLAG
+    assert committed_payload[0] & 0x0F == 6, "sensor type is not a compound"
+
     print(
         f"Verified {path} with h5py {h5py.__version__} "
         f"and HDF5 {h5py.version.hdf5_version}"
