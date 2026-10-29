@@ -823,6 +823,15 @@ fn run(args : Array[String]) -> Int32 {
         continued_target,
       )
     }
+    writer.add_group("/metadata/large_links")
+    let large_target = "/" + "l".repeat(9000)
+    for index in 0..<9 {
+      writer.add_soft_link(
+        "/metadata/large_links",
+        "large_" + index.to_string(),
+        large_target,
+      )
+    }
     writer.add_dataset("/metadata/continued_multi", [], UInt64Values([1UL]))
     let multi_value = "m".repeat(60000)
     for index in 0..<20 {

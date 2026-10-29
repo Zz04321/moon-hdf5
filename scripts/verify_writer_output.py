@@ -475,6 +475,11 @@ def verify_file(path: Path) -> None:
         )
         assert isinstance(continued_link, h5py.SoftLink)
         assert continued_link.path == "/" + "t" * 9000
+        large_links = handle["metadata/large_links"]
+        assert len(large_links) == 9
+        large_link = large_links.get("large_8", getlink=True)
+        assert isinstance(large_link, h5py.SoftLink)
+        assert large_link.path == "/" + "l" * 9000
         multi = handle["metadata/continued_multi"]
         assert len(multi.attrs) == 20
         for index in (0, 10, 19):

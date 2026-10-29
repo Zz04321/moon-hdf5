@@ -231,7 +231,7 @@ compact attribute-info message with undefined dense-storage addresses, allowing
 HDF5 readers to report attribute counts correctly.
 
 Groups and objects with attributes use dense storage for 9–65,535 links or
-attributes when every encoded heap object is at most 4 KiB. Each collection has
+attributes when every encoded heap object is at most 65,535 bytes. Each collection has
 one FRHP header, one checksummed FHDB direct block, one BTHD header and one BTLF
 name index, plus a creation-order B-tree (type 6 for links or type 9 for
 attributes) sharing the same heap IDs. Dense link records contain a `lookup3`

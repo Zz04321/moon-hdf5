@@ -310,8 +310,8 @@ little-endian. Variable-length sequences use a fixed-size base type, and empty,
 repeated and nested-in-compound sequence values are supported. Strings and
 sequence payloads share one global heap collection. Groups and objects with
 attributes use dense storage when they contain 9–65,535 links or attributes and
-every encoded heap object is at most 4 KiB. Dense groups use an FRHP fractal
-heap with one FHDB direct block plus BTHD/BTLF name and creation-order indexes;
+every encoded heap object is at most 65,535 bytes. Dense groups use an FRHP
+fractal heap with one FHDB direct block plus BTHD/BTLF name and creation-order indexes;
 dense attributes use the same heap layout with both indexes. Link and attribute
 creation order starts at zero within each group or object and survives HDF5
 round-trips. The writer does not emit dense indirect or huge heap blocks or a
@@ -321,8 +321,8 @@ OCHK continuation chunks. The writer demo includes a 2500-attribute object, a
 group with both dense links and dense attributes including a variable-length
 string attribute, a group whose non-alphabetical insertion order is checked for
 both links and attributes, exactly eight oversized links and attributes that
-exercise compact OCHK continuations, and a 20-attribute object spanning
-multiple continuation chunks.
+exercise compact OCHK continuations, and dense collections with 60 KB managed
+objects.
 
 `Complex64Values` and `Complex128Values` write standard little-endian complex
 arrays as HDF5's canonical `r`/`i` floating-point compound, which h5py exposes
@@ -368,10 +368,11 @@ preserve order and duplicates.
 - Use `chunk_iterator` when the complete dataset is too large for memory.
 - The writer creates complete new files and does not edit existing files.
 - Dense metadata writing is limited to 9–65,535 links or attributes with each
-  encoded heap object at most 4 KiB. It uses one FHDB direct block and one
-  BTHD/BTLF leaf name index plus a creation-order index per collection; dense
-  indirect/huge blocks and a free-space manager are not written. Larger sets
-  fall back to compact OCHK continuation storage.
+  encoded heap object at most 65,535 bytes. It uses one FHDB direct block and
+  one BTHD/BTLF leaf name index plus a creation-order index per collection;
+  dense objects above that size, indirect blocks and a free-space manager are
+  not written. Attribute sets above the record or size limit fall back to
+  compact OCHK continuation storage.
 - External raw-data storage is a post-v1.0 extension. `Hdf5Resolver` reads it
   when every external file is registered as an `Hdf5Source`; `Hdf5File` rejects
   the dataset. The writer creates contiguous, unfiltered external datasets from

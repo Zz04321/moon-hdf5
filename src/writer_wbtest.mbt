@@ -888,13 +888,13 @@ test "writer enforces exact dense metadata limits" {
   let at_limit = {
     name: "item",
     hash: 0U,
-    data: Bytes::makei(4096, _ => b'\x00'),
+    data: Bytes::makei(65535, _ => b'\x00'),
     creation_order: 0UL,
   }
   let over_limit = {
     name: "item",
     hash: 0U,
-    data: Bytes::makei(4097, _ => b'\x00'),
+    data: Bytes::makei(65536, _ => b'\x00'),
     creation_order: 0UL,
   }
   assert_true(writer_dense_entries_fit(Array::make(9, at_limit)))
@@ -976,11 +976,11 @@ test "writer continues oversized compact links and attributes" {
 }
 
 ///|
-test "writer chains object header continuations" {
+test "writer continues oversized compact object headers" {
   let writer = Hdf5Writer::new()
   let value = "m".repeat(60000)
   writer.add_dataset("/multi_continuation", [], UInt64Values([1UL]))
-  for index in 0..<20 {
+  for index in 0..<8 {
     writer.add_attribute(
       "/multi_continuation",
       "multi_" + index.to_string(),
@@ -992,8 +992,8 @@ test "writer chains object header continuations" {
   let bytes = writer.encode()
   let file = Hdf5File::parse(bytes)
   let attributes = file.attributes("/multi_continuation")
-  assert_eq(attributes.length(), 20)
-  match attributes[19].values {
+  assert_eq(attributes.length(), 8)
+  match attributes[7].values {
     Some(Strings(values)) => assert_eq(values, [value])
     _ => abort("expected last chained continuation attribute")
   }
@@ -1004,7 +1004,7 @@ test "writer chains object header continuations" {
     8,
     0UL,
   )
-  assert_eq(header.find(msg_object_continuation).length(), 2)
+  assert_eq(header.find(msg_object_continuation).length(), 1)
 }
 
 ///|

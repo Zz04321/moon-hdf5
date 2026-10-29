@@ -757,3 +757,19 @@ widths plus a complex attribute, and the release verifier checks the NumPy
 dtypes (`<c8`, `<c16`), values and attribute type. Arbitrary complex layouts can
 still be expressed through structured compound APIs; HDF5 2.0's dedicated
 complex datatype class remains outside the 1.14.6 writer profile.
+
+## Large managed dense-object review — 2026-10-29
+
+The dense writer previously fell back to compact object-header continuations for
+any encoded link or attribute larger than 4 KiB. The fractal-heap managed-object
+form already carries a 16-bit object length, so that 4 KiB value was an internal
+policy limit rather than a format limit. The writer now accepts managed heap
+objects through 65,535 bytes and sizes the FRHP/FHDB direct block accordingly.
+
+The demo exercises this path with 20 dense attributes of about 60 KB each and a
+group of nine large soft-link messages. h5py 3.13.0/HDF5 1.14.6 enumerates the
+group, reads the attribute values and resolves the link targets, confirming the
+larger direct block and the 16-bit heap IDs. The boundary test now checks
+65,535/65,536-byte managed objects instead of 4,096/4,097. Objects above 65,535
+bytes still require huge IDs; indirect heap blocks, a free-space manager and
+SOHM writing remain outside this writer profile.

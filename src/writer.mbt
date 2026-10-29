@@ -4695,7 +4695,7 @@ fn encode_compact_attribute_info() -> Bytes {
 let writer_dense_threshold : Int32 = 8
 
 ///|
-let writer_dense_max_managed_size : Int32 = 4096
+let writer_dense_max_managed_size : Int32 = 65535
 
 ///|
 let writer_dense_max_records : Int32 = 65535
