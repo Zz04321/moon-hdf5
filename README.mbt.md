@@ -311,15 +311,18 @@ repeated and nested-in-compound sequence values are supported. Strings and
 sequence payloads share one global heap collection. Groups and objects with
 attributes use dense storage when they contain 9–65,535 links or attributes and
 every encoded heap object is at most 4 KiB. Dense groups use an FRHP fractal
-heap with one FHDB direct block and a BTHD/BTLF name index; dense attributes use
-the same heap layout and their own name index. The writer does not emit dense
-indirect or huge heap blocks, creation-order indexes or a free-space manager.
+heap with one FHDB direct block plus BTHD/BTLF name and creation-order indexes;
+dense attributes use the same heap layout with both indexes. Link and attribute
+creation order starts at zero within each group or object and survives HDF5
+round-trips. The writer does not emit dense indirect or huge heap blocks or a
+free-space manager.
 Metadata outside those bounds remains compact and is split across checksummed
 OCHK continuation chunks. The writer demo includes a 2500-attribute object, a
 group with both dense links and dense attributes including a variable-length
-string attribute, exactly eight oversized links and attributes that exercise
-compact OCHK continuations, and a 20-attribute object spanning multiple
-continuation chunks.
+string attribute, a group whose non-alphabetical insertion order is checked for
+both links and attributes, exactly eight oversized links and attributes that
+exercise compact OCHK continuations, and a 20-attribute object spanning
+multiple continuation chunks.
 
 For integer values, `ScaleOffset(0)` selects automatic bit width and a positive
 value fixes the width. For f32/f64 values, the parameter is the number of
@@ -360,8 +363,8 @@ preserve order and duplicates.
 - The writer creates complete new files and does not edit existing files.
 - Dense metadata writing is limited to 9–65,535 links or attributes with each
   encoded heap object at most 4 KiB. It uses one FHDB direct block and one
-  BTHD/BTLF leaf index per collection; dense indirect/huge blocks,
-  creation-order indexes and a free-space manager are not written. Larger sets
+  BTHD/BTLF leaf name index plus a creation-order index per collection; dense
+  indirect/huge blocks and a free-space manager are not written. Larger sets
   fall back to compact OCHK continuation storage.
 - External raw-data storage is a post-v1.0 extension. `Hdf5Resolver` reads it
   when every external file is registered as an `Hdf5Source`; `Hdf5File` rejects

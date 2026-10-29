@@ -93,9 +93,12 @@ test "writer uses dense links and attributes above the compact threshold" {
   for message_type in [msg_link_info, msg_attribute_info] {
     let info = header.find(message_type)[0]
     let reader = Reader::new(info.data)
-    reader.skip(2)
-    assert_true(reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
-    assert_true(reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
+    assert_eq(reader.read_u8(), b'\x00')
+    assert_eq(reader.read_u8(), b'\x03')
+    reader.skip(if message_type == msg_link_info { 8 } else { 2 })
+    for _ in 0..<3 {
+      assert_true(reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
+    }
   }
   assert_true(!header.messages.any(message => message.msg_type == msg_link))
   assert_true(
@@ -125,6 +128,52 @@ test "writer uses dense links and attributes above the compact threshold" {
   info_reader.skip(2)
   assert_eq(info_reader.read_uint_le(8), 0xFFFFFFFFFFFFFFFFUL)
   assert_eq(info_reader.read_uint_le(8), 0xFFFFFFFFFFFFFFFFUL)
+}
+
+///|
+test "writer indexes dense links and attributes by creation order" {
+  let writer = Hdf5Writer::new()
+  writer.add_group("/ordered")
+  let link_names = [
+    "zeta", "alpha", "mu", "beta", "omega", "delta", "theta", "gamma", "sigma", "kappa",
+  ]
+  for index in 0..<link_names.length() {
+    writer.add_dataset(
+      "/ordered/" + link_names[index],
+      [],
+      UInt64Values([index.to_uint64()]),
+    )
+  }
+  let attribute_names = [
+    "version", "units", "title", "owner", "status", "source", "time", "kind", "tag",
+    "note",
+  ]
+  for index in 0..<attribute_names.length() {
+    writer.add_attribute(
+      "/ordered",
+      attribute_names[index],
+      [],
+      UInt64Values([index.to_uint64()]),
+    )
+  }
+  let bytes = writer.encode()
+  let file = Hdf5File::parse(bytes)
+  let object = file.resolve("/ordered")
+  let header = parse_object_header(bytes, object.address, 8, 8, 0UL)
+  assert_eq(file.links(header).map(link => link.name), link_names)
+  assert_eq(
+    file.attributes("/ordered").map(attribute => attribute.name),
+    attribute_names,
+  )
+  for message_type in [msg_link_info, msg_attribute_info] {
+    let reader = Reader::new(header.find(message_type)[0].data)
+    assert_eq(reader.read_u8(), b'\x00')
+    assert_eq(reader.read_u8(), b'\x03')
+    assert_eq(
+      reader.read_uint_le(if message_type == msg_link_info { 8 } else { 2 }),
+      9UL,
+    )
+  }
 }
 
 ///|
@@ -763,7 +812,7 @@ test "writer validates object reference paths and targets" {
 
 ///|
 test "writer enforces exact dense metadata limits" {
-  let entry = { name: "item", hash: 0U, data: b"", }
+  let entry = { name: "item", hash: 0U, data: b"", creation_order: 0UL, }
   assert_true(!writer_dense_entries_fit(Array::make(8, entry)))
   assert_true(writer_dense_entries_fit(Array::make(9, entry)))
   assert_true(writer_dense_entries_fit(Array::make(65535, entry)))
@@ -773,11 +822,13 @@ test "writer enforces exact dense metadata limits" {
     name: "item",
     hash: 0U,
     data: Bytes::makei(4096, _ => b'\x00'),
+    creation_order: 0UL,
   }
   let over_limit = {
     name: "item",
     hash: 0U,
     data: Bytes::makei(4097, _ => b'\x00'),
+    creation_order: 0UL,
   }
   assert_true(writer_dense_entries_fit(Array::make(9, at_limit)))
   assert_true(!writer_dense_entries_fit(Array::make(9, over_limit)))
@@ -1369,9 +1420,12 @@ test "writer stores large metadata in dense storage" {
   )
   let attribute_info = header.find(msg_attribute_info)[0]
   let attribute_reader = Reader::new(attribute_info.data)
+  assert_eq(attribute_reader.read_u8(), b'\x00')
+  assert_eq(attribute_reader.read_u8(), b'\x03')
   attribute_reader.skip(2)
-  assert_true(attribute_reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
-  assert_true(attribute_reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
+  for _ in 0..<3 {
+    assert_true(attribute_reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
+  }
   assert_true(
     !header.messages.any(message => message.msg_type == msg_attribute),
   )
@@ -1385,9 +1439,12 @@ test "writer stores large metadata in dense storage" {
   )
   let link_info = links_header.find(msg_link_info)[0]
   let link_reader = Reader::new(link_info.data)
-  link_reader.skip(2)
-  assert_true(link_reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
-  assert_true(link_reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
+  assert_eq(link_reader.read_u8(), b'\x00')
+  assert_eq(link_reader.read_u8(), b'\x03')
+  link_reader.skip(8)
+  for _ in 0..<3 {
+    assert_true(link_reader.read_uint_le(8) != 0xFFFFFFFFFFFFFFFFUL)
+  }
   assert_true(
     !links_header.messages.any(message => message.msg_type == msg_link),
   )

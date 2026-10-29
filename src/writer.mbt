@@ -327,6 +327,7 @@ priv struct WritableAttribute {
   name : String
   dimensions : Array[UInt64]
   values : Hdf5WriteValues
+  creation_order : UInt64
 }
 
 ///|
@@ -345,6 +346,18 @@ priv struct WritableExternalLink {
 }
 
 ///|
+priv struct WritableLinkOrder {
+  path : String
+  order : UInt64
+}
+
+///|
+priv struct WritableLinkOrderCounter {
+  parent_path : String
+  next_order : UInt64
+}
+
+///|
 /// In-memory builder for a new HDF5 file.
 pub struct Hdf5Writer {
   priv groups : Array[String]
@@ -352,6 +365,8 @@ pub struct Hdf5Writer {
   priv attributes : Array[WritableAttribute]
   priv soft_links : Array[WritableSoftLink]
   priv external_links : Array[WritableExternalLink]
+  priv link_orders : Array[WritableLinkOrder]
+  priv link_order_counters : Array[WritableLinkOrderCounter]
 }
 
 ///|
@@ -405,6 +420,7 @@ priv struct WritableDenseMetadata {
   kind : WritableDenseKind
   heap_address : UInt64
   index_address : UInt64
+  order_index_address : UInt64
 }
 
 ///|
@@ -418,6 +434,7 @@ priv struct WritableDenseHeapEntry {
   name : String
   hash : UInt32
   data : Bytes
+  creation_order : UInt64
 }
 
 ///|
@@ -437,6 +454,8 @@ pub fn Hdf5Writer::new() -> Hdf5Writer {
     attributes: [],
     soft_links: [],
     external_links: [],
+    link_orders: [],
+    link_order_counters: [],
   }
 }
 
@@ -1238,8 +1257,47 @@ fn validate_writer_link_message_size(
   kind : String,
 ) -> Unit raise Hdf5Error {
   let encoded_name = @utf8.encode(name)
-  guard 8 + encoded_name.length() + info_size <= 65535 else {
+  guard 16 + encoded_name.length() + info_size <= 65535 else {
     raise InvalidArgument(kind + " message is too long")
+  }
+}
+
+///|
+fn Hdf5Writer::record_link(
+  self : Hdf5Writer,
+  path : String,
+) -> Unit raise Hdf5Error {
+  guard path != "/" else { return }
+  if self.link_orders.search_by(link => link.path == path) is Some(_) {
+    return
+  }
+  let parent_path = writer_parent_path(path)
+  let counter = match
+    self.link_order_counters.search_by(counter => {
+      counter.parent_path == parent_path
+    }) {
+    Some(index) => index
+    None => {
+      self.link_order_counters.push({ parent_path, next_order: 0UL, })
+      self.link_order_counters.length() - 1
+    }
+  }
+  let order = self.link_order_counters[counter].next_order
+  guard order < 0xFFFFFFFFFFFFFFFFUL else {
+    raise InvalidArgument("writer has too many links")
+  }
+  self.link_orders.push({ path, order, })
+  self.link_order_counters[counter] = { parent_path, next_order: order + 1UL, }
+}
+
+///|
+fn Hdf5Writer::link_creation_order(
+  self : Hdf5Writer,
+  path : String,
+) -> UInt64 raise Hdf5Error {
+  match self.link_orders.search_by(link => link.path == path) {
+    Some(index) => self.link_orders[index].order
+    None => raise InvalidField("writer link has no creation order")
   }
 }
 
@@ -1262,6 +1320,7 @@ fn Hdf5Writer::ensure_groups(
       raise InvalidArgument("writer path conflicts with an external link")
     }
     if !self.groups.contains(current) {
+      self.record_link(current)
       self.groups.push(current)
     }
   }
@@ -1300,6 +1359,7 @@ pub fn Hdf5Writer::add_soft_link(
     raise InvalidArgument("writer object path already exists")
   }
   self.ensure_groups(normalized_parent)
+  self.record_link(link_path)
   self.soft_links.push({ parent_path: normalized_parent, name, target, })
 }
 
@@ -1329,6 +1389,7 @@ pub fn Hdf5Writer::add_external_link(
     raise InvalidArgument("writer object path already exists")
   }
   self.ensure_groups(normalized_parent)
+  self.record_link(link_path)
   self.external_links.push({
     parent_path: normalized_parent,
     name,
@@ -1354,6 +1415,7 @@ pub fn Hdf5Writer::add_dataset(
   }
   validate_write_values(dimensions, values)
   self.ensure_groups(writer_parent_path(normalized))
+  self.record_link(normalized)
   self.datasets.push({
     path: normalized,
     dimensions: dimensions.copy(),
@@ -1434,6 +1496,7 @@ pub fn Hdf5Writer::add_external_dataset(
   validate_external_slots(slots, expected_size.reinterpret_as_uint64())
   let copied_fill = validated_write_fill(values, fill_value)
   self.ensure_groups(writer_parent_path(normalized))
+  self.record_link(normalized)
   self.datasets.push({
     path: normalized,
     dimensions: dimensions.copy(),
@@ -1683,6 +1746,7 @@ pub fn Hdf5Writer::add_chunked_dataset(
   validate_writer_filters_for_values(values, filters)
   let copied_fill = validated_write_fill(values, fill_value)
   self.ensure_groups(writer_parent_path(normalized))
+  self.record_link(normalized)
   self.datasets.push({
     path: normalized,
     dimensions: dimensions.copy(),
@@ -1875,6 +1939,7 @@ pub fn Hdf5Writer::add_extensible_dataset(
   }
   chunk_grid(grid_dimensions, chunk_dimensions) |> ignore
   self.ensure_groups(writer_parent_path(normalized))
+  self.record_link(normalized)
   self.datasets.push({
     path: normalized,
     dimensions: dimensions.copy(),
@@ -2306,11 +2371,13 @@ pub fn Hdf5Writer::add_attribute(
     raise InvalidArgument("attribute name already exists")
   }
   validate_write_values(dimensions, values)
+  let creation_order = self.object_attributes(normalized).length().to_uint64()
   self.attributes.push({
     object_path: normalized,
     name,
     dimensions: dimensions.copy(),
     values: copy_write_values(values),
+    creation_order,
   })
 }
 
@@ -4453,11 +4520,19 @@ fn encode_link_info() -> Bytes {
 }
 
 ///|
-fn encode_hard_link(name : String, address : UInt64) -> Bytes {
+fn encode_hard_link(
+  name : String,
+  address : UInt64,
+  creation_order : UInt64,
+  track_order : Bool,
+) -> Bytes {
   let encoded = @utf8.encode(name)
-  let buffer = @buffer.Buffer::Buffer(size_hint=12 + encoded.length())
+  let buffer = @buffer.Buffer::Buffer(size_hint=20 + encoded.length())
   buffer.write_byte(b'\x01')
-  buffer.write_byte(b'\x11')
+  buffer.write_byte(if track_order { b'\x15' } else { b'\x11' })
+  if track_order {
+    buffer.write_uint64_le(creation_order)
+  }
   buffer.write_byte(b'\x01')
   buffer.write_uint16_le(encoded.length().to_uint16())
   writer_write_bytes(buffer, encoded)
@@ -4466,15 +4541,23 @@ fn encode_hard_link(name : String, address : UInt64) -> Bytes {
 }
 
 ///|
-fn encode_soft_link(name : String, target : String) -> Bytes {
+fn encode_soft_link(
+  name : String,
+  target : String,
+  creation_order : UInt64,
+  track_order : Bool,
+) -> Bytes {
   let encoded_name = @utf8.encode(name)
   let encoded_target = @utf8.encode(target)
   let buffer = @buffer.Buffer::Buffer(
     size_hint=8 + encoded_name.length() + encoded_target.length(),
   )
   buffer.write_byte(b'\x01')
-  buffer.write_byte(b'\x19')
+  buffer.write_byte(if track_order { b'\x1D' } else { b'\x19' })
   buffer.write_byte(b'\x01')
+  if track_order {
+    buffer.write_uint64_le(creation_order)
+  }
   buffer.write_byte(b'\x01')
   buffer.write_uint16_le(encoded_name.length().to_uint16())
   writer_write_bytes(buffer, encoded_name)
@@ -4488,6 +4571,8 @@ fn encode_external_link(
   name : String,
   target_file : String,
   target_path : String,
+  creation_order : UInt64,
+  track_order : Bool,
 ) -> Bytes {
   let encoded_name = @utf8.encode(name)
   let encoded_file = @utf8.encode(target_file)
@@ -4497,8 +4582,11 @@ fn encode_external_link(
     size_hint=8 + encoded_name.length() + info_size,
   )
   buffer.write_byte(b'\x01')
-  buffer.write_byte(b'\x19')
+  buffer.write_byte(if track_order { b'\x1D' } else { b'\x19' })
   buffer.write_byte(b'\x40')
+  if track_order {
+    buffer.write_uint64_le(creation_order)
+  }
   buffer.write_byte(b'\x01')
   buffer.write_uint16_le(encoded_name.length().to_uint16())
   writer_write_bytes(buffer, encoded_name)
@@ -4562,15 +4650,37 @@ let writer_dense_max_records : Int32 = 65535
 
 ///|
 fn encode_dense_storage_info(
+  group : Bool,
+  max_creation_order : UInt64,
   heap_address : UInt64,
   index_address : UInt64,
+  order_index_address : UInt64,
 ) -> Bytes {
-  let buffer = @buffer.Buffer::Buffer(size_hint=18)
+  let buffer = @buffer.Buffer::Buffer(size_hint=28)
   buffer.write_byte(b'\x00')
-  buffer.write_byte(b'\x00')
+  buffer.write_byte(b'\x03')
+  if group {
+    buffer.write_uint64_le(max_creation_order)
+  } else {
+    buffer.write_uint16_le(max_creation_order.to_uint16())
+  }
   buffer.write_uint64_le(heap_address)
   buffer.write_uint64_le(index_address)
+  buffer.write_uint64_le(order_index_address)
   buffer.to_bytes()
+}
+
+///|
+fn writer_dense_max_creation_order(
+  entries : Array[WritableDenseHeapEntry],
+) -> UInt64 {
+  let mut maximum = 0UL
+  for entry in entries {
+    if entry.creation_order > maximum {
+      maximum = entry.creation_order
+    }
+  }
+  maximum
 }
 
 ///|
@@ -4584,6 +4694,7 @@ fn Hdf5Writer::dense_link_entries(
   self : Hdf5Writer,
   object : WritableObject,
   objects : Array[WritableObject],
+  track_order~ : Bool,
 ) -> Array[WritableDenseHeapEntry] raise Hdf5Error {
   let entries : Array[WritableDenseHeapEntry] = []
   for child in objects {
@@ -4592,7 +4703,13 @@ fn Hdf5Writer::dense_link_entries(
       entries.push({
         name,
         hash: writer_name_hash(name),
-        data: encode_hard_link(name, child.address),
+        data: encode_hard_link(
+          name,
+          child.address,
+          self.link_creation_order(child.path),
+          track_order,
+        ),
+        creation_order: self.link_creation_order(child.path),
       })
     }
   }
@@ -4601,7 +4718,17 @@ fn Hdf5Writer::dense_link_entries(
       entries.push({
         name: link.name,
         hash: writer_name_hash(link.name),
-        data: encode_soft_link(link.name, link.target),
+        data: encode_soft_link(
+          link.name,
+          link.target,
+          self.link_creation_order(
+            writer_soft_link_path(link.parent_path, link.name),
+          ),
+          track_order,
+        ),
+        creation_order: self.link_creation_order(
+          writer_soft_link_path(link.parent_path, link.name),
+        ),
       })
     }
   }
@@ -4614,6 +4741,13 @@ fn Hdf5Writer::dense_link_entries(
           link.name,
           link.target_file,
           link.target_path,
+          self.link_creation_order(
+            writer_soft_link_path(link.parent_path, link.name),
+          ),
+          track_order,
+        ),
+        creation_order: self.link_creation_order(
+          writer_soft_link_path(link.parent_path, link.name),
         ),
       })
     }
@@ -4634,6 +4768,7 @@ fn Hdf5Writer::dense_attribute_entries(
       name: attribute.name,
       hash: writer_name_hash(attribute.name),
       data: encode_attribute(attribute, heap, objects),
+      creation_order: attribute.creation_order,
     })
   }
   entries
@@ -4841,13 +4976,13 @@ fn Hdf5Writer::encode_dense_metadata(
   heap : WritableGlobalHeap,
   heap_address : UInt64,
   kind : WritableDenseKind,
-) -> (Bytes, Bytes) raise Hdf5Error {
+) -> (Bytes, Bytes, Bytes) raise Hdf5Error {
   let group = match kind {
     WritableDenseLinks => true
     WritableDenseAttributes => false
   }
   let entries = if group {
-    self.dense_link_entries(object, objects)
+    self.dense_link_entries(object, objects, track_order=true)
   } else {
     self.dense_attribute_entries(object.path, heap, objects)
   }
@@ -4890,13 +5025,49 @@ fn Hdf5Writer::encode_dense_metadata(
     } else {
       writer_write_bytes(record, ids[index])
       record.write_byte(b'\x00')
-      record.write_uint_le(0xFFFFU)
+      record.write_uint_le(entries[index].creation_order.to_uint())
       record.write_uint_le(entries[index].hash)
     }
     guard record.length() == record_size else {
       raise InvalidField("writer dense B-tree record size mismatch")
     }
     records.push(record.to_bytes())
+  }
+  let order_indices : Array[Int32] = []
+  for index in 0..<entries.length() {
+    order_indices.push(index)
+  }
+  order_indices.sort_by((left, right) => {
+    let left_order = entries[left].creation_order
+    let right_order = entries[right].creation_order
+    if left_order < right_order {
+      -1
+    } else if left_order > right_order {
+      1
+    } else if entries[left].name < entries[right].name {
+      -1
+    } else if entries[left].name > entries[right].name {
+      1
+    } else {
+      0
+    }
+  })
+  let order_record_size = if group { 15 } else { 13 }
+  let order_records : Array[Bytes] = []
+  for index in order_indices {
+    let order_record = @buffer.Buffer::Buffer(size_hint=order_record_size)
+    if group {
+      order_record.write_uint64_le(entries[index].creation_order)
+      writer_write_bytes(order_record, ids[index])
+    } else {
+      writer_write_bytes(order_record, ids[index])
+      order_record.write_byte(b'\x00')
+      order_record.write_uint_le(entries[index].creation_order.to_uint())
+    }
+    guard order_record.length() == order_record_size else {
+      raise InvalidField("writer dense order B-tree record size mismatch")
+    }
+    order_records.push(order_record.to_bytes())
   }
   let node_size = writer_next_power_of_two(
     10 + records.length() * record_size,
@@ -4934,7 +5105,39 @@ fn Hdf5Writer::encode_dense_metadata(
   )
   writer_write_bytes(index_bytes, btree_header)
   writer_write_bytes(index_bytes, btree_node)
-  (heap_bytes.to_bytes(), index_bytes.to_bytes())
+  let order_index_address = index_address + index_bytes.length().to_uint64()
+  let order_node_size = writer_next_power_of_two(
+    10 + order_records.length() * order_record_size,
+    512,
+  )
+  let order_node_address = order_index_address + 38UL
+  let order_header = encode_writer_dense_btree_header(
+    if group {
+      6
+    } else {
+      9
+    },
+    order_node_size,
+    order_record_size,
+    order_node_address,
+    order_records.length(),
+  )
+  let order_node = encode_writer_dense_btree_node(
+    if group {
+      6
+    } else {
+      9
+    },
+    order_node_size,
+    order_record_size,
+    order_records,
+  )
+  let order_bytes = @buffer.Buffer::Buffer(
+    size_hint=order_header.length() + order_node.length(),
+  )
+  writer_write_bytes(order_bytes, order_header)
+  writer_write_bytes(order_bytes, order_node)
+  (heap_bytes.to_bytes(), index_bytes.to_bytes(), order_bytes.to_bytes())
 }
 
 ///|
@@ -4942,11 +5145,16 @@ fn writer_dense_addresses(
   dense : Array[WritableDenseMetadata],
   path : String,
   kind : WritableDenseKind,
-) -> (UInt64, UInt64) {
+) -> (UInt64, UInt64, UInt64) {
   match
     dense.search_by(metadata => metadata.path == path && metadata.kind == kind) {
-    Some(index) => (dense[index].heap_address, dense[index].index_address)
-    None => (0xFFFFFFFFFFFFFFFFUL, 0xFFFFFFFFFFFFFFFFUL)
+    Some(index) =>
+      (
+        dense[index].heap_address,
+        dense[index].index_address,
+        dense[index].order_index_address,
+      )
+    None => (0xFFFFFFFFFFFFFFFFUL, 0xFFFFFFFFFFFFFFFFUL, 0xFFFFFFFFFFFFFFFFUL)
   }
 }
 
@@ -4967,12 +5175,30 @@ fn write_header_message(
   message_type : Int32,
   data : Bytes,
 ) -> Unit raise Hdf5Error {
+  write_header_message_with_order(
+    buffer,
+    message_type,
+    data,
+    creation_order=false,
+  )
+}
+
+///|
+fn write_header_message_with_order(
+  buffer : @buffer.Buffer,
+  message_type : Int32,
+  data : Bytes,
+  creation_order~ : Bool,
+) -> Unit raise Hdf5Error {
   guard data.length() <= 65535 else {
     raise InvalidField("object header message is too large")
   }
   buffer.write_byte(message_type.to_byte())
   buffer.write_uint16_le(data.length().to_uint16())
   buffer.write_byte(b'\x00')
+  if creation_order {
+    buffer.write_uint16_le(0)
+  }
   writer_write_bytes(buffer, data)
 }
 
@@ -4996,6 +5222,21 @@ fn split_object_header_messages(
     )
   }
   messages
+}
+
+///|
+fn message_with_creation_order(message : Bytes) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=message.length() + 2)
+  writer_write_bytes(
+    buffer,
+    message.get_view(start=0, end=4).unwrap().to_owned(),
+  )
+  buffer.write_uint16_le(0)
+  writer_write_bytes(
+    buffer,
+    message.get_view(start=4, end=message.length()).unwrap().to_owned(),
+  )
+  buffer.to_bytes()
 }
 
 ///|
@@ -5055,8 +5296,14 @@ fn encode_object_continuation(address : UInt64, length : UInt64) -> Bytes {
 fn encode_object_header(
   payload : Bytes,
   start : UInt64,
+  creation_order~ : Bool = false,
 ) -> Bytes raise Hdf5Error {
-  let messages = split_object_header_messages(payload)
+  let raw_messages = split_object_header_messages(payload)
+  let messages = if creation_order {
+    raw_messages.map(message_with_creation_order)
+  } else {
+    raw_messages
+  }
   let chunks = plan_object_header_chunks(messages)
   let chunk_bodies : Array[Int32] = []
   for index in 0..<chunks.length() {
@@ -5078,13 +5325,14 @@ fn encode_object_header(
     writer_write_bytes(initial, message)
   }
   if chunks.length() > 1 {
-    write_header_message(
+    write_header_message_with_order(
       initial,
       msg_object_continuation,
       encode_object_continuation(
         addresses[1],
         (8 + chunk_bodies[1]).to_uint64(),
       ),
+      creation_order~,
     )
   }
   guard initial.length() <= 65535 else {
@@ -5092,7 +5340,7 @@ fn encode_object_header(
   }
   writer_write_bytes(output, b"OHDR")
   output.write_byte(b'\x02')
-  output.write_byte(b'\x01')
+  output.write_byte(if creation_order { b'\x0D' } else { b'\x01' })
   output.write_uint16_le(initial.length().to_uint16())
   writer_write_bytes(output, initial.to_bytes())
   output.write_uint_le(metadata_checksum(output.to_bytes(), 0, output.length()))
@@ -5107,13 +5355,14 @@ fn encode_object_header(
       writer_write_bytes(continuation, message)
     }
     if index + 1 < chunks.length() {
-      write_header_message(
+      write_header_message_with_order(
         continuation,
         msg_object_continuation,
         encode_object_continuation(
           addresses[index + 1],
           (8 + chunk_bodies[index + 1]).to_uint64(),
         ),
+        creation_order~,
       )
     }
     continuation.write_uint_le(
@@ -5317,9 +5566,9 @@ fn Hdf5Writer::object_payload(
   let buffer = @buffer.Buffer::Buffer()
   match object.kind {
     WritableGroup => {
-      let entries = self.dense_link_entries(object, objects)
+      let entries = self.dense_link_entries(object, objects, track_order=true)
       if writer_dense_entries_fit(entries) {
-        let (heap_address, index_address) = writer_dense_addresses(
+        let (heap_address, index_address, order_index_address) = writer_dense_addresses(
           dense,
           object.path,
           WritableDenseLinks,
@@ -5327,11 +5576,22 @@ fn Hdf5Writer::object_payload(
         write_header_message(
           buffer,
           msg_link_info,
-          encode_dense_storage_info(heap_address, index_address),
+          encode_dense_storage_info(
+            true,
+            writer_dense_max_creation_order(entries),
+            heap_address,
+            index_address,
+            order_index_address,
+          ),
         )
       } else {
         write_header_message(buffer, msg_link_info, encode_link_info())
-        for entry in entries {
+        let compact_entries = self.dense_link_entries(
+          object,
+          objects,
+          track_order=false,
+        )
+        for entry in compact_entries {
           write_header_message(buffer, msg_link, entry.data)
         }
       }
@@ -5455,7 +5715,7 @@ fn Hdf5Writer::object_payload(
   if attributes.length() > 0 {
     let entries = self.dense_attribute_entries(object.path, heap, objects)
     if writer_dense_entries_fit(entries) {
-      let (heap_address, index_address) = writer_dense_addresses(
+      let (heap_address, index_address, order_index_address) = writer_dense_addresses(
         dense,
         object.path,
         WritableDenseAttributes,
@@ -5463,7 +5723,13 @@ fn Hdf5Writer::object_payload(
       write_header_message(
         buffer,
         msg_attribute_info,
-        encode_dense_storage_info(heap_address, index_address),
+        encode_dense_storage_info(
+          false,
+          writer_dense_max_creation_order(entries),
+          heap_address,
+          index_address,
+          order_index_address,
+        ),
       )
     } else {
       write_header_message(
@@ -5813,6 +6079,9 @@ fn assign_writable_addresses(
       encode_object_header(
         writer.object_payload(object, templates, empty_heap, [], [], false),
         0UL,
+        creation_order=writer_dense_entries_fit(
+          writer.dense_attribute_entries(object.path, empty_heap, templates),
+        ),
       ).length(),
     )
   }
@@ -5871,7 +6140,10 @@ fn assign_writable_addresses(
     match object.kind {
       WritableGroup =>
         candidates.push(
-          (WritableDenseLinks, writer.dense_link_entries(object, objects)),
+          (
+            WritableDenseLinks,
+            writer.dense_link_entries(object, objects, track_order=true),
+          ),
         )
       WritableDatasetObject(_) => ()
     }
@@ -5883,18 +6155,24 @@ fn assign_writable_addresses(
     )
     for (kind, dense_entries) in candidates {
       if writer_dense_entries_fit(dense_entries) {
-        let (placeholder_heap, placeholder_index) = writer.encode_dense_metadata(
+        let (placeholder_heap, placeholder_index, placeholder_order_index) = writer.encode_dense_metadata(
           object, objects, heap, 0UL, kind,
         )
         let heap_address = offset.to_uint64()
+        let index_address = heap_address + placeholder_heap.length().to_uint64()
         dense.push({
           path: object.path,
           kind,
           heap_address,
-          index_address: heap_address + placeholder_heap.length().to_uint64(),
+          index_address,
+          order_index_address: index_address +
+          placeholder_index.length().to_uint64(),
         })
         offset = writer_align(
-          offset + placeholder_heap.length() + placeholder_index.length(),
+          offset +
+          placeholder_heap.length() +
+          placeholder_index.length() +
+          placeholder_order_index.length(),
         )
       }
     }
@@ -5997,6 +6275,10 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
   let encoded_headers : Array[Bytes] = []
   let mut eof = 48
   for object in objects {
+    let creation_order = layout.dense.search_by(metadata => {
+        metadata.path == object.path && metadata.kind == WritableDenseAttributes
+      })
+      is Some(_)
     let header = encode_object_header(
       self.object_payload(
         object,
@@ -6007,6 +6289,7 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
         true,
       ),
       object.address,
+      creation_order~,
     )
     encoded_headers.push(header)
     eof = writer_align(object.address.to_int() + header.length())
@@ -6024,7 +6307,7 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
   let dense_payloads : Array[(UInt64, Bytes)] = []
   for metadata in layout.dense {
     let object = find_writable_object(objects, metadata.path)
-    let (heap_bytes, index_bytes) = self.encode_dense_metadata(
+    let (heap_bytes, index_bytes, order_index_bytes) = self.encode_dense_metadata(
       object,
       objects,
       layout.heap,
@@ -6035,9 +6318,16 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
       metadata.index_address - metadata.heap_address else {
       raise InvalidField("dense metadata address changed during encoding")
     }
+    guard index_bytes.length().to_uint64() ==
+      metadata.order_index_address - metadata.index_address else {
+      raise InvalidField("dense order index address changed during encoding")
+    }
     dense_payloads.push((metadata.heap_address, heap_bytes))
     dense_payloads.push((metadata.index_address, index_bytes))
-    eof = writer_align(metadata.index_address.to_int() + index_bytes.length())
+    dense_payloads.push((metadata.order_index_address, order_index_bytes))
+    eof = writer_align(
+      metadata.order_index_address.to_int() + order_index_bytes.length(),
+    )
   }
   let external_payloads : Array[(UInt64, Bytes)] = []
   for metadata in layout.external {

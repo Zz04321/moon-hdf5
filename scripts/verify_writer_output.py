@@ -427,6 +427,23 @@ def verify_file(path: Path) -> None:
             assert dense[f"value_{index}"][()] == np.uint64(index)
             assert dense.attrs[f"dense_attr_{index}"] == np.uint64(index + 100)
         assert dense.attrs["dense_text"] == "密集属性"
+        ordered = handle["metadata/ordered"]
+        assert ordered.id.get_create_plist().get_link_creation_order() == 3
+        assert ordered.id.get_create_plist().get_attr_creation_order() == 3
+        ordered_links = [
+            "zeta", "alpha", "mu", "beta", "omega", "delta", "theta", "gamma",
+            "sigma", "kappa",
+        ]
+        ordered_attributes = [
+            "version", "units", "title", "owner", "status", "source", "time",
+            "kind", "tag", "note",
+        ]
+        assert list(ordered) == ordered_links
+        assert list(ordered.attrs) == ordered_attributes
+        for index, name in enumerate(ordered_links):
+            assert ordered[name][()] == np.uint64(index)
+        for index, name in enumerate(ordered_attributes):
+            assert ordered.attrs[name] == np.uint64(index)
         continued = handle["metadata/continued"]
         assert len(continued.attrs) == 8
         assert (

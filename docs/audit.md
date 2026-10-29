@@ -293,9 +293,9 @@ encoded. Link records use B-tree type 5 with an 11-byte `lookup3` hash and
 flags, undefined creation order and `lookup3` name hash. Records outside these
 limits fall back to compact messages and OCHK continuation chunks.
 
-The implementation writes one checksummed direct heap block and one leaf index
-per collection. It does not emit dense indirect or huge heap blocks, a
-creation-order index or a free-space manager. Boundary tests cover 8/9 records,
+At that stage the implementation wrote one checksummed direct heap block and one
+name-index leaf per collection. It did not emit dense indirect or huge heap
+blocks, a creation-order index or a free-space manager. Boundary tests cover 8/9 records,
 65,535/65,536 records and 4,096/4,097-byte heap objects. End-to-end tests cover
 2500 dense links, 2500 dense attributes, a group using both dense collections, a
 dense variable-length string attribute, exactly eight oversized compact links
@@ -716,3 +716,27 @@ checks both declared slots, the contiguous layout, complete values and a slice.
 Filtered or chunked external layouts, remote URLs, automatic
 external-file creation and in-place updates remain outside the supported
 extension.
+
+## Dense creation-order writer review — 2026-10-29
+
+Dense link and attribute metadata now includes creation-order indexes alongside
+the existing name indexes. Link order is allocated per containing group and
+attribute order per object, both starting at zero. Link messages carry the
+matching order field, attribute name-index records use the real order instead of
+a placeholder, and link-info/attribute-info messages advertise flags `0x03`
+(tracked and indexed) with all three heap/index addresses.
+
+Objects with dense attributes set the object-header attribute tracking and index
+flags and include the resulting message creation-order field. Compact groups
+retain name-ordered traversal and do not claim creation-order tracking. HDF5
+1.14.6 initially exposed both omissions: without message-level link order and
+object-header attribute flags, it found the B-trees but iterated the name
+indexes. After the fixes, h5py reports `get_link_creation_order() == 3` and
+`get_attr_creation_order() == 3` for a dense group, and returns deliberately
+non-alphabetical link and attribute insertion order unchanged.
+
+Wasm/native tests cover the type-6/type-9 indexes, non-alphabetical round-trips
+and the 2500-record collections. The demo adds `/metadata/ordered`, and its
+h5py/HDF5 1.14.6 verifier checks both flags, both insertion orders and every
+stored value. Dense indirect/huge heap blocks and a free-space manager remain
+outside the writer profile.

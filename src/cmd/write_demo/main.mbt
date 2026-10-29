@@ -742,6 +742,30 @@ fn run(args : Array[String]) -> Int32 {
       [],
       VariableStringValues(["密集属性"]),
     )
+    writer.add_group("/metadata/ordered")
+    let ordered_links = [
+      "zeta", "alpha", "mu", "beta", "omega", "delta", "theta", "gamma", "sigma",
+      "kappa",
+    ]
+    for index in 0..<ordered_links.length() {
+      writer.add_dataset(
+        "/metadata/ordered/" + ordered_links[index],
+        [],
+        UInt64Values([index.to_uint64()]),
+      )
+    }
+    let ordered_attributes = [
+      "version", "units", "title", "owner", "status", "source", "time", "kind", "tag",
+      "note",
+    ]
+    for index in 0..<ordered_attributes.length() {
+      writer.add_attribute(
+        "/metadata/ordered",
+        ordered_attributes[index],
+        [],
+        UInt64Values([index.to_uint64()]),
+      )
+    }
     writer.add_dataset("/metadata/continued", [], UInt64Values([0UL]))
     let continued_value = "c".repeat(9000)
     for index in 0..<8 {

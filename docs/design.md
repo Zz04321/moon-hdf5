@@ -233,11 +233,15 @@ HDF5 readers to report attribute counts correctly.
 Groups and objects with attributes use dense storage for 9–65,535 links or
 attributes when every encoded heap object is at most 4 KiB. Each collection has
 one FRHP header, one checksummed FHDB direct block, one BTHD header and one BTLF
-name index. Dense link records contain a `lookup3` name hash and a 7-byte heap
-ID; dense attribute records contain an 8-byte heap ID, flags, an undefined
-creation-order value and a `lookup3` name hash. Link and attribute collections
-are planned separately, so a group can use both. The writer does not emit dense
-indirect or huge heap blocks, a creation-order index or a free-space manager.
+name index, plus a creation-order B-tree (type 6 for links or type 9 for
+attributes) sharing the same heap IDs. Dense link records contain a `lookup3`
+name hash and a 7-byte heap ID; dense attribute records contain an 8-byte heap
+ID, flags, the creation order and a `lookup3` name hash. Link and attribute
+collections are planned separately, so a group can use both. Link order starts
+at zero in each group, attribute order starts at zero on each object, and
+creation-order tracking is advertised through link-info, attribute-info and
+object-header flags. The writer does not emit dense indirect or huge heap
+blocks or a free-space manager.
 Sets outside those bounds retain link or attribute messages in compact form and
 use OCHK continuations when the object header exceeds one chunk. Writer output
 does not include a SOHM table or shared-message wrappers.
