@@ -814,6 +814,25 @@ dense collection with an empty local heap, and MoonBit round-trips. The writer
 demo's 9 KB and 20 × 60 KB attribute groups are read successfully by h5py
 3.13.0/HDF5 1.14.6, including every attribute value.
 
-The boundary remains one SOHM table and heap, managed messages of at most
-4 KiB, and no shared fills or committed-target messages. Whole attributes
-larger than 4 KiB are not deduplicated as complete messages.
+At that stage the boundary remained one SOHM table and heap, managed messages
+of at most 4 KiB, and no shared fills or committed-target messages. Whole
+attributes larger than 4 KiB were not deduplicated as complete messages.
+
+## Shared-fill writer review — 2026-10-29
+
+`Hdf5Writer::set_fill_sharing(true)` now stores custom dataset fill messages of
+at most 4 KiB in the same FRHP/SOHM heap as shared attributes. Object-header
+fill messages use the 10-byte version-3 heap-ID wrapper and set the shared flag.
+The SMTB type mask is composed from emitted message kinds: datatype `0x0008`,
+dataspace `0x0002`, fill `0x0020` and whole attribute `0x1000`.
+
+Tests inspect the raw fill message flags and wrapper bytes, then verify MoonBit
+round-trips for positive and negative fixed-size fills. The writer demo enables
+fill sharing and covers both integer and variable-length string fills. The
+release verifier parses the generated object headers and requires a shared fill
+message, while h5py 3.13.0/HDF5 1.14.6 reads the expected fill values and
+contents.
+
+The remaining SOHM writer boundary is one table and heap, managed messages of
+at most 4 KiB, no committed-datatype target, and no deduplication of equal whole
+attributes.

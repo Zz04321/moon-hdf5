@@ -356,6 +356,7 @@ pub fn Hdf5Writer::new() -> Self
 pub fn Hdf5Writer::resize_dataset(Self, String, Array[UInt64]) -> Unit raise Hdf5Error
 pub fn Hdf5Writer::set_attribute_sharing(Self, Bool) -> Unit
 pub fn Hdf5Writer::set_chunk_filter_mask(Self, String, Int32, UInt32) -> Unit raise Hdf5Error
+pub fn Hdf5Writer::set_fill_sharing(Self, Bool) -> Unit
 
 // Type aliases
 

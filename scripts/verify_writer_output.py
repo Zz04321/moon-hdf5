@@ -5,6 +5,11 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from hdf5_raw import object_header_messages
+
+
+SHARED_FLAG = 0x02
+
 
 def filter_records(dataset):
     plist = dataset.id.get_create_plist()
@@ -50,7 +55,8 @@ def verify(path: Path) -> None:
 
 
 def verify_file(path: Path) -> None:
-    assert b"SMTB" in path.read_bytes()
+    data = path.read_bytes()
+    assert b"SMTB" in data
     with h5py.File(path, "r") as handle:
         assert list(handle) == ["experiment", "metadata", "structured", "types"]
         assert sorted(handle["experiment"]) == [
@@ -167,6 +173,12 @@ def verify_file(path: Path) -> None:
         assert chunked.compression == "gzip"
         assert chunked.compression_opts == 6
         assert chunked.fletcher32
+        shared_fill_addresses = {
+            "chunked": h5py.h5o.get_info(chunked.id).addr,
+            "string_fill": h5py.h5o.get_info(
+                handle["experiment/string_fill"].id
+            ).addr,
+        }
         series = handle["experiment/series"]
         np.testing.assert_array_equal(
             series[:], [[10, 11], [20, 21], [30, 31], [-1, -1]]
@@ -558,6 +570,7 @@ def verify_file(path: Path) -> None:
             np.asarray(handle[pair[0]][pair[0]]).reshape(-1), [11, 12]
         )
         assert not pair[1]
+
         region_prototype = handle["structured/region_records"].attrs["prototype"]
         assert handle[region_prototype["target"]].name == "/experiment/region_target"
         np.testing.assert_array_equal(
@@ -603,6 +616,17 @@ def verify_file(path: Path) -> None:
         events.resize((4,))
         events[3] = "continued"
         assert events.asstr()[3] == "continued"
+    for name, address in shared_fill_addresses.items():
+        fill_messages = [
+            (flags, payload)
+            for kind, flags, payload in object_header_messages(data, address)
+            if kind == 0x05
+        ]
+        assert fill_messages, f"{name} has no fill-value message"
+        assert any(
+            flags & SHARED_FLAG and payload[:2] == b"\x03\x01"
+            for flags, payload in fill_messages
+        ), f"{name} fill value is not stored through SOHM"
     print(
         f"Verified {path} with h5py {h5py.__version__} "
         f"and HDF5 {h5py.version.hdf5_version}"

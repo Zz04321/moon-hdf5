@@ -370,6 +370,7 @@ pub struct Hdf5Writer {
   priv link_orders : Array[WritableLinkOrder]
   priv link_order_counters : Array[WritableLinkOrderCounter]
   priv mut share_attributes : Bool
+  priv mut share_fills : Bool
 }
 
 ///|
@@ -451,6 +452,13 @@ priv struct WritableSharedAttribute {
 }
 
 ///|
+priv struct WritableSharedFill {
+  path : String
+  data : Bytes
+  id : Bytes
+}
+
+///|
 priv struct WritableSharedField {
   data : Bytes
   id : Bytes
@@ -472,7 +480,9 @@ priv struct WritableSharedMetadata {
   datatypes : Array[WritableSharedField]
   dataspaces : Array[WritableSharedField]
   fields : Array[WritableAttributeSharing]
+  fills : Array[WritableSharedFill]
   attributes : Array[WritableSharedAttribute]
+  message_types : Int32
 }
 
 ///|
@@ -496,6 +506,7 @@ pub fn Hdf5Writer::new() -> Hdf5Writer {
     link_orders: [],
     link_order_counters: [],
     share_attributes: false,
+    share_fills: false,
   }
 }
 
@@ -508,6 +519,14 @@ pub fn Hdf5Writer::set_attribute_sharing(
   enabled : Bool,
 ) -> Unit {
   self.share_attributes = enabled
+}
+
+///|
+/// Enables or disables writing complete fill-value messages through the SOHM
+/// table. Fill messages at most 4 KiB are shared; larger messages remain in
+/// the object header.
+pub fn Hdf5Writer::set_fill_sharing(self : Hdf5Writer, enabled : Bool) -> Unit {
+  self.share_fills = enabled
 }
 
 ///|
@@ -4907,6 +4926,17 @@ fn writer_attribute_sharing(
 }
 
 ///|
+fn writer_shared_fill(
+  fills : Array[WritableSharedFill],
+  path : String,
+) -> WritableSharedFill? {
+  match fills.search_by(fill => fill.path == path) {
+    Some(index) => Some(fills[index])
+    None => None
+  }
+}
+
+///|
 fn encode_writer_shared_message(heap_id : Bytes) -> Bytes raise Hdf5Error {
   guard heap_id.length() == 8 else {
     raise InvalidField("writer shared-message heap ID has an invalid size")
@@ -5197,9 +5227,6 @@ let writer_shared_max_managed_size : Int32 = 4096
 let writer_shared_table_size : Int32 = 38
 
 ///|
-let writer_shared_message_types : Int32 = 0x100A
-
-///|
 fn writer_shared_placeholder_id(index : Int32) -> Bytes {
   let buffer = @buffer.Buffer::Buffer(size_hint=8)
   buffer.write_uint64_le(index.to_uint64())
@@ -5301,6 +5328,37 @@ fn Hdf5Writer::shared_field_candidates(
 }
 
 ///|
+fn Hdf5Writer::shared_fill_candidates(
+  self : Hdf5Writer,
+  objects : Array[WritableObject],
+  heap : WritableGlobalHeap,
+) -> Array[WritableSharedFill] raise Hdf5Error {
+  let fills : Array[WritableSharedFill] = []
+  if !self.share_fills {
+    return fills
+  }
+  let empty_id = Bytes::make(8, b'\x00')
+  for object in objects {
+    match object.kind {
+      WritableDatasetObject(index) => {
+        let dataset = self.datasets[index]
+        match dataset.fill_value {
+          Some(fill) => {
+            let data = encode_fill_value(fill, heap~, objects~)
+            if data.length() <= writer_shared_max_managed_size {
+              fills.push({ path: object.path, data, id: empty_id, })
+            }
+          }
+          None => ()
+        }
+      }
+      WritableGroup => ()
+    }
+  }
+  fills
+}
+
+///|
 fn encode_writer_shared_heap(
   heap_address : UInt64,
   messages : Array[Bytes],
@@ -5349,12 +5407,16 @@ fn encode_writer_shared_heap(
 }
 
 ///|
-fn encode_writer_shared_table(heap_address : UInt64, count : Int32) -> Bytes {
+fn encode_writer_shared_table(
+  heap_address : UInt64,
+  count : Int32,
+  message_types : Int32,
+) -> Bytes {
   let buffer = @buffer.Buffer::Buffer(size_hint=writer_shared_table_size)
   writer_write_bytes(buffer, b"SMTB")
   buffer.write_byte(b'\x00')
   buffer.write_byte(b'\x00')
-  buffer.write_uint16_le(writer_shared_message_types.to_uint16())
+  buffer.write_uint16_le(message_types.to_uint16())
   buffer.write_uint_le(0U)
   buffer.write_uint16_le(65535U.to_uint16())
   buffer.write_uint16_le(0U.to_uint16())
@@ -6021,6 +6083,7 @@ fn Hdf5Writer::object_payload(
   external_addresses_final : Bool,
   shared~ : Array[WritableSharedAttribute] = [],
   sharing~ : Array[WritableAttributeSharing] = [],
+  fills~ : Array[WritableSharedFill] = [],
 ) -> Bytes raise Hdf5Error {
   let buffer = @buffer.Buffer::Buffer()
   match object.kind {
@@ -6073,11 +6136,21 @@ fn Hdf5Writer::object_payload(
       write_header_message(buffer, msg_datatype, encoded.datatype)
       match dataset.fill_value {
         Some(fill) =>
-          write_header_message(
-            buffer,
-            msg_fill_value,
-            encode_fill_value(fill, heap~, objects~),
-          )
+          match writer_shared_fill(fills, object.path) {
+            Some(shared_fill) =>
+              write_header_message_with_flags(
+                buffer,
+                msg_fill_value,
+                encode_writer_shared_message(shared_fill.id),
+                shared_message_flag.to_byte(),
+              )
+            None =>
+              write_header_message(
+                buffer,
+                msg_fill_value,
+                encode_fill_value(fill, heap~, objects~),
+              )
+          }
         None => ()
       }
       let filter_fill = match dataset.fill_value {
@@ -6549,9 +6622,19 @@ fn assign_writable_addresses(
   let (shared_datatypes, shared_dataspaces, sharing_fields) = writer.shared_field_candidates(
     templates, empty_heap, shared_candidates,
   )
+  let shared_fills = writer.shared_fill_candidates(templates, empty_heap)
+  let shared_message_types = (if shared_candidates.length() > 0 {
+      1 << 0x0C
+    } else {
+      0
+    }) |
+    (if shared_datatypes.length() > 0 { 1 << 3 } else { 0 }) |
+    (if shared_dataspaces.length() > 0 { 1 << 1 } else { 0 }) |
+    (if shared_fills.length() > 0 { 1 << 5 } else { 0 })
   let has_shared_messages = shared_candidates.length() > 0 ||
     shared_datatypes.length() > 0 ||
-    shared_dataspaces.length() > 0
+    shared_dataspaces.length() > 0 ||
+    shared_fills.length() > 0
   let lengths : Array[Int32] = []
   for object in templates {
     lengths.push(
@@ -6565,6 +6648,7 @@ fn assign_writable_addresses(
           false,
           shared=shared_candidates,
           sharing=sharing_fields,
+          fills=shared_fills,
         ),
         0UL,
         creation_order=writer_dense_entries_fit(
@@ -6779,12 +6863,28 @@ fn assign_writable_addresses(
         id: b"",
       })
     }
+    let fills : Array[WritableSharedFill] = []
+    for candidate in shared_fills {
+      let dataset = writer.datasets[writer.writer_dataset_index(candidate.path)]
+      let fill = match dataset.fill_value {
+        Some(fill) => fill
+        None => raise InvalidField("writer shared fill disappeared")
+      }
+      let data = encode_fill_value(fill, heap~, objects~)
+      guard data.length() <= writer_shared_max_managed_size else {
+        raise InvalidField("writer shared fill changed size")
+      }
+      fills.push({ path: candidate.path, data, id: b"", })
+    }
     let messages : Array[Bytes] = []
     for field in shared_datatypes {
       messages.push(field.data)
     }
     for field in shared_dataspaces {
       messages.push(field.data)
+    }
+    for fill in fills {
+      messages.push(fill.data)
     }
     for attribute in attributes {
       messages.push(attribute.data)
@@ -6806,6 +6906,15 @@ fn assign_writable_addresses(
       resolved_dataspaces.push({
         data: shared_dataspaces[index].data,
         id: ids[id_index],
+      })
+    }
+    let resolved_fills : Array[WritableSharedFill] = []
+    let fill_id_start = shared_datatypes.length() + shared_dataspaces.length()
+    for index in 0..<fills.length() {
+      resolved_fills.push({
+        path: fills[index].path,
+        data: fills[index].data,
+        id: ids[fill_id_start + index],
       })
     }
     let fields : Array[WritableAttributeSharing] = []
@@ -6834,8 +6943,7 @@ fn assign_writable_addresses(
       })
     }
     let resolved : Array[WritableSharedAttribute] = []
-    let attribute_id_start = shared_datatypes.length() +
-      shared_dataspaces.length()
+    let attribute_id_start = fill_id_start + fills.length()
     for index in 0..<attributes.length() {
       resolved.push({
         path: attributes[index].path,
@@ -6852,7 +6960,9 @@ fn assign_writable_addresses(
       datatypes: resolved_datatypes,
       dataspaces: resolved_dataspaces,
       fields,
+      fills: resolved_fills,
       attributes: resolved,
+      message_types: shared_message_types,
     })
   } else {
     None
@@ -6893,6 +7003,10 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
     Some(shared) => shared.fields
     None => []
   }
+  let shared_fills = match layout.shared {
+    Some(shared) => shared.fills
+    None => []
+  }
   let encoded_headers : Array[Bytes] = []
   let mut eof = 48
   for object in objects {
@@ -6910,6 +7024,7 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
         true,
         shared=shared_attributes,
         sharing=shared_fields,
+        fills=shared_fills,
       ),
       object.address,
       creation_order~,
@@ -7006,12 +7121,16 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
     for field in shared.dataspaces {
       messages.push(field.data)
     }
+    for fill in shared.fills {
+      messages.push(fill.data)
+    }
     for attribute in shared.attributes {
       messages.push(attribute.data)
     }
     let table = encode_writer_shared_table(
       shared.heap_address,
       messages.length(),
+      shared.message_types,
     )
     let (heap_bytes, ids) = encode_writer_shared_heap(
       shared.heap_address,
@@ -7023,6 +7142,9 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
     }
     for field in shared.dataspaces {
       expected_ids.push(field.id)
+    }
+    for fill in shared.fills {
+      expected_ids.push(fill.id)
     }
     for attribute in shared.attributes {
       expected_ids.push(attribute.id)

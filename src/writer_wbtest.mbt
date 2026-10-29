@@ -299,6 +299,7 @@ fn writer_test_dense_attribute_payloads(
 test "writer shares attributes through SOHM" {
   let writer = Hdf5Writer::new()
   writer.set_attribute_sharing(true)
+  writer.set_fill_sharing(true)
   writer.add_group("/shared")
   writer.add_dataset("/shared/value", [1UL], UInt64Values([7UL]))
   writer.add_attribute("/shared/value", "compact", [], UInt64Values([7UL]))
@@ -348,6 +349,18 @@ test "writer shares attributes through SOHM" {
       UInt64Values([(index + 20).to_uint64()]),
     )
   }
+  writer.add_group("/shared/fills")
+  for (name, fill) in [("negative", -7L), ("positive", 23L)] {
+    writer.add_extensible_dataset(
+      "/shared/fills/" + name,
+      [0UL],
+      [None],
+      [1U],
+      Int64Values([]),
+      fill_value=Int64Values([fill]),
+    )
+    writer.resize_dataset("/shared/fills/" + name, [3UL])
+  }
   let layout = assign_writable_addresses(
     writer,
     initial_writable_objects(writer),
@@ -357,6 +370,8 @@ test "writer shares attributes through SOHM" {
       assert_eq(shared.datatypes.length(), 1)
       assert_eq(shared.dataspaces.length(), 1)
       assert_eq(shared.fields.length(), 3)
+      assert_eq(shared.fills.length(), 2)
+      assert_eq(shared.message_types, 0x102A)
       for
         (path, name) in [
           ("/shared/dense", "large"),
@@ -415,6 +430,25 @@ test "writer shares attributes through SOHM" {
   for message in large_messages {
     let (_, flags) = writer_test_attribute_name(message.data)
     assert_eq(flags & 0x03, 0x03)
+  }
+  for (name, fill) in [("negative", -7L), ("positive", 23L)] {
+    let path = "/shared/fills/" + name
+    let fill_header = parse_object_header(
+      bytes,
+      file.resolve(path).address,
+      8,
+      8,
+      0UL,
+    )
+    match fill_header.first(msg_fill_value) {
+      Some(message) => {
+        assert_eq(message.flags.to_int() & shared_message_flag, 0x02)
+        assert_eq(message.data[0], b'\x03')
+        assert_eq(message.data[1], b'\x01')
+      }
+      None => abort("expected shared fill message")
+    }
+    assert_eq(integer_values(file.read_dataset(path)), [fill, fill, fill])
   }
   let attributes = file.attributes("/shared/dense") catch {
     error => abort("attributes failed: " + error.message())
