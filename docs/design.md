@@ -250,14 +250,14 @@ combined SMTB index and one FRHP/SOHM managed-object heap. Compact whole
 attributes store a 10-byte version-3 heap-ID wrapper in the object header. A
 dense attribute B-tree record uses the SOHM heap ID directly and advertises the
 shared flag, so the object's local attribute heap contains only unshared
-messages and may be an empty FRHP. Attributes whose encoded message exceeds
-4 KiB remain inline or dense, while their deduplicated datatype and dataspace
-messages are stored in the same SOHM heap and referenced by attribute flags
-`0x01` and `0x02`. `Hdf5Writer::set_fill_sharing(true)` also stores each custom
-dataset fill message of at most 4 KiB in the same heap and marks the object
-header fill message as shared. The SMTB message-type mask is composed from the
-message kinds actually emitted. The writer does not deduplicate equal whole
-attributes and does not emit committed-target messages.
+messages and may be an empty FRHP. Encoded attribute messages up to 65,535
+bytes use whole-message sharing; this covers every attribute message that the
+object-header writer can represent. `Hdf5Writer::set_fill_sharing(true)` also
+stores each custom dataset fill message of at most 65,535 bytes in the same
+heap and marks the object header fill message as shared. The SMTB message-type
+mask is composed from the message kinds actually emitted. Equal encoded whole
+attributes are interned once and shared by every matching object. The writer
+does not emit committed-target messages.
 
 The writer calculates all object, continuation, dense-metadata, global-heap and
 raw-data addresses before encoding checksummed metadata. Soft links may use

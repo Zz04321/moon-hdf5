@@ -836,3 +836,30 @@ contents.
 The remaining SOHM writer boundary is one table and heap, managed messages of
 at most 4 KiB, no committed-datatype target, and no deduplication of equal whole
 attributes.
+
+## Unified SOHM threshold review — 2026-10-29
+
+The 4 KiB whole-attribute threshold was an internal policy inherited from the
+original writer. An attribute message cannot exceed 65,535 bytes, while the
+FRHP managed-object identifier already supports that full range. The writer now
+uses the same 65,535-byte limit for whole attributes and custom fills.
+
+At that limit field-level datatype/dataspace sharing is unreachable: every
+attribute that can be represented in an object header can also be shared as
+one complete message. The field-sharing implementation was therefore removed
+instead of retaining a second, dead encoding path. Producer files with shared
+datatype/dataspace fields remain fully supported by the reader.
+
+The SMTB type mask is now `0x1000` for whole attributes and `0x0020` for fills,
+combined into `0x1020` when both are present. Raw tests still require shared
+attribute wrappers, dense shared records and shared fill wrappers. The writer
+demo and h5py 3.13.0/HDF5 1.14.6 verification cover compact and dense shared
+attributes, integer fills and variable-length string fills.
+
+Equal encoded whole attributes are now interned by their complete message
+bytes. A duplicate attribute on another object reuses the same 8-byte SOHM heap
+ID. Tests compare those IDs directly, and the release verifier parses both
+object headers and requires the shared ID set to overlap.
+
+The remaining boundary is one SOHM table and heap and no committed-datatype
+target.

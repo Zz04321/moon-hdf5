@@ -223,6 +223,7 @@ fn run(args : Array[String]) -> Int32 {
       VariableStringValues(["UTF-8 标签"]),
     )
     writer.add_group("/types")
+    writer.add_attribute("/types", "revision", [], UInt64Values([1UL]))
     writer.add_attribute("/types", "i8_marker", [], Int8Values([-5]))
     writer.add_attribute(
       "/types",

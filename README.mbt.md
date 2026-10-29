@@ -325,16 +325,15 @@ round-trips. The writer does not emit dense indirect or huge heap blocks or a
 free-space manager.
 
 `set_attribute_sharing(true)` places encoded whole-attribute messages of at
-most 4 KiB in one file-wide SOHM heap. Compact attributes store a
+most 65,535 bytes in one file-wide SOHM heap. Compact attributes store a
 shared-message wrapper in the object header; dense attribute B-tree records
 store the SOHM heap ID directly, and the object's local attribute heap contains
-only unshared messages. Larger attributes remain inline or dense but share
-deduplicated datatype/dataspace messages, using attribute flags `0x01` and
-`0x02` and version-3 heap-ID wrappers for those fields. The writer emits one
-SMTB index carrying datatype, dataspace, fill and whole-attribute messages.
-`set_fill_sharing(true)` places custom fill messages of at most 4 KiB in the
+only unshared messages. The writer emits one SMTB index carrying fill and
+whole-attribute messages. `set_fill_sharing(true)` places custom fill messages
+of at most 65,535 bytes in the
 same SOHM heap and marks each object-header fill message as shared. Both sharing
-options are disabled by default.
+options are disabled by default. Equal encoded attribute messages are interned
+once and referenced by every matching object.
 Metadata outside those bounds remains compact and is split across checksummed
 OCHK continuation chunks. The writer demo includes a 2500-attribute object, a
 group with both dense links and dense attributes including a variable-length
@@ -398,11 +397,9 @@ preserve order and duplicates.
   caller-supplied slots. Remote URLs, filtered or chunked external layouts and
   automatic external-file creation are not supported. Tile iteration is
   supported for reads.
-- Optional writer SOHM support covers whole attributes up to 4 KiB,
-  deduplicated datatype/dataspace fields for larger attributes, and custom fill
-  messages up to 4 KiB through one combined SMTB index and one managed-object
-  fractal heap. It does not emit committed-datatype targets, and it does not
-  deduplicate equal whole attributes.
+- Optional writer SOHM support covers whole attributes and custom fill
+  messages up to 65,535 bytes through one combined SMTB index and one
+  managed-object fractal heap. It does not emit committed-datatype targets.
 - Numeric storage wider than 8 bytes and binary floating-point normalizations
   other than implied MSB are not supported.
 - Floating-point scale-offset supports f32/f64 decimal scaling; other floating

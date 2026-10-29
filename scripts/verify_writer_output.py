@@ -179,6 +179,10 @@ def verify_file(path: Path) -> None:
                 handle["experiment/string_fill"].id
             ).addr,
         }
+        deduplicated_attribute_addresses = {
+            "experiment": h5py.h5o.get_info(handle["experiment"].id).addr,
+            "types": h5py.h5o.get_info(handle["types"].id).addr,
+        }
         series = handle["experiment/series"]
         np.testing.assert_array_equal(
             series[:], [[10, 11], [20, 21], [30, 31], [-1, -1]]
@@ -254,7 +258,7 @@ def verify_file(path: Path) -> None:
             assert dataset.dtype == np.dtype(dtype)
             np.testing.assert_array_equal(dataset[:], values)
         assert handle["types"].attrs["i8_marker"] == np.int8(-5)
-        assert len(handle["types"].attrs) == 4
+        assert len(handle["types"].attrs) == 5
         assert handle["types"].attrs["i8_marker"].dtype == np.dtype("<i1")
         assert handle["types"].attrs["f32_marker"] == np.float32(1.5)
         assert handle["types"].attrs["f32_marker"].dtype == np.dtype("<f4")
@@ -262,6 +266,7 @@ def verify_file(path: Path) -> None:
         assert handle["types"].attrs.get_id("big_i32_marker").dtype == np.dtype(">i4")
         assert handle["types"].attrs["complex_marker"] == np.complex64(-1.5 + 2.5j)
         assert handle["types"].attrs["complex_marker"].dtype == np.dtype("<c8")
+        assert handle["types"].attrs["revision"] == np.uint64(1)
         chunked_complex = handle["types/chunked_complex64"]
         assert chunked_complex.fillvalue == np.complex64(-1 - 2j)
         assert chunked_complex.chunks == (2,)
@@ -627,6 +632,19 @@ def verify_file(path: Path) -> None:
             flags & SHARED_FLAG and payload[:2] == b"\x03\x01"
             for flags, payload in fill_messages
         ), f"{name} fill value is not stored through SOHM"
+    attribute_ids = {}
+    for name, address in deduplicated_attribute_addresses.items():
+        attribute_ids[name] = {
+            payload[2:10]
+            for kind, flags, payload in object_header_messages(data, address)
+            if kind == 0x0C
+            and flags & SHARED_FLAG
+            and payload[:2] == b"\x03\x01"
+        }
+    assert attribute_ids["experiment"], "experiment has no shared attribute"
+    assert attribute_ids["experiment"] <= attribute_ids["types"], (
+        "equal attributes do not reuse one SOHM heap ID"
+    )
     print(
         f"Verified {path} with h5py {h5py.__version__} "
         f"and HDF5 {h5py.version.hdf5_version}"

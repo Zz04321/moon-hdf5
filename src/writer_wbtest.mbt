@@ -303,6 +303,8 @@ test "writer shares attributes through SOHM" {
   writer.add_group("/shared")
   writer.add_dataset("/shared/value", [1UL], UInt64Values([7UL]))
   writer.add_attribute("/shared/value", "compact", [], UInt64Values([7UL]))
+  writer.add_group("/shared/duplicate")
+  writer.add_attribute("/shared/duplicate", "compact", [], UInt64Values([7UL]))
   writer.add_group("/shared/dense")
   for index in 0..<10 {
     writer.add_attribute(
@@ -364,28 +366,30 @@ test "writer shares attributes through SOHM" {
   let layout = assign_writable_addresses(
     writer,
     initial_writable_objects(writer),
-  )
+  ) catch {
+    error => abort("layout failed: " + error.message())
+  }
   match layout.shared {
     Some(shared) => {
-      assert_eq(shared.datatypes.length(), 1)
-      assert_eq(shared.dataspaces.length(), 1)
-      assert_eq(shared.fields.length(), 3)
+      assert_eq(shared.attributes.length(), 25)
+      assert_eq(shared.message_count, 26)
       assert_eq(shared.fills.length(), 2)
-      assert_eq(shared.message_types, 0x102A)
-      for
-        (path, name) in [
-          ("/shared/dense", "large"),
-          ("/shared/large", "first"),
-          ("/shared/large", "second"),
-        ] {
-        match writer_attribute_sharing(shared.fields, path, name) {
-          Some(field) => {
-            assert_true(field.datatype_id is Some(_))
-            assert_true(field.dataspace_id is Some(_))
-          }
-          None => abort("expected internally shared attribute fields")
-        }
+      assert_eq(shared.message_types, 0x1020)
+      let compact = match
+        writer_shared_attribute(shared.attributes, "/shared/value", "compact") {
+        Some(attribute) => attribute
+        None => abort("expected compact shared attribute")
       }
+      let duplicate = match
+        writer_shared_attribute(
+          shared.attributes,
+          "/shared/duplicate",
+          "compact",
+        ) {
+        Some(attribute) => attribute
+        None => abort("expected duplicate shared attribute")
+      }
+      assert_eq(compact.id, duplicate.id)
     }
     None => abort("expected shared-message metadata")
   }
@@ -415,7 +419,7 @@ test "writer shares attributes through SOHM" {
     ) {
     let (name, flags) = writer_test_attribute_name(entry)
     if name == "large" {
-      assert_eq(flags & 0x03, 0x03)
+      assert_eq(flags & shared_message_flag, shared_message_flag)
     }
   }
   let large_header = parse_object_header(
@@ -428,8 +432,9 @@ test "writer shares attributes through SOHM" {
   let large_messages = large_header.find(msg_attribute)
   assert_eq(large_messages.length(), 2)
   for message in large_messages {
-    let (_, flags) = writer_test_attribute_name(message.data)
-    assert_eq(flags & 0x03, 0x03)
+    assert_eq(message.flags.to_int() & shared_message_flag, shared_message_flag)
+    assert_eq(message.data[0], b'\x03')
+    assert_eq(message.data[1], b'\x01')
   }
   for (name, fill) in [("negative", -7L), ("positive", 23L)] {
     let path = "/shared/fills/" + name
@@ -452,6 +457,13 @@ test "writer shares attributes through SOHM" {
   }
   let attributes = file.attributes("/shared/dense") catch {
     error => abort("attributes failed: " + error.message())
+  }
+  let duplicate_attributes = file.attributes("/shared/duplicate") catch {
+    error => abort("duplicate attributes failed: " + error.message())
+  }
+  match duplicate_attributes[0].values {
+    Some(UnsignedIntegers(values)) => assert_eq(values, [7UL])
+    _ => abort("expected deduplicated integer attribute")
   }
   assert_eq(attributes.length(), 12)
   for index in 0..<10 {
@@ -480,7 +492,7 @@ test "writer shares attributes through SOHM" {
     Some(position) =>
       match attributes[position].values {
         Some(Strings(values)) => assert_eq(values, [large])
-        _ => abort("expected unshared large string")
+        _ => abort("expected shared large string")
       }
     None => abort("expected large attribute")
   }
@@ -493,7 +505,7 @@ test "writer shares attributes through SOHM" {
       Some(position) =>
         match large_attributes[position].values {
           Some(Strings(values)) => assert_eq(values, [value])
-          _ => abort("expected shared-field large string")
+          _ => abort("expected shared large string")
         }
       None => abort("expected large shared-field attribute")
     }
