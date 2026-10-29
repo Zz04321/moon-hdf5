@@ -333,6 +333,8 @@ pub(all) enum Hdf5WriteValues {
   FixedStringValues(Array[String], Int32)
   VariableStringValues(Array[String])
   ObjectReferenceValues(Array[String?])
+  Complex64Values(Array[(Float, Float)])
+  Complex128Values(Array[(Double, Double)])
   StructuredValues(Datatype, Array[DatasetValue])
 } derive(@debug.Debug)
 pub fn Hdf5WriteValues::to_repr(Self) -> @debug.Repr

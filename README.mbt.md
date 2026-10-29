@@ -324,6 +324,12 @@ both links and attributes, exactly eight oversized links and attributes that
 exercise compact OCHK continuations, and a 20-attribute object spanning
 multiple continuation chunks.
 
+`Complex64Values` and `Complex128Values` write standard little-endian complex
+arrays as HDF5's canonical `r`/`i` floating-point compound, which h5py exposes
+as `complex64` and `complex128`. Complex values can also be stored in
+attributes. The generic structured APIs remain available for custom compound
+layouts and big-endian fields.
+
 For integer values, `ScaleOffset(0)` selects automatic bit width and a positive
 value fixes the width. For f32/f64 values, the parameter is the number of
 decimal digits retained by HDF5's DSCALE mode. Scale-offset accepts fixed-size
@@ -382,10 +388,11 @@ preserve order and duplicates.
   `ScaleOffset(element_width * 8)` to store an integer chunk unfiltered. Writer
   floating-point data and fill values must be finite, and floating-point
   scale-offset cannot be combined with Fletcher32.
-- Custom variable-length sequence fills, other writer filters and complex-number
-  writing are not supported. Variable-length sequence bases must be fixed-size;
-  a base that is or contains a region reference is rejected because HDF5 1.14.6
-  cannot safely consume that combination.
+- Custom variable-length sequence fills and other writer filters are not
+  supported. Complex output is limited to little-endian 64- and 128-bit values;
+  variable-length sequence bases must be fixed-size, and a base that is or
+  contains a region reference is rejected because HDF5 1.14.6 cannot safely
+  consume that combination.
 - Reference resolution covers legacy object and dataset-region references under
   4- and 8-byte address widths. Region targets must be datasets in the same
   file. Version-4 encoded references are not resolved. Region-reference writing

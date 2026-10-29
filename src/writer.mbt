@@ -14,6 +14,8 @@ pub(all) enum Hdf5WriteValues {
   FixedStringValues(Array[String], Int32)
   VariableStringValues(Array[String])
   ObjectReferenceValues(Array[String?])
+  Complex64Values(Array[(Float, Float)])
+  Complex128Values(Array[(Double, Double)])
   StructuredValues(Datatype, Array[DatasetValue])
 } derive(@debug.Debug)
 
@@ -554,6 +556,8 @@ fn writer_value_count(values : Hdf5WriteValues) -> Int32 {
     FixedStringValues(items, _) => items.length()
     VariableStringValues(items) => items.length()
     ObjectReferenceValues(items) => items.length()
+    Complex64Values(items) => items.length()
+    Complex128Values(items) => items.length()
     StructuredValues(_, items) => items.length()
   }
 }
@@ -568,6 +572,8 @@ fn writer_value_element_size(values : Hdf5WriteValues) -> Int32 {
     FixedStringValues(_, width) => width
     VariableStringValues(_) => 16
     ObjectReferenceValues(_) => 8
+    Complex64Values(_) => 8
+    Complex128Values(_) => 16
     StructuredValues(datatype, _) => datatype.size
   }
 }
@@ -588,6 +594,8 @@ fn copy_write_values(values : Hdf5WriteValues) -> Hdf5WriteValues {
     FixedStringValues(items, width) => FixedStringValues(items.copy(), width)
     VariableStringValues(items) => VariableStringValues(items.copy())
     ObjectReferenceValues(items) => ObjectReferenceValues(items.copy())
+    Complex64Values(items) => Complex64Values(items.copy())
+    Complex128Values(items) => Complex128Values(items.copy())
     StructuredValues(datatype, items) =>
       StructuredValues(
         copy_writer_datatype(datatype),
@@ -1139,6 +1147,8 @@ fn validate_write_values(
     Int64Values(items) => validate_writer_byte_size(items.length(), 8)
     UInt64Values(items) => validate_writer_byte_size(items.length(), 8)
     Float64Values(items) => validate_writer_byte_size(items.length(), 8)
+    Complex64Values(items) => validate_writer_byte_size(items.length(), 8)
+    Complex128Values(items) => validate_writer_byte_size(items.length(), 16)
     Int32Values(items) => validate_writer_byte_size(items.length(), 4)
     UInt32Values(items) => validate_writer_byte_size(items.length(), 4)
     Float32Values(items) => validate_writer_byte_size(items.length(), 4)
@@ -1528,6 +1538,8 @@ fn same_write_datatype(
       left_width == right_width
     (VariableStringValues(_), VariableStringValues(_)) => true
     (ObjectReferenceValues(_), ObjectReferenceValues(_)) => true
+    (Complex64Values(_), Complex64Values(_)) => true
+    (Complex128Values(_), Complex128Values(_)) => true
     (StructuredValues(left_type, _), StructuredValues(right_type, _)) =>
       encode_writer_datatype(left_type) == encode_writer_datatype(right_type)
     _ => false
@@ -2023,6 +2035,8 @@ fn default_write_fill(
     FixedStringValues(_, width) => FixedStringValues([""], width)
     VariableStringValues(_) => VariableStringValues([""])
     ObjectReferenceValues(_) => ObjectReferenceValues([None])
+    Complex64Values(_) => Complex64Values([(0.0, 0.0)])
+    Complex128Values(_) => Complex128Values([(0.0, 0.0)])
     StructuredValues(datatype, _) =>
       StructuredValues(datatype, [default_structured_value(datatype)])
   }
@@ -2094,6 +2108,10 @@ fn repeated_write_values(
       VariableStringValues(Array::make(count, items[0]))
     (ObjectReferenceValues(_), ObjectReferenceValues(items)) =>
       ObjectReferenceValues(Array::make(count, items[0]))
+    (Complex64Values(_), Complex64Values(items)) =>
+      Complex64Values(Array::make(count, items[0]))
+    (Complex128Values(_), Complex128Values(items)) =>
+      Complex128Values(Array::make(count, items[0]))
     (StructuredValues(datatype, _), StructuredValues(_, items)) =>
       StructuredValues(datatype, Array::make(count, items[0]))
     _ =>
@@ -2278,6 +2296,18 @@ fn overlay_write_values(
       )
     (ObjectReferenceValues(output), ObjectReferenceValues(items)) =>
       ObjectReferenceValues(
+        overlay_array(
+          output, items, source_dimensions, destination_dimensions, axis, offset,
+        ),
+      )
+    (Complex64Values(output), Complex64Values(items)) =>
+      Complex64Values(
+        overlay_array(
+          output, items, source_dimensions, destination_dimensions, axis, offset,
+        ),
+      )
+    (Complex128Values(output), Complex128Values(items)) =>
+      Complex128Values(
         overlay_array(
           output, items, source_dimensions, destination_dimensions, axis, offset,
         ),
@@ -2845,6 +2875,14 @@ fn writable_region_heap_index(
 }
 
 ///|
+fn encode_complex_datatype(size : Int32) -> Bytes raise Hdf5Error {
+  let component = Datatype::write_float(size)
+  encode_writer_datatype(
+    Datatype::write_compound([("r", component), ("i", component)]),
+  )
+}
+
+///|
 fn encode_write_values(
   values : Hdf5WriteValues,
   heap~ : WritableGlobalHeap = empty_writable_heap(),
@@ -2945,6 +2983,20 @@ fn encode_write_values(
         payload.write_uint64_le(address)
       }
       (encode_object_reference_datatype(), 8)
+    }
+    Complex64Values(items) => {
+      for (real, imaginary) in items {
+        payload.write_float_le(real)
+        payload.write_float_le(imaginary)
+      }
+      (encode_complex_datatype(4), 8)
+    }
+    Complex128Values(items) => {
+      for (real, imaginary) in items {
+        payload.write_double_le(real)
+        payload.write_double_le(imaginary)
+      }
+      (encode_complex_datatype(8), 16)
     }
     StructuredValues(datatype, items) => {
       for item in items {

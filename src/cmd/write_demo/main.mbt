@@ -237,6 +237,12 @@ fn run(args : Array[String]) -> Int32 {
         [@lib.SignedInteger(-5L)],
       ),
     )
+    writer.add_attribute(
+      "/types",
+      "complex_marker",
+      [],
+      Complex64Values([(-1.5, 2.5)]),
+    )
     writer.add_dataset("/types/i8", [3UL], Int8Values([-128, 0, 127]))
     writer.add_dataset("/types/i16", [3UL], Int16Values([-32768, 0, 32767]))
     writer.add_dataset(
@@ -252,6 +258,38 @@ fn run(args : Array[String]) -> Int32 {
       [3UL],
       Float32Values([Float(-1.5), Float(0.0), Float(2.25)]),
     )
+    writer.add_dataset(
+      "/types/complex64",
+      [2UL],
+      Complex64Values([(1.5, -2.25), (-3.0, 4.5)]),
+    )
+    writer.add_dataset(
+      "/types/complex128",
+      [2UL],
+      Complex128Values([(5.5, -6.25), (-7.0, 8.75)]),
+    )
+    writer.add_chunked_dataset(
+      "/types/chunked_complex64",
+      [4UL],
+      [2U],
+      Complex64Values([(1.0, 2.0), (3.0, 4.0), (5.0, 6.0), (7.0, 8.0)]),
+      fill_value=Complex64Values([(-1.0, -2.0)]),
+      filters=[Shuffle, Deflate(6)],
+    )
+    writer.add_extensible_dataset(
+      "/types/growing_complex128",
+      [0UL],
+      [None],
+      [2U],
+      Complex128Values([]),
+      fill_value=Complex128Values([(-1.0, -2.0)]),
+    )
+    writer.append_dataset(
+      "/types/growing_complex128",
+      [2UL],
+      Complex128Values([(9.0, 10.0), (11.0, 12.0)]),
+    )
+    writer.resize_dataset("/types/growing_complex128", [3UL])
     let big_i16 = @lib.Datatype::write_integer_with_order(true, 2, false)
     writer.add_dataset(
       "/types/big_i16",

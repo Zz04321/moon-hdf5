@@ -740,3 +740,20 @@ and the 2500-record collections. The demo adds `/metadata/ordered`, and its
 h5py/HDF5 1.14.6 verifier checks both flags, both insertion orders and every
 stored value. Dense indirect/huge heap blocks and a free-space manager remain
 outside the writer profile.
+
+## Complex-value writer review — 2026-10-29
+
+`Hdf5WriteValues::Complex64Values` and `Complex128Values` now write datasets and
+attributes using HDF5 1.14.6's canonical complex representation: a packed
+compound with little-endian floating-point members named `r` and `i`. The
+encoder uses the existing compound datatype path, so message sizes, alignment,
+chunking, fills and attribute storage share the same validation and code.
+Invalid complex widths cannot be constructed through these value variants.
+
+HDF5 1.14.6 and h5py 3.13.0 identify the encoded types as `complex64` and
+`complex128`, not merely as user compounds. Wasm tests check the emitted member
+names, offsets and values for datasets and attributes. The demo includes both
+widths plus a complex attribute, and the release verifier checks the NumPy
+dtypes (`<c8`, `<c16`), values and attribute type. Arbitrary complex layouts can
+still be expressed through structured compound APIs; HDF5 2.0's dedicated
+complex datatype class remains outside the 1.14.6 writer profile.

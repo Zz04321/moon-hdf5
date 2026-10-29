@@ -46,6 +46,73 @@ test "writer round-trips groups datasets and attributes" {
 }
 
 ///|
+test "writer encodes complex values as canonical real and imaginary compounds" {
+  let writer = Hdf5Writer::new()
+  writer.add_dataset(
+    "/complex64",
+    [2UL],
+    Complex64Values([(1.5, -2.25), (3.0, 4.5)]),
+  )
+  writer.add_dataset("/complex128", [1UL], Complex128Values([(-5.5, 6.25)]))
+  writer.add_attribute(
+    "/complex64",
+    "prototype",
+    [],
+    Complex128Values([(7.5, -8.25)]),
+  )
+
+  let file = Hdf5File::parse(writer.encode())
+  let complex64 = file.read_dataset("/complex64")
+  assert_eq(complex64.datatype.class, 6)
+  assert_eq(complex64.datatype.size, 8)
+  assert_eq(complex64.datatype.compound_members.map(field => field.name), [
+    "r", "i",
+  ])
+  assert_eq(complex64.datatype.compound_members.map(field => field.offset), [
+    0, 4,
+  ])
+  match complex64.values {
+    Structured(
+      [
+        Compound(
+          [
+            { name: "r", value: FloatingPoint(1.5), },
+            { name: "i", value: FloatingPoint(-2.25), },
+          ]
+        ),
+        Compound(
+          [
+            { name: "r", value: FloatingPoint(3.0), },
+            { name: "i", value: FloatingPoint(4.5), },
+          ]
+        ),
+      ]
+    ) => ()
+    _ => abort("expected complex64 values")
+  }
+  let complex128 = file.read_dataset("/complex128")
+  assert_eq(complex128.datatype.size, 16)
+  assert_eq(complex128.datatype.compound_members.map(field => field.offset), [
+    0, 8,
+  ])
+  match file.attributes("/complex64")[0].values {
+    Some(
+      Structured(
+        [
+          Compound(
+            [
+              { name: "r", value: FloatingPoint(7.5), },
+              { name: "i", value: FloatingPoint(-8.25), },
+            ]
+          ),
+        ]
+      )
+    ) => ()
+    _ => abort("expected complex attribute")
+  }
+}
+
+///|
 test "writer uses dense links and attributes above the compact threshold" {
   let writer = Hdf5Writer::new()
   writer.add_group("/dense")

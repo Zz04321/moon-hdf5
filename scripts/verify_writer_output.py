@@ -225,18 +225,38 @@ def verify_file(path: Path) -> None:
             "big_u64": (">u8", [0, 1 << 40, 0xFFFFFFFFFFFFFFFF]),
             "big_f32": (">f4", [-1.5, 0.0, 2.25]),
             "big_f64": (">f8", [-1.25, 0.0, 3.5]),
+            "complex64": ("<c8", [1.5 - 2.25j, -3.0 + 4.5j]),
+            "complex128": ("<c16", [5.5 - 6.25j, -7.0 + 8.75j]),
+            "chunked_complex64": (
+                "<c8",
+                [1 + 2j, 3 + 4j, 5 + 6j, 7 + 8j],
+            ),
+            "growing_complex128": (
+                "<c16",
+                [9 + 10j, 11 + 12j, -1 - 2j],
+            ),
         }
         for name, (dtype, values) in cases.items():
             dataset = handle[f"types/{name}"]
             assert dataset.dtype == np.dtype(dtype)
             np.testing.assert_array_equal(dataset[:], values)
         assert handle["types"].attrs["i8_marker"] == np.int8(-5)
-        assert len(handle["types"].attrs) == 3
+        assert len(handle["types"].attrs) == 4
         assert handle["types"].attrs["i8_marker"].dtype == np.dtype("<i1")
         assert handle["types"].attrs["f32_marker"] == np.float32(1.5)
         assert handle["types"].attrs["f32_marker"].dtype == np.dtype("<f4")
         assert handle["types"].attrs["big_i32_marker"] == np.int32(-5)
         assert handle["types"].attrs.get_id("big_i32_marker").dtype == np.dtype(">i4")
+        assert handle["types"].attrs["complex_marker"] == np.complex64(-1.5 + 2.5j)
+        assert handle["types"].attrs["complex_marker"].dtype == np.dtype("<c8")
+        chunked_complex = handle["types/chunked_complex64"]
+        assert chunked_complex.fillvalue == np.complex64(-1 - 2j)
+        assert chunked_complex.chunks == (2,)
+        assert chunked_complex.shuffle
+        assert chunked_complex.compression_opts == 6
+        growing_complex = handle["types/growing_complex128"]
+        assert growing_complex.maxshape == (None,)
+        assert growing_complex.fillvalue == np.complex128(-1 - 2j)
         big_state = handle["types/big_state"]
         assert big_state.dtype == np.dtype(">i2")
         assert big_state.dtype.metadata["enum"] == {"LOW": -1, "HIGH": 300}
