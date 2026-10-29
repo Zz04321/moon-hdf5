@@ -1382,6 +1382,79 @@ test "writer emits multi-chunk fills and filter pipelines" {
 }
 
 ///|
+test "writer writes per-chunk filter masks" {
+  let writer = Hdf5Writer::new()
+  writer.add_chunked_dataset(
+    "/finite",
+    [8UL],
+    [2U],
+    Int64Values([11L, 12L, 21L, 22L, 31L, 32L, 41L, 42L]),
+    filters=[Shuffle, Deflate(6)],
+  )
+  let masks : Array[UInt32] = [0U, 1U, 2U, 3U]
+  for index in 0..<4 {
+    writer.set_chunk_filter_mask("/finite", index, masks[index])
+  }
+  writer.add_extensible_dataset(
+    "/extensible",
+    [4UL, 2UL],
+    [None, Some(2UL)],
+    [1U, 2U],
+    Int64Values([1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L]),
+    filters=[Shuffle, Deflate(6)],
+  )
+  for index in 0..<4 {
+    writer.set_chunk_filter_mask("/extensible", index, masks[index])
+  }
+  let file = Hdf5File::parse(writer.encode())
+  assert_eq(integer_values(file.read_dataset("/finite")), [
+    11L, 12L, 21L, 22L, 31L, 32L, 41L, 42L,
+  ])
+  assert_eq(integer_values(file.read_dataset("/extensible")), [
+    1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L,
+  ])
+
+  let excessive = try {
+    writer.set_chunk_filter_mask("/finite", 0, 4U)
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    excessive,
+    Some(InvalidArgument("chunk filter mask exceeds the filter pipeline")),
+  )
+
+  let outside = try {
+    writer.set_chunk_filter_mask("/finite", 4, 0U)
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    outside,
+    Some(InvalidArgument("chunk index is outside the dataset grid")),
+  )
+
+  let unfiltered = try {
+    writer.add_chunked_dataset(
+      "/unfiltered",
+      [2UL],
+      [1U],
+      Int64Values([1L, 2L]),
+    )
+    writer.set_chunk_filter_mask("/unfiltered", 0, 0U)
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    unfiltered,
+    Some(InvalidArgument("dataset has no filters for a chunk mask")),
+  )
+}
+
+///|
 test "writer emits integer scale-offset chunks" {
   let writer = Hdf5Writer::new()
   writer.add_chunked_dataset(

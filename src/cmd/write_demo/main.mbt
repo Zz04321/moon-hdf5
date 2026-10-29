@@ -367,6 +367,21 @@ fn run(args : Array[String]) -> Int32 {
       ]),
       filters=[Shuffle, Deflate(6)],
     )
+    writer.add_chunked_dataset(
+      "/types/masked_chunks",
+      [8UL],
+      [2U],
+      Int64Values([11L, 12L, 21L, 22L, 31L, 32L, 41L, 42L]),
+      filters=[Shuffle, Deflate(6)],
+    )
+    let chunk_masks : Array[UInt32] = [0U, 1U, 2U, 3U]
+    for index in 0..<chunk_masks.length() {
+      writer.set_chunk_filter_mask(
+        "/types/masked_chunks",
+        index,
+        chunk_masks[index],
+      )
+    }
     let int_sequence = @lib.Datatype::write_vlen_sequence(
       @lib.Datatype::write_integer(true, 4),
     )

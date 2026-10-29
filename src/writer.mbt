@@ -296,6 +296,12 @@ priv enum WritableStorage {
 }
 
 ///|
+priv struct WritableChunkFilterMask {
+  chunk_index : Int32
+  filter_mask : UInt32
+}
+
+///|
 priv struct WritableDataset {
   path : String
   dimensions : Array[UInt64]
@@ -303,6 +309,7 @@ priv struct WritableDataset {
   values : Hdf5WriteValues
   storage : WritableStorage
   fill_value : Hdf5WriteValues?
+  chunk_filter_masks : Array[WritableChunkFilterMask]
 }
 
 ///|
@@ -365,6 +372,7 @@ priv struct EncodedChunkEntry {
   allocated : Bool
   data : Bytes
   address : UInt64
+  filter_mask : UInt32
 }
 
 ///|
@@ -1337,6 +1345,7 @@ pub fn Hdf5Writer::add_dataset(
     values: copy_write_values(values),
     storage: WritableContiguous,
     fill_value: None,
+    chunk_filter_masks: [],
   })
 }
 
@@ -1585,6 +1594,7 @@ pub fn Hdf5Writer::add_chunked_dataset(
     values: copy_write_values(values),
     storage: WritableChunked(chunk_dimensions.copy(), filters.copy()),
     fill_value: copied_fill,
+    chunk_filter_masks: [],
   })
 }
 
@@ -1597,6 +1607,85 @@ fn Hdf5Writer::writer_dataset_index(
   match self.datasets.search_by(dataset => dataset.path == normalized) {
     Some(index) => index
     None => raise InvalidArgument("writer dataset does not exist")
+  }
+}
+
+///|
+fn writer_dataset_chunk_grid(
+  dataset : WritableDataset,
+) -> (Array[UInt32], Array[Hdf5WriteFilter], Array[UInt64]) raise Hdf5Error {
+  match dataset.storage {
+    WritableChunked(dimensions, filters) =>
+      (dimensions, filters, dataset.dimensions.copy())
+    WritableExtensible(dimensions, filters, unlimited_axis) => {
+      let grid_dimensions = dataset.dimensions.copy()
+      for axis in 0..<grid_dimensions.length() {
+        if axis != unlimited_axis {
+          grid_dimensions[axis] = dataset.maximum_dimensions[axis]
+        }
+      }
+      (dimensions, filters, grid_dimensions)
+    }
+    WritableContiguous =>
+      raise InvalidArgument("dataset does not use chunked storage")
+  }
+}
+
+///|
+/// Sets the HDF5 filter mask for one chunk of an existing chunked dataset.
+///
+/// Bit `n` set means filter `n` in the dataset pipeline is skipped for that
+/// chunk. The mask is stored in the fixed-array or extensible-array chunk index.
+pub fn Hdf5Writer::set_chunk_filter_mask(
+  self : Hdf5Writer,
+  path : String,
+  chunk_index : Int32,
+  filter_mask : UInt32,
+) -> Unit raise Hdf5Error {
+  let index = self.writer_dataset_index(path)
+  let dataset = self.datasets[index]
+  let (chunk_dimensions, filters, grid_dimensions) = writer_dataset_chunk_grid(
+    dataset,
+  )
+  guard filters.length() > 0 else {
+    raise InvalidArgument("dataset has no filters for a chunk mask")
+  }
+  guard filters.length() == 32 || filter_mask >> filters.length() == 0U else {
+    raise InvalidArgument("chunk filter mask exceeds the filter pipeline")
+  }
+  let (_, chunk_count) = chunk_grid(grid_dimensions, chunk_dimensions)
+  guard chunk_index >= 0 && chunk_index < chunk_count else {
+    raise InvalidArgument("chunk index is outside the dataset grid")
+  }
+  let masks = dataset.chunk_filter_masks.copy()
+  if masks.search_by(entry => entry.chunk_index == chunk_index)
+    is Some(mask_index) {
+    masks[mask_index] = { chunk_index, filter_mask, }
+  } else {
+    masks.push({ chunk_index, filter_mask, })
+  }
+  self.datasets[index] = {
+    path: dataset.path,
+    dimensions: dataset.dimensions,
+    maximum_dimensions: dataset.maximum_dimensions,
+    values: dataset.values,
+    storage: dataset.storage,
+    fill_value: dataset.fill_value,
+    chunk_filter_masks: masks,
+  }
+}
+
+///|
+fn dataset_chunk_filter_mask(
+  dataset : WritableDataset,
+  chunk_index : Int32,
+) -> UInt32 {
+  match
+    dataset.chunk_filter_masks.search_by(entry => {
+      entry.chunk_index == chunk_index
+    }) {
+    Some(index) => dataset.chunk_filter_masks[index].filter_mask
+    None => 0U
   }
 }
 
@@ -1701,6 +1790,7 @@ pub fn Hdf5Writer::add_extensible_dataset(
       unlimited_axis,
     ),
     fill_value: copied_fill,
+    chunk_filter_masks: [],
   })
 }
 
@@ -1901,6 +1991,7 @@ pub fn Hdf5Writer::resize_dataset(
     values,
     storage: WritableExtensible(chunk_dimensions, filters, unlimited_axis),
     fill_value: dataset.fill_value,
+    chunk_filter_masks: dataset.chunk_filter_masks,
   }
 }
 
@@ -2086,6 +2177,7 @@ pub fn Hdf5Writer::append_dataset(
     ),
     storage: resized.storage,
     fill_value: resized.fill_value,
+    chunk_filter_masks: resized.chunk_filter_masks,
   }
 }
 
@@ -3402,13 +3494,17 @@ fn add_fletcher32(data : Bytes) -> Bytes {
 fn encode_chunk_filters(
   data : Bytes,
   filters : Array[Hdf5WriteFilter],
+  filter_mask : UInt32,
   element_size : Int32,
   values : Hdf5WriteValues,
   fill : Bytes,
 ) -> Bytes raise Hdf5Error {
   let mut output = data
-  for filter in filters {
-    output = match filter {
+  for index in 0..<filters.length() {
+    if (filter_mask & (1U << index)) != 0U {
+      continue
+    }
+    output = match filters[index] {
       Shuffle => shuffle_chunk(output, element_size)
       Deflate(level) => @zlib.zlib(output[:], level~)
       Fletcher32 => add_fletcher32(output)
@@ -3580,10 +3676,12 @@ fn encode_dataset_chunks(
   }
   let entries : Array[EncodedChunkEntry] = []
   for index in 0..<chunk_count {
+    let filter_mask = dataset_chunk_filter_mask(dataset, index)
     let data = if allocated[index] {
       encode_chunk_filters(
         chunk_buffers[index].unsafe_reinterpret_as_bytes(),
         filters,
+        filter_mask,
         encoded.element_size,
         dataset.values,
         fill,
@@ -3591,7 +3689,12 @@ fn encode_dataset_chunks(
     } else {
       b""
     }
-    entries.push({ allocated: allocated[index], data, address: 0UL, })
+    entries.push({
+      allocated: allocated[index],
+      data,
+      address: 0UL,
+      filter_mask,
+    })
   }
   entries
 }
@@ -3633,6 +3736,7 @@ fn encode_fixed_array_storage(
         allocated: true,
         data: entries[index].data,
         address: chunk_address.to_uint64(),
+        filter_mask: entries[index].filter_mask,
       }
       chunk_address = writer_align(chunk_address + entries[index].data.length())
     }
@@ -3688,7 +3792,7 @@ fn encode_fixed_array_storage(
           raise InvalidField("filtered writer chunk is too large")
         }
         page.write_uint16_le(entry.data.length().to_uint16())
-        page.write_uint_le(0U)
+        page.write_uint_le(entry.filter_mask)
       }
       entry_index = entry_index + 1
     }
@@ -3767,7 +3871,13 @@ fn writer_write_extensible_entry(
       raise InvalidField("filtered writer chunk is too large")
     }
     buffer.write_uint16_le(size.to_uint16())
-    buffer.write_uint_le(0U)
+    buffer.write_uint_le(
+      if allocated {
+        entries[index.to_int()].filter_mask
+      } else {
+        0U
+      },
+    )
   }
 }
 
@@ -3985,6 +4095,7 @@ fn encode_extensible_array_storage(
         allocated: true,
         data: entries[index].data,
         address: chunk_address.to_uint64(),
+        filter_mask: entries[index].filter_mask,
       }
       chunk_address = writer_align(chunk_address + entries[index].data.length())
     }
@@ -4036,7 +4147,13 @@ fn encode_extensible_array_storage(
         raise InvalidField("filtered writer chunk is too large")
       }
       index.write_uint16_le(size.to_uint16())
-      index.write_uint_le(0U)
+      index.write_uint_le(
+        if allocated {
+          entries[entry_index].filter_mask
+        } else {
+          0U
+        },
+      )
     }
   }
   for address in direct_addresses {

@@ -298,7 +298,10 @@ value fixes the width. For f32/f64 values, the parameter is the number of
 decimal digits retained by HDF5's DSCALE mode. Scale-offset accepts fixed-size
 numeric values, must be the first filter, and cannot be combined with Fletcher32
 for floating-point data. Custom fixed-size and variable-length string fills are
-supported; variable-length sequence fills are rejected.
+supported; variable-length sequence fills are rejected. Call
+`set_chunk_filter_mask(path, chunk_index, mask)` to skip pipeline entries for an
+individual chunk using HDF5's bit ordering. Chunk indices follow the dataset's
+finite or extensible chunk grid, and bits outside the pipeline are rejected.
 
 Run the complete writer example and verify its output independently with h5py:
 

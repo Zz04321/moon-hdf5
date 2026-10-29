@@ -677,3 +677,14 @@ mixing region objects with string or sequence objects caused a native crash in
 HDF5 1.14.6. Variable-length sequences whose base is or contains a region
 reference are rejected for the same reason. Version-4 encoded references and
 references to objects outside the same file remain outside the profile.
+
+## Per-chunk filter-mask review — 2026-10-29
+
+`Hdf5Writer::set_chunk_filter_mask` now records HDF5's bitwise skip mask for one
+finite or extensible chunk. Encoding skips the selected pipeline entries, and
+the mask is stored in both the fixed-array and extensible-array chunk-index
+forms. Pipeline-width, chunk-index and no-filter inputs are rejected before the
+builder changes. Wasm/native tests cover all four masks of a two-filter pipeline
+and both index types. The demo verifies the stored masks with h5py's
+`read_direct_chunk` under HDF5 1.14.6, which also confirms that the reference
+implementation decodes every skipped-filter combination.

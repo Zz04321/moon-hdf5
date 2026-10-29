@@ -273,7 +273,11 @@ Filter pipelines remain limited to fixed-size writer values because HDF5 1.14.6
 rejects them on variable-length datasets. Integer scale-offset supports
 automatic or fixed bit counts. Floating-point scale-offset supports f32/f64
 decimal digits. Scale-offset must precede shuffle, deflate and supported
-Fletcher32 combinations.
+Fletcher32 combinations. `set_chunk_filter_mask` selects filters to skip for one
+finite or extensible chunk. The mask is applied while encoding that chunk and
+stored in the fixed-array or extensible-array index, so the reader and HDF5
+apply the same inverse pipeline. Masks are validated against the pipeline width
+and chunk grid before the builder is mutated.
 Narrow integer constructors validate every value before truncating it to the
 encoded width. Structured values reuse the reader's recursive `Datatype` and
 `DatasetValue` model. The writer emits version-three compound, enum and array

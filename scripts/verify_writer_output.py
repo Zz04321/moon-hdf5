@@ -265,6 +265,14 @@ def verify(path: Path) -> None:
         ]
         assert opaque.compression == "gzip"
         assert opaque.shuffle
+        masked_chunks = handle["types/masked_chunks"]
+        np.testing.assert_array_equal(
+            masked_chunks[:], [11, 12, 21, 22, 31, 32, 41, 42]
+        )
+        assert [
+            masked_chunks.id.read_direct_chunk((offset,))[0]
+            for offset in (0, 2, 4, 6)
+        ] == [0, 1, 2, 3]
         sequences = handle["types/sequences"]
         assert sequences.dtype == h5py.vlen_dtype(np.dtype("<i4"))
         assert [item.tolist() for item in sequences[:]] == [
