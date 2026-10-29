@@ -29,7 +29,7 @@ evidence and are not part of the HDF5 1.14.6 v1.0 baseline.
 The following are outside the v1.0 profile: virtual datasets, external data
 storage beyond the resolver-only extension described below, SWMR, parallel
 HDF5, third-party filters, in-place editing, external-link dereferencing in
-`Hdf5File` itself, version-4 encoded references, region-reference writing,
+`Hdf5File` itself, version-4 encoded references,
 numeric storage wider than 8 bytes, binary-float normalizations other than
 implied MSB, MATLAB file semantics, and netCDF-4 data-model semantics beyond the
 structures exercised by the producer fixture. External-link dereferencing is
@@ -105,8 +105,9 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | Dataset layouts | Contiguous, paged fixed-array chunked and extensible-array chunked with inline, direct, super and paged data blocks | External and virtual dataset storage are absent |
 | Numeric values | Little- and big-endian int/uint1–8 and IEEE float32/64; standard widths and byte orders are checked by h5py and nonstandard integer widths by MoonBit round-trip | Nonstandard floating-point output is absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Other character encodings are absent |
-| Structured values | Packed compound, enum, fixed array, time, bitfield, opaque, legacy object-reference and variable-length sequence values, including mixed byte orders within compounds and big-endian enum bases | Complex output is absent; variable-length sequence bases must be fixed-size |
-| Object references | Legacy 8-byte object references stored in datasets, attributes, compounds, fixed arrays and variable-length sequences, including forward, group, self, root and null references, checked by path with h5py | Region references are not written |
+| Structured values | Packed compound, enum, fixed array, time, bitfield, opaque, legacy object-reference, legacy region-reference and variable-length sequence values, including mixed byte orders within compounds and big-endian enum bases | Complex output is absent; variable-length sequence bases must be fixed-size and cannot contain region references |
+| Object references | Legacy 8-byte object references stored in datasets, attributes, compounds, fixed arrays and variable-length sequences, including forward, group, self, root and null references, checked by path with h5py | References to objects outside the same file are absent |
+| Region references | Legacy 12-byte dataset-region references stored in datasets, attributes, compounds and fixed arrays, with null, empty, all, point, regular/irregular hyperslab and block selections; forward targets, filtered targets and dereferenced values checked with h5py/HDF5 1.14.6 | Region references inside variable-length sequences are rejected; version-4 encoded references are absent |
 | Filters | Shuffle, deflate, Fletcher32, integer scale-offset with automatic or fixed bits, and f32/f64 decimal scale-offset, in HDF5 pipeline order for fixed-size values | Other filters, per-chunk caller masks and variable-length filters are absent; scale-offset must lead the pipeline and floating-point scale-offset cannot use Fletcher32 |
 | Fill values | Default, custom fixed-size/structured fills and custom variable-length string fills using the shared global heap | Custom variable-length sequence fills are rejected |
 | Extensible datasets | One unlimited axis, in-memory resize and append | MoonBit does not modify an existing file in place |

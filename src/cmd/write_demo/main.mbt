@@ -18,6 +18,54 @@ fn run(args : Array[String]) -> Int32 {
       Int64Values([11L, 12L]),
     )
     writer.add_dataset(
+      "/experiment/region_target",
+      [6UL],
+      Int64Values([10L, 11L, 12L, 13L, 14L, 15L]),
+    )
+    let region_ref = @lib.Datatype::write_region_reference()
+    writer.add_dataset(
+      "/experiment/region_references",
+      [7UL],
+      StructuredValues(region_ref, [
+        @lib.RegionReference(
+          Some("/experiment/region_target"),
+          @lib.RegionPoints([[4UL], [0UL], [3UL]]),
+        ),
+        @lib.RegionReference(
+          Some("/experiment/region_target"),
+          @lib.RegionHyperslab([1UL], [1UL], [1UL], [2UL]),
+        ),
+        @lib.RegionReference(
+          Some("/experiment/region_target"),
+          @lib.RegionHyperslab([0UL], [3UL], [2UL], [2UL]),
+        ),
+        @lib.RegionReference(
+          Some("/experiment/region_target"),
+          @lib.RegionBlocks([
+            { start: [0UL], end: [1UL], },
+            { start: [4UL], end: [4UL], },
+          ]),
+        ),
+        @lib.RegionReference(Some("/experiment/region_target"), @lib.RegionAll),
+        @lib.RegionReference(
+          Some("/experiment/region_target"),
+          @lib.RegionEmpty,
+        ),
+        @lib.RegionReference(None, @lib.RegionEmpty),
+      ]),
+    )
+    writer.add_attribute(
+      "/experiment/region_target",
+      "window",
+      [],
+      StructuredValues(region_ref, [
+        @lib.RegionReference(
+          Some("/experiment/region_target"),
+          @lib.RegionHyperslab([2UL], [1UL], [1UL], [3UL]),
+        ),
+      ]),
+    )
+    writer.add_dataset(
       "/experiment/references",
       [4UL],
       ObjectReferenceValues([
@@ -565,6 +613,43 @@ fn run(args : Array[String]) -> Int32 {
         ]),
         @lib.Sequence([@lib.ObjectReference(None)]),
       ]),
+    )
+    let region_pair = @lib.Datatype::write_array(region_ref, [2UL])
+    let region_record_type = @lib.Datatype::write_compound([
+      ("label", @lib.Datatype::write_fixed_string(6)),
+      ("target", region_ref),
+      ("pair", region_pair),
+    ])
+    let region_record = @lib.Compound([
+      { name: "label", value: @lib.Text("window"), },
+      {
+        name: "target",
+        value: @lib.RegionReference(
+          Some("/experiment/region_target"),
+          @lib.RegionPoints([[2UL]]),
+        ),
+      },
+      {
+        name: "pair",
+        value: @lib.Elements([
+          @lib.RegionReference(
+            Some("/experiment/region_target"),
+            @lib.RegionHyperslab([1UL], [1UL], [1UL], [2UL]),
+          ),
+          @lib.RegionReference(None, @lib.RegionEmpty),
+        ]),
+      },
+    ])
+    writer.add_dataset(
+      "/structured/region_records",
+      [1UL],
+      StructuredValues(region_record_type, [region_record]),
+    )
+    writer.add_attribute(
+      "/structured/region_records",
+      "prototype",
+      [],
+      StructuredValues(region_record_type, [region_record]),
     )
     let vector_type = @lib.Datatype::write_array(
       @lib.Datatype::write_float(4),

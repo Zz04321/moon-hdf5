@@ -26,6 +26,8 @@ pub(all) enum DatasetValue {
   Elements(Array[DatasetValue])
   /// Writer input for a legacy object reference; readers return `Reference`.
   ObjectReference(String?)
+  /// Writer input for a legacy dataset-region reference.
+  RegionReference(String?, Hdf5RegionSelection)
   Reference(Bytes)
   Sequence(Array[DatasetValue])
   Time(UInt64)

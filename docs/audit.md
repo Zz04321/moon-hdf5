@@ -658,3 +658,22 @@ aborted with a double-free while h5py opened and read the trial datasets.
 Custom variable-length sequence fills therefore remain an explicit rejection,
 rather than a best-effort encoding that can trigger a native crash in the
 reference implementation.
+
+## Region-reference writer review — 2026-10-29
+
+The writer now accepts `RegionReference(path, selection)` values through
+`Datatype::write_region_reference()`. It emits the legacy 12-byte class-7
+datatype and a global-heap selection payload for null, empty, all, ordered
+point, regular/irregular hyperslab and block selections. Targets are resolved
+after object addresses are assigned, so forward references work. They must be
+same-file datasets; groups, missing targets and out-of-bounds selections are
+rejected before a file is returned.
+
+Wasm and native tests cover direct dataset values, compound members, fixed
+arrays, chunked storage, attributes and forward targets. The demo and h5py
+3.13.0/HDF5 1.14.6 verifier dereference every non-null case and confirm the
+null case. Region selections use their own global heap collection because
+mixing region objects with string or sequence objects caused a native crash in
+HDF5 1.14.6. Variable-length sequences whose base is or contains a region
+reference are rejected for the same reason. Version-4 encoded references and
+references to objects outside the same file remain outside the profile.

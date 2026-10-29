@@ -374,6 +374,322 @@ test "writer writes object references nested in structured values" {
 }
 
 ///|
+fn writer_region_integer_values(
+  file : Hdf5File,
+  reference : Bytes,
+) -> Array[Int64] raise Hdf5Error {
+  match file.read_region_reference(reference) {
+    Some(result) =>
+      match result.values {
+        Integers(values) => values
+        _ => abort("expected region reference integers")
+      }
+    None => abort("expected a non-null region reference")
+  }
+}
+
+///|
+test "writer round-trips region reference datasets" {
+  let writer = Hdf5Writer::new()
+  let region_ref = Datatype::write_region_reference()
+  writer.add_dataset(
+    "/region_refs",
+    [7UL],
+    StructuredValues(region_ref, [
+      RegionReference(None, RegionEmpty),
+      RegionReference(Some("/source"), RegionPoints([[4UL], [0UL], [3UL]])),
+      RegionReference(
+        Some("/source"),
+        RegionHyperslab([1UL], [1UL], [1UL], [2UL]),
+      ),
+      RegionReference(
+        Some("/source"),
+        RegionHyperslab([0UL], [3UL], [2UL], [2UL]),
+      ),
+      RegionReference(
+        Some("/source"),
+        RegionBlocks([
+          { start: [0UL], end: [1UL], },
+          { start: [4UL], end: [4UL], },
+        ]),
+      ),
+      RegionReference(Some("/source"), RegionAll),
+      RegionReference(
+        Some("/matrix"),
+        RegionHyperslab([0UL, 0UL], [2UL, 3UL], [2UL, 2UL], [2UL, 1UL]),
+      ),
+    ]),
+  )
+  writer.add_dataset("/source", [6UL], Int64Values([0L, 1L, 2L, 3L, 4L, 5L]))
+  writer.add_dataset(
+    "/matrix",
+    [6UL, 5UL],
+    Int64Values([
+      0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L, 13L, 14L, 15L, 16L,
+      17L, 18L, 19L, 20L, 21L, 22L, 23L, 24L, 25L, 26L, 27L, 28L, 29L,
+    ]),
+  )
+
+  let file = Hdf5File::parse(writer.encode())
+  let dataset = file.read_dataset("/region_refs")
+  assert_eq(dataset.datatype.class, 7)
+  assert_eq(dataset.datatype.reference_kind, 1)
+  assert_eq(dataset.datatype.size, 12)
+  let references = match dataset.values {
+    Structured(values) => values
+    _ => abort("expected structured region references")
+  }
+  assert_eq(references.length(), 7)
+  match references[0] {
+    Reference(bytes) =>
+      assert_true(file.resolve_region_reference(bytes) is None)
+    _ => abort("expected null region reference")
+  }
+  match references[1] {
+    Reference(bytes) => {
+      let target = match file.resolve_region_reference(bytes) {
+        Some(target) => target
+        None => abort("expected points region reference")
+      }
+      assert_eq(target.path, Some("/source"))
+      assert_eq(target.selection, RegionPoints([[4UL], [0UL], [3UL]]))
+      assert_eq(writer_region_integer_values(file, bytes), [4L, 0L, 3L])
+    }
+    _ => abort("expected points region reference bytes")
+  }
+  match references[2] {
+    Reference(bytes) =>
+      assert_eq(writer_region_integer_values(file, bytes), [1L, 2L])
+    _ => abort("expected slab region reference")
+  }
+  match references[3] {
+    Reference(bytes) =>
+      assert_eq(writer_region_integer_values(file, bytes), [0L, 1L, 3L, 4L])
+    _ => abort("expected regular region reference")
+  }
+  match references[4] {
+    Reference(bytes) =>
+      assert_eq(writer_region_integer_values(file, bytes), [0L, 1L, 4L])
+    _ => abort("expected block region reference")
+  }
+  match references[5] {
+    Reference(bytes) =>
+      assert_eq(writer_region_integer_values(file, bytes), [
+        0L, 1L, 2L, 3L, 4L, 5L,
+      ])
+    _ => abort("expected all region reference")
+  }
+  match references[6] {
+    Reference(bytes) =>
+      assert_eq(writer_region_integer_values(file, bytes), [
+        0L, 3L, 5L, 8L, 10L, 13L, 15L, 18L,
+      ])
+    _ => abort("expected matrix region reference")
+  }
+}
+
+///|
+test "writer writes region references nested in structured values" {
+  let writer = Hdf5Writer::new()
+  let region_ref = Datatype::write_region_reference()
+  let pair_type = Datatype::write_array(region_ref, [2UL])
+  let record_type = Datatype::write_compound([
+    ("label", Datatype::write_fixed_string(6)),
+    ("target", region_ref),
+    ("pair", pair_type),
+  ])
+  let record = Compound([
+    { name: "label", value: Text("first"), },
+    {
+      name: "target",
+      value: RegionReference(Some("/source"), RegionPoints([[2UL]])),
+    },
+    {
+      name: "pair",
+      value: Elements([
+        RegionReference(
+          Some("/source"),
+          RegionHyperslab([1UL], [1UL], [1UL], [2UL]),
+        ),
+        RegionReference(None, RegionEmpty),
+      ]),
+    },
+  ])
+  writer.add_dataset("/records", [1UL], StructuredValues(record_type, [record]))
+  writer.add_chunked_dataset(
+    "/chunked_regions",
+    [2UL],
+    [1U],
+    StructuredValues(region_ref, [
+      RegionReference(Some("/source"), RegionAll),
+      RegionReference(None, RegionEmpty),
+    ]),
+  )
+  writer.add_attribute(
+    "/records",
+    "prototype",
+    [],
+    StructuredValues(record_type, [record]),
+  )
+  writer.add_dataset("/source", [4UL], Int64Values([10L, 11L, 12L, 13L]))
+
+  let file = Hdf5File::parse(writer.encode())
+  let record_values = match file.read_dataset("/records").values {
+    Structured([Compound(fields)]) => fields
+    _ => abort("expected one region reference record")
+  }
+  match record_values[1].value {
+    Reference(bytes) =>
+      assert_eq(writer_region_integer_values(file, bytes), [12L])
+    _ => abort("expected compound region reference")
+  }
+  match record_values[2].value {
+    Elements([Reference(slab), Reference(null_ref)]) => {
+      assert_eq(writer_region_integer_values(file, slab), [11L, 12L])
+      assert_true(file.resolve_region_reference(null_ref) is None)
+    }
+    _ => abort("expected region reference array")
+  }
+  match file.read_dataset("/chunked_regions").values {
+    Structured([Reference(all_ref), Reference(null_ref)]) => {
+      assert_eq(writer_region_integer_values(file, all_ref), [
+        10L, 11L, 12L, 13L,
+      ])
+      assert_true(file.resolve_region_reference(null_ref) is None)
+    }
+    _ => abort("expected chunked region references")
+  }
+  let attributes = file.attributes("/records")
+  match attributes.search_by(attribute => attribute.name == "prototype") {
+    Some(index) =>
+      match attributes[index].values {
+        Some(Structured([Compound(fields)])) =>
+          match fields[1].value {
+            Reference(bytes) =>
+              assert_eq(writer_region_integer_values(file, bytes), [12L])
+            _ => abort("expected prototype region reference")
+          }
+        _ => abort("expected structured prototype attribute")
+      }
+    None => abort("expected prototype attribute")
+  }
+}
+
+///|
+test "writer validates region references" {
+  let wrong_kind = try {
+    let writer = Hdf5Writer::new()
+    writer.add_dataset(
+      "/refs",
+      [1UL],
+      StructuredValues(Datatype::write_region_reference(), [
+        ObjectReference(Some("/source")),
+      ]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    wrong_kind,
+    Some(InvalidArgument("region reference value has the wrong kind")),
+  )
+
+  let missing = try {
+    let writer = Hdf5Writer::new()
+    writer.add_dataset(
+      "/refs",
+      [1UL],
+      StructuredValues(Datatype::write_region_reference(), [
+        RegionReference(Some("/missing"), RegionAll),
+      ]),
+    )
+    writer.encode() |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    missing,
+    Some(InvalidArgument("region reference target does not exist: /missing")),
+  )
+
+  let group_target = try {
+    let writer = Hdf5Writer::new()
+    writer.add_group("/group")
+    writer.add_dataset(
+      "/refs",
+      [1UL],
+      StructuredValues(Datatype::write_region_reference(), [
+        RegionReference(Some("/group"), RegionAll),
+      ]),
+    )
+    writer.encode() |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    group_target,
+    Some(InvalidArgument("region reference target is not a dataset: /group")),
+  )
+
+  let out_of_bounds = try {
+    let writer = Hdf5Writer::new()
+    writer.add_dataset("/source", [2UL], Int64Values([1L, 2L]))
+    writer.add_dataset(
+      "/refs",
+      [1UL],
+      StructuredValues(Datatype::write_region_reference(), [
+        RegionReference(Some("/source"), RegionPoints([[2UL]])),
+      ]),
+    )
+    writer.encode() |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    out_of_bounds,
+    Some(InvalidField("region point is outside the dataset")),
+  )
+
+  let vlen_region = try {
+    Datatype::write_vlen_sequence(Datatype::write_region_reference()) |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    vlen_region,
+    Some(
+      InvalidArgument(
+        "writer variable-length sequence base cannot contain region references",
+      ),
+    ),
+  )
+
+  let nested_vlen_region = try {
+    let nested = Datatype::write_compound([
+      ("target", Datatype::write_region_reference()),
+      ("count", Datatype::write_integer(true, 4)),
+    ])
+    Datatype::write_vlen_sequence(nested) |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    nested_vlen_region,
+    Some(
+      InvalidArgument(
+        "writer variable-length sequence base cannot contain region references",
+      ),
+    ),
+  )
+}
+
+///|
 test "writer validates object reference paths and targets" {
   let relative = try {
     Hdf5Writer::new().add_dataset(

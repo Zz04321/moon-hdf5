@@ -249,18 +249,26 @@ dataspace rank and element counts, fixed-string widths and encoded link-message
 sizes before allocating output.
 Supported values are signed/unsigned integers stored in 1–8 bytes in either byte
 order, IEEE float32/64 in either byte order, fixed-width or variable-length
-UTF-8 strings, time, bitfield, opaque, legacy object references and
-variable-length sequence values. Object-reference values hold target paths and
-the null reference; addresses are resolved after the final object layout is
-known, so forward references are valid. `Datatype::write_object_reference`
-emits the class-7 legacy object-reference datatype, and `ObjectReference`
-values can be nested in compounds, fixed arrays and variable-length sequences
-as well as stored directly in datasets and attributes.
+UTF-8 strings, time, bitfield, opaque, legacy object references, legacy
+dataset-region references and variable-length sequence values. Object-reference
+values hold target paths and the null reference; addresses are resolved after
+the final object layout is known, so forward references are valid.
+`Datatype::write_object_reference` emits the class-7 object-reference datatype,
+and `ObjectReference` values can be nested in compounds, fixed arrays and
+variable-length sequences as well as stored directly in datasets and
+attributes. `Datatype::write_region_reference` emits the 12-byte class-7 region
+form. `RegionReference` values encode null, empty, all, point, regular or
+irregular hyperslab and block selections against same-file datasets, including
+forward targets and targets in filtered chunks. Region-reference records are
+kept in a separate global heap collection from strings and sequence payloads;
+mixing them can make HDF5 1.14.6 corrupt its heap bookkeeping.
 Variable strings and sequences use 16-byte descriptors and a shared global heap
 collection; empty values use the zero descriptor and repeated payloads share one
 heap object. Sequence bases must be fixed-size datatypes. Custom variable-length
 string fills use the same descriptor and heap collection; variable-length
-sequence fills remain unsupported.
+sequence fills remain unsupported. A variable-length sequence whose base is or
+contains a region reference is rejected, because HDF5 1.14.6 crashes while
+converting that otherwise encodable value.
 Filter pipelines remain limited to fixed-size writer values because HDF5 1.14.6
 rejects them on variable-length datasets. Integer scale-offset supports
 automatic or fixed bit counts. Floating-point scale-offset supports f32/f64

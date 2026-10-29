@@ -187,6 +187,11 @@ pub fn Datatype::write_vlen_sequence(
   guard !datatype_contains_vlen(base) else {
     raise InvalidArgument("writer variable-length sequence base is invalid")
   }
+  guard !datatype_contains_region_reference(base) else {
+    raise InvalidArgument(
+      "writer variable-length sequence base cannot contain region references",
+    )
+  }
   writer_datatype(9, 16, base_types=[base])
 }
 
@@ -203,6 +208,12 @@ pub fn Datatype::write_fixed_string(width : Int32) -> Datatype raise Hdf5Error {
 /// Creates a legacy object-reference datatype for structured writes.
 pub fn Datatype::write_object_reference() -> Datatype {
   writer_datatype(7, 8)
+}
+
+///|
+/// Creates a legacy dataset-region reference datatype.
+pub fn Datatype::write_region_reference() -> Datatype {
+  writer_datatype(7, 12, reference_kind=1)
 }
 
 ///|
@@ -339,6 +350,7 @@ priv struct WritableObject {
   kind : WritableObjectKind
   address : UInt64
   raw_address : UInt64
+  dataspace : Dataspace?
 }
 
 ///|
@@ -358,7 +370,9 @@ priv struct EncodedChunkEntry {
 ///|
 priv struct WritableGlobalHeap {
   address : UInt64
+  region_address : UInt64
   strings : Array[String]
+  regions : Array[Bytes]
   sequences : Array[Bytes]
 }
 
@@ -589,7 +603,28 @@ fn copy_dataset_value(value : DatasetValue) -> DatasetValue {
     Sequence(items) => Sequence(items.map(copy_dataset_value))
     Opaque(bytes) => Opaque(bytes)
     Reference(bytes) => Reference(bytes)
+    RegionReference(path, selection) =>
+      RegionReference(path, copy_region_selection(selection))
     _ => value
+  }
+}
+
+///|
+fn copy_region_selection(
+  selection : Hdf5RegionSelection,
+) -> Hdf5RegionSelection {
+  match selection {
+    RegionEmpty | RegionAll => selection
+    RegionPoints(points) => RegionPoints(points.map(point => point.copy()))
+    RegionHyperslab(start, stride, count, block) =>
+      RegionHyperslab(start.copy(), stride.copy(), count.copy(), block.copy())
+    RegionBlocks(blocks) =>
+      RegionBlocks(
+        blocks.map(block => {
+          start: block.start.copy(),
+          end: block.end.copy(),
+        }),
+      )
   }
 }
 
@@ -637,6 +672,24 @@ fn validate_writer_datatype_name(
       raise InvalidArgument(description + " contains NUL")
     }
   }
+}
+
+///|
+fn datatype_contains_region_reference(datatype : Datatype) -> Bool {
+  if datatype.class == 7 && datatype.reference_kind == 1 {
+    return true
+  }
+  for field in datatype.compound_members {
+    if datatype_contains_region_reference(field.datatype) {
+      return true
+    }
+  }
+  for base in datatype.base_types {
+    if datatype_contains_region_reference(base) {
+      return true
+    }
+  }
+  false
 }
 
 ///|
@@ -733,8 +786,9 @@ fn validate_writer_datatype(
       }
     }
     7 => {
-      guard datatype.size == 8 && datatype.reference_kind == 0 else {
-        raise InvalidArgument("writer object reference datatype is unsupported")
+      guard (datatype.reference_kind == 0 && datatype.size == 8) ||
+        (datatype.reference_kind == 1 && datatype.size == 12) else {
+        raise InvalidArgument("writer reference datatype is unsupported")
       }
     }
     8 => {
@@ -782,6 +836,11 @@ fn validate_writer_datatype(
       guard !datatype_contains_vlen(base) else {
         raise InvalidArgument(
           "writer variable-length sequence base must be fixed-size",
+        )
+      }
+      guard !datatype_contains_region_reference(base) else {
+        raise InvalidArgument(
+          "writer variable-length sequence base cannot contain region references",
         )
       }
       validate_writer_datatype(base, depth + 1)
@@ -905,15 +964,24 @@ fn validate_structured_value(
         )
       }
     }
-    7 => {
-      guard value is ObjectReference(path) else {
-        raise InvalidArgument("object reference value has the wrong kind")
+    7 =>
+      if datatype.reference_kind == 0 {
+        guard value is ObjectReference(path) else {
+          raise InvalidArgument("object reference value has the wrong kind")
+        }
+        match path {
+          Some(target) => canonical_writer_path(target) |> ignore
+          None => ()
+        }
+      } else {
+        guard value is RegionReference(path, _) else {
+          raise InvalidArgument("region reference value has the wrong kind")
+        }
+        match path {
+          Some(target) => canonical_writer_path(target) |> ignore
+          None => ()
+        }
       }
-      match path {
-        Some(target) => canonical_writer_path(target) |> ignore
-        None => ()
-      }
-    }
     8 => {
       guard value is Enumeration(name) else {
         raise InvalidArgument("enum value has the wrong kind")
@@ -1654,7 +1722,12 @@ fn default_structured_value(
           value: default_structured_value(field.datatype),
         }),
       )
-    7 => ObjectReference(None)
+    7 =>
+      if datatype.reference_kind == 1 {
+        RegionReference(None, RegionEmpty)
+      } else {
+        ObjectReference(None)
+      }
     8 => {
       let zero = datatype.enum_members.search_by(enum_item => {
         enum_item.value ==
@@ -2172,7 +2245,7 @@ fn encode_writer_datatype(datatype : Datatype) -> Bytes raise Hdf5Error {
       }
       buffer.to_bytes()
     }
-    7 => encode_object_reference_datatype()
+    7 => encode_reference_datatype(datatype.size, datatype.reference_kind)
     8 => {
       let buffer = @buffer.Buffer::Buffer()
       buffer.write_byte(b'\x38')
@@ -2321,15 +2394,34 @@ fn encode_structured_value(
         _ => ()
       }
     7 =>
-      match value {
-        ObjectReference(path) => {
-          let address = match path {
-            None => 0UL
-            Some(target) => writer_reference_address(objects, target)
+      if datatype.reference_kind == 0 {
+        match value {
+          ObjectReference(path) => {
+            let address = match path {
+              None => 0UL
+              Some(target) => writer_reference_address(objects, target)
+            }
+            buffer.write_uint64_le(address)
           }
-          buffer.write_uint64_le(address)
+          _ => ()
         }
-        _ => ()
+      } else {
+        match value {
+          RegionReference(path, selection) =>
+            match path {
+              None => writer_write_zeros(buffer, 12)
+              Some(target) => {
+                let payload = writer_region_reference_payload(
+                  objects, target, selection,
+                )
+                buffer.write_uint64_le(heap.region_address)
+                buffer.write_uint_le(
+                  writable_region_heap_index(heap, payload).reinterpret_as_uint(),
+                )
+              }
+            }
+          _ => ()
+        }
       }
     8 =>
       match value {
@@ -2424,18 +2516,29 @@ fn encode_variable_string_datatype() -> Bytes {
 
 ///|
 fn encode_object_reference_datatype() -> Bytes {
+  encode_reference_datatype(8, 0)
+}
+
+///|
+fn encode_reference_datatype(size : Int32, reference_kind : Int32) -> Bytes {
   let buffer = @buffer.Buffer::Buffer(size_hint=8)
   buffer.write_byte(b'\x17')
+  buffer.write_byte(reference_kind.to_byte())
   buffer.write_byte(b'\x00')
   buffer.write_byte(b'\x00')
-  buffer.write_byte(b'\x00')
-  buffer.write_uint_le(8U)
+  buffer.write_uint_le(size.reinterpret_as_uint())
   buffer.to_bytes()
 }
 
 ///|
 fn empty_writable_heap() -> WritableGlobalHeap {
-  { address: 0UL, strings: [], sequences: [], }
+  {
+    address: 0UL,
+    region_address: 0UL,
+    strings: [],
+    regions: [],
+    sequences: [],
+  }
 }
 
 ///|
@@ -2464,6 +2567,22 @@ fn writable_sequence_heap_index(
     None => {
       guard heap.address == 0UL else {
         raise InvalidField("variable sequence is missing from the global heap")
+      }
+      0
+    }
+  }
+}
+
+///|
+fn writable_region_heap_index(
+  heap : WritableGlobalHeap,
+  value : Bytes,
+) -> Int32 raise Hdf5Error {
+  match heap.regions.search_by(item => item == value) {
+    Some(index) => index + 1
+    None => {
+      guard heap.address == 0UL else {
+        raise InvalidField("region reference is missing from the global heap")
       }
       0
     }
@@ -4720,6 +4839,152 @@ fn writer_reference_address(
 }
 
 ///|
+fn region_selection_max_value(selection : Hdf5RegionSelection) -> UInt64 {
+  let mut maximum = 0UL
+  let observe = fn(value : UInt64) { if value > maximum { maximum = value } }
+  match selection {
+    RegionEmpty | RegionAll => ()
+    RegionPoints(points) => {
+      observe(points.length().to_uint64())
+      for point in points {
+        for coordinate in point {
+          observe(coordinate)
+        }
+      }
+    }
+    RegionHyperslab(start, stride, count, block) =>
+      for values in [start, stride, count, block] {
+        for value in values {
+          observe(value)
+        }
+      }
+    RegionBlocks(blocks) => {
+      observe(blocks.length().to_uint64())
+      for block in blocks {
+        for value in block.start {
+          observe(value)
+        }
+        for value in block.end {
+          observe(value)
+        }
+      }
+    }
+  }
+  maximum
+}
+
+///|
+fn region_selection_encoding_width(selection : Hdf5RegionSelection) -> Int32 {
+  let maximum = region_selection_max_value(selection)
+  if maximum <= 0xFFFFUL {
+    2
+  } else if maximum <= 0xFFFFFFFFUL {
+    4
+  } else {
+    8
+  }
+}
+
+///|
+fn encode_region_selection(
+  dataspace : Dataspace,
+  selection : Hdf5RegionSelection,
+) -> Bytes raise Hdf5Error {
+  validate_region_selection(dataspace, selection)
+  let rank = dataspace.dimensions.length()
+  let buffer = @buffer.Buffer::Buffer()
+  match selection {
+    RegionEmpty | RegionAll => {
+      buffer.write_uint_le(if selection is RegionAll { 3U } else { 0U })
+      buffer.write_uint_le(1U)
+      buffer.write_uint_le(0U)
+      buffer.write_uint_le(0U)
+    }
+    RegionPoints(points) => {
+      guard points.length() <= 0x7FFFFFFF else {
+        raise InvalidArgument("region reference contains too many points")
+      }
+      let width = region_selection_encoding_width(selection)
+      buffer.write_uint_le(1U)
+      buffer.write_uint_le(2U)
+      buffer.write_byte(width.to_byte())
+      buffer.write_uint_le(rank.reinterpret_as_uint())
+      write_uint_width(buffer, points.length().to_uint64(), width)
+      for point in points {
+        for coordinate in point {
+          write_uint_width(buffer, coordinate, width)
+        }
+      }
+    }
+    RegionHyperslab(start, stride, count, block) => {
+      let width = region_selection_encoding_width(selection)
+      buffer.write_uint_le(2U)
+      buffer.write_uint_le(3U)
+      buffer.write_byte(b'\x01')
+      buffer.write_byte(width.to_byte())
+      buffer.write_uint_le(rank.reinterpret_as_uint())
+      for axis in 0..<rank {
+        write_uint_width(buffer, start[axis], width)
+        write_uint_width(buffer, stride[axis], width)
+        write_uint_width(buffer, count[axis], width)
+        write_uint_width(buffer, block[axis], width)
+      }
+    }
+    RegionBlocks(blocks) => {
+      guard blocks.length() <= 0x7FFFFFFF else {
+        raise InvalidArgument("region reference contains too many blocks")
+      }
+      let width = region_selection_encoding_width(selection)
+      buffer.write_uint_le(2U)
+      buffer.write_uint_le(3U)
+      buffer.write_byte(b'\x00')
+      buffer.write_byte(width.to_byte())
+      buffer.write_uint_le(rank.reinterpret_as_uint())
+      write_uint_width(buffer, blocks.length().to_uint64(), width)
+      for block in blocks {
+        for axis in 0..<rank {
+          write_uint_width(buffer, block.start[axis], width)
+          write_uint_width(buffer, block.end[axis], width)
+        }
+      }
+    }
+  }
+  buffer.to_bytes()
+}
+
+///|
+fn writer_region_reference_payload(
+  objects : Array[WritableObject],
+  path : String,
+  selection : Hdf5RegionSelection,
+) -> Bytes raise Hdf5Error {
+  let canonical = canonical_writer_path(path)
+  let object = match objects.search_by(item => item.path == canonical) {
+    Some(index) => objects[index]
+    None =>
+      raise InvalidArgument(
+        "region reference target does not exist: " + canonical,
+      )
+  }
+  guard object.kind is WritableDatasetObject(_) else {
+    raise InvalidArgument(
+      "region reference target is not a dataset: " + canonical,
+    )
+  }
+  let dataspace = match object.dataspace {
+    Some(dataspace) => dataspace
+    None => raise InvalidField("writer dataset has no dataspace")
+  }
+  guard dataspace.kind != Null else {
+    raise InvalidArgument("region reference target has a null dataspace")
+  }
+  let buffer = @buffer.Buffer::Buffer()
+  buffer.write_uint64_le(object.address)
+  writer_write_bytes(buffer, encode_region_selection(dataspace, selection))
+  buffer.to_bytes()
+}
+
+///|
 fn Hdf5Writer::object_payload(
   self : Hdf5Writer,
   object : WritableObject,
@@ -4880,14 +5145,25 @@ fn initial_writable_objects(writer : Hdf5Writer) -> Array[WritableObject] {
       kind: WritableGroup,
       address: 0UL,
       raw_address: 0UL,
+      dataspace: None,
     })
   }
   for index in 0..<writer.datasets.length() {
+    let dataset = writer.datasets[index]
     objects.push({
-      path: writer.datasets[index].path,
+      path: dataset.path,
       kind: WritableDatasetObject(index),
       address: 0UL,
       raw_address: 0UL,
+      dataspace: Some({
+        kind: if dataset.dimensions.length() == 0 {
+          Scalar
+        } else {
+          Simple
+        },
+        dimensions: dataset.dimensions.copy(),
+        maximum_dimensions: dataset.maximum_dimensions.copy(),
+      }),
     })
   }
   objects
@@ -4917,7 +5193,8 @@ fn collect_heap_sequences(
   output : Array[Bytes],
   datatype : Datatype,
   value : DatasetValue,
-  objects : Array[WritableObject],
+  heap~ : WritableGlobalHeap,
+  objects~ : Array[WritableObject],
 ) -> Unit raise Hdf5Error {
   match datatype.class {
     6 =>
@@ -4928,7 +5205,8 @@ fn collect_heap_sequences(
               output,
               datatype.compound_members[index].datatype,
               fields[index].value,
-              objects,
+              heap~,
+              objects~,
             )
           }
         _ => ()
@@ -4942,7 +5220,7 @@ fn collect_heap_sequences(
             for item in items {
               writer_write_bytes(
                 encoded,
-                encode_structured_value(base, item, objects~),
+                encode_structured_value(base, item, heap~, objects~),
               )
             }
             let data = encoded.to_bytes()
@@ -4963,8 +5241,67 @@ fn collect_heap_sequences(
               output,
               datatype.base_types[0],
               item,
+              heap~,
+              objects~,
+            )
+          }
+        _ => ()
+      }
+    _ => ()
+  }
+}
+
+///|
+fn collect_heap_regions(
+  output : Array[Bytes],
+  datatype : Datatype,
+  value : DatasetValue,
+  objects : Array[WritableObject],
+) -> Unit raise Hdf5Error {
+  match datatype.class {
+    6 =>
+      match value {
+        Compound(fields) =>
+          for index in 0..<fields.length() {
+            collect_heap_regions(
+              output,
+              datatype.compound_members[index].datatype,
+              fields[index].value,
               objects,
             )
+          }
+        _ => ()
+      }
+    7 =>
+      if datatype.reference_kind == 1 {
+        match value {
+          RegionReference(Some(target), selection) => {
+            let payload = writer_region_reference_payload(
+              objects, target, selection,
+            )
+            if !output.contains(payload) {
+              guard output.length() < 65535 else {
+                raise InvalidField("writer global heap has too many objects")
+              }
+              output.push(payload)
+            }
+          }
+          _ => ()
+        }
+      }
+    9 =>
+      match value {
+        Sequence(items) =>
+          for item in items {
+            collect_heap_regions(output, datatype.base_types[0], item, objects)
+          }
+        _ => ()
+      }
+    10 =>
+      match value {
+        Elements(items) =>
+          for item in items {
+            collect_heap_regions(output, datatype.base_types[0], item, objects)
           }
         _ => ()
       }
@@ -4993,6 +5330,7 @@ fn Hdf5Writer::global_heap_strings(
 ///|
 fn Hdf5Writer::global_heap_sequences(
   self : Hdf5Writer,
+  heap~ : WritableGlobalHeap,
   objects~ : Array[WritableObject],
 ) -> Array[Bytes] raise Hdf5Error {
   let sequences : Array[Bytes] = []
@@ -5000,14 +5338,14 @@ fn Hdf5Writer::global_heap_sequences(
     match dataset.values {
       StructuredValues(datatype, items) =>
         for item in items {
-          collect_heap_sequences(sequences, datatype, item, objects)
+          collect_heap_sequences(sequences, datatype, item, heap~, objects~)
         }
       _ => ()
     }
     match dataset.fill_value {
       Some(StructuredValues(datatype, items)) =>
         for item in items {
-          collect_heap_sequences(sequences, datatype, item, objects)
+          collect_heap_sequences(sequences, datatype, item, heap~, objects~)
         }
       _ => ()
     }
@@ -5016,7 +5354,7 @@ fn Hdf5Writer::global_heap_sequences(
     match attribute.values {
       StructuredValues(datatype, items) =>
         for item in items {
-          collect_heap_sequences(sequences, datatype, item, objects)
+          collect_heap_sequences(sequences, datatype, item, heap~, objects~)
         }
       _ => ()
     }
@@ -5025,8 +5363,42 @@ fn Hdf5Writer::global_heap_sequences(
 }
 
 ///|
-fn encode_global_heap(heap : WritableGlobalHeap) -> Bytes raise Hdf5Error {
-  let object_count = heap.strings.length() + heap.sequences.length()
+fn Hdf5Writer::global_heap_regions(
+  self : Hdf5Writer,
+  objects~ : Array[WritableObject],
+) -> Array[Bytes] raise Hdf5Error {
+  let regions : Array[Bytes] = []
+  for dataset in self.datasets {
+    match dataset.values {
+      StructuredValues(datatype, items) =>
+        for item in items {
+          collect_heap_regions(regions, datatype, item, objects)
+        }
+      _ => ()
+    }
+    match dataset.fill_value {
+      Some(StructuredValues(datatype, items)) =>
+        for item in items {
+          collect_heap_regions(regions, datatype, item, objects)
+        }
+      _ => ()
+    }
+  }
+  for attribute in self.attributes {
+    match attribute.values {
+      StructuredValues(datatype, items) =>
+        for item in items {
+          collect_heap_regions(regions, datatype, item, objects)
+        }
+      _ => ()
+    }
+  }
+  regions
+}
+
+///|
+fn encode_heap_objects(objects : Array[Bytes]) -> Bytes raise Hdf5Error {
+  let object_count = objects.length()
   if object_count == 0 {
     return b""
   }
@@ -5034,18 +5406,12 @@ fn encode_global_heap(heap : WritableGlobalHeap) -> Bytes raise Hdf5Error {
     raise InvalidField("writer global heap has too many objects")
   }
   let mut used_size = 16
-  for item in heap.strings {
-    let length = @utf8.encode(item).length()
+  for item in objects {
+    let length = item.length()
     guard used_size <= 0x7FFFFFFF - 16 - round_up_to_eight(length) else {
       raise InvalidField("writer global heap is too large")
     }
     used_size = used_size + 16 + round_up_to_eight(length)
-  }
-  for item in heap.sequences {
-    guard used_size <= 0x7FFFFFFF - 16 - round_up_to_eight(item.length()) else {
-      raise InvalidField("writer global heap is too large")
-    }
-    used_size = used_size + 16 + round_up_to_eight(item.length())
   }
   let collection_size_64 = (used_size.to_int64() + 16L + 4095L) / 4096L * 4096L
   guard collection_size_64 <= 0x7FFFFFFFL else {
@@ -5058,20 +5424,7 @@ fn encode_global_heap(heap : WritableGlobalHeap) -> Bytes raise Hdf5Error {
   writer_write_zeros(buffer, 3)
   buffer.write_uint64_le(collection_size.to_uint64())
   let mut object_index = 0
-  for item in heap.strings {
-    let encoded = @utf8.encode(item)
-    object_index = object_index + 1
-    buffer.write_uint16_le(object_index.to_uint16())
-    buffer.write_uint16_le(0)
-    buffer.write_uint_le(0U)
-    buffer.write_uint64_le(encoded.length().to_uint64())
-    writer_write_bytes(buffer, encoded)
-    writer_write_zeros(
-      buffer,
-      round_up_to_eight(encoded.length()) - encoded.length(),
-    )
-  }
-  for item in heap.sequences {
+  for item in objects {
     object_index = object_index + 1
     buffer.write_uint16_le(object_index.to_uint16())
     buffer.write_uint16_le(0)
@@ -5086,6 +5439,23 @@ fn encode_global_heap(heap : WritableGlobalHeap) -> Bytes raise Hdf5Error {
   buffer.write_uint64_le((collection_size - used_size).to_uint64())
   writer_write_zeros(buffer, collection_size - buffer.length())
   buffer.to_bytes()
+}
+
+///|
+fn encode_global_heap(heap : WritableGlobalHeap) -> Bytes raise Hdf5Error {
+  let objects : Array[Bytes] = []
+  for item in heap.strings {
+    objects.push(@utf8.encode(item))
+  }
+  for item in heap.sequences {
+    objects.push(item)
+  }
+  encode_heap_objects(objects)
+}
+
+///|
+fn encode_region_heap(heap : WritableGlobalHeap) -> Bytes raise Hdf5Error {
+  encode_heap_objects(heap.regions)
 }
 
 ///|
@@ -5112,18 +5482,41 @@ fn assign_writable_addresses(
       kind: object.kind,
       address: offset.to_uint64(),
       raw_address: 0UL,
+      dataspace: object.dataspace,
     })
     offset = writer_align(offset + lengths[index])
   }
   let strings = writer.global_heap_strings()
-  let sequences = writer.global_heap_sequences(objects~)
-  let heap = {
-    address: if strings.length() == 0 && sequences.length() == 0 {
-      0UL
-    } else {
+  let regions = writer.global_heap_regions(objects~)
+  let region_address = if regions.length() > 0 {
+    offset.to_uint64()
+  } else {
+    0UL
+  }
+  if regions.length() > 0 {
+    offset = writer_align(offset + encode_heap_objects(regions).length())
+  }
+  let base_heap = {
+    address: if strings.length() > 0 {
       offset.to_uint64()
+    } else {
+      0UL
     },
+    region_address,
     strings,
+    regions,
+    sequences: [],
+  }
+  let sequences = writer.global_heap_sequences(heap=base_heap, objects~)
+  let heap = {
+    address: if base_heap.address == 0UL && sequences.length() > 0 {
+      offset.to_uint64()
+    } else {
+      base_heap.address
+    },
+    region_address,
+    strings,
+    regions,
     sequences,
   }
   if heap.strings.length() > 0 || heap.sequences.length() > 0 {
@@ -5179,6 +5572,7 @@ fn assign_writable_addresses(
             kind: objects[index].kind,
             address: objects[index].address,
             raw_address: offset.to_uint64(),
+            dataspace: objects[index].dataspace,
           }
           offset = match dataset.storage {
             WritableContiguous =>
@@ -5245,6 +5639,12 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
     )
     encoded_headers.push(header)
     eof = writer_align(object.address.to_int() + header.length())
+  }
+  let region_heap_payload = encode_region_heap(layout.heap)
+  if region_heap_payload.length() > 0 {
+    eof = writer_align(
+      layout.heap.region_address.to_int() + region_heap_payload.length(),
+    )
   }
   let heap_payload = encode_global_heap(layout.heap)
   if heap_payload.length() > 0 {
@@ -5313,6 +5713,13 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
       objects[index].address.to_int() - output.length(),
     )
     writer_write_bytes(output, encoded_headers[index])
+  }
+  if region_heap_payload.length() > 0 {
+    writer_write_zeros(
+      output,
+      layout.heap.region_address.to_int() - output.length(),
+    )
+    writer_write_bytes(output, region_heap_payload)
   }
   if heap_payload.length() > 0 {
     writer_write_zeros(output, layout.heap.address.to_int() - output.length())

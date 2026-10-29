@@ -28,6 +28,8 @@ def verify(path: Path) -> None:
             "paged_series",
             "reference_target",
             "references",
+            "region_references",
+            "region_target",
             "series",
             "string_fill",
         ]
@@ -42,6 +44,44 @@ def verify(path: Path) -> None:
         assert handle[references[3]].name == "/"
         self_ref = handle["experiment/reference_target"].attrs["self_ref"]
         assert handle[self_ref].name == "/experiment/reference_target"
+        region_refs = handle["experiment/region_references"][:]
+        assert region_refs.dtype == h5py.regionref_dtype
+        assert handle["experiment/region_references"].id.get_type().get_size() == 12
+        region_expected = [
+            ("Points", [14, 10, 13]),
+            ("Hyperslab", [11, 12]),
+            ("Hyperslab", [10, 11, 13, 14]),
+            ("Hyperslab", [10, 11, 14]),
+            ("All", [10, 11, 12, 13, 14, 15]),
+            ("None", []),
+            (None, None),
+        ]
+        selection_names = {
+            h5py.h5s.SEL_NONE: "None",
+            h5py.h5s.SEL_POINTS: "Points",
+            h5py.h5s.SEL_HYPERSLABS: "Hyperslab",
+            h5py.h5s.SEL_ALL: "All",
+        }
+        for reference, (selection_type, values) in zip(
+            region_refs, region_expected
+        ):
+            if selection_type is None:
+                assert not reference
+                continue
+            resolved = handle[reference]
+            assert resolved.name == "/experiment/region_target"
+            space = h5py.h5r.get_region(reference, handle.id)
+            assert selection_names[space.get_select_type()] == selection_type
+            np.testing.assert_array_equal(
+                np.asarray(resolved[reference]).reshape(-1), values
+            )
+        window = handle["experiment/region_target"].attrs["window"]
+        if isinstance(window, np.ndarray):
+            window = window[0]
+        assert handle[window].name == "/experiment/region_target"
+        np.testing.assert_array_equal(
+            np.asarray(handle[window][window]).reshape(-1), [12, 13, 14]
+        )
         latest = handle.get("experiment/latest", getlink=True)
         assert isinstance(latest, h5py.SoftLink)
         assert latest.path == "/experiment/counts"
@@ -395,6 +435,34 @@ def verify(path: Path) -> None:
             [handle[value].name if value else None for value in row]
             for row in reference_sequences
         ] == [["/experiment/reference_target", "/experiment"], [None]]
+        region_record = handle["structured/region_records"][0]
+        assert handle["structured/region_records"].dtype.names == (
+            "label",
+            "target",
+            "pair",
+        )
+        assert region_record["label"] == b"window"
+        assert handle[region_record["target"]].name == "/experiment/region_target"
+        np.testing.assert_array_equal(
+            np.asarray(
+                handle[region_record["target"]][region_record["target"]]
+            ).reshape(-1),
+            [12],
+        )
+        pair = region_record["pair"]
+        assert handle[pair[0]].name == "/experiment/region_target"
+        np.testing.assert_array_equal(
+            np.asarray(handle[pair[0]][pair[0]]).reshape(-1), [11, 12]
+        )
+        assert not pair[1]
+        region_prototype = handle["structured/region_records"].attrs["prototype"]
+        assert handle[region_prototype["target"]].name == "/experiment/region_target"
+        np.testing.assert_array_equal(
+            np.asarray(
+                handle[region_prototype["target"]][region_prototype["target"]]
+            ).reshape(-1),
+            [12],
+        )
         vectors = handle["structured/vectors"]
         assert vectors.dtype.subdtype == (np.dtype("<f4"), (2,))
         np.testing.assert_array_equal(vectors[:], [[1.5, -2.0], [3.25, 4.5]])

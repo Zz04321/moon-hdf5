@@ -265,10 +265,17 @@ to objects in the same file; `None` writes the null reference.
 `ObjectReference(Some(path))` or `ObjectReference(None)` supplies a value nested
 in a compound, fixed array or variable-length sequence. References may be stored
 in datasets or attributes, and their targets may be added later because paths
-are resolved when the file is encoded. `Datatype::write_integer`, `write_float`,
-`write_fixed_string`, `write_enum`, `write_array`, `write_compound`,
-`write_object_reference`, `write_time`, `write_bitfield`, `write_opaque` and
-`write_vlen_sequence` construct supported structured writer types. Use
+are resolved when the file is encoded. `Datatype::write_region_reference()`
+creates a 12-byte legacy dataset-region reference; `RegionReference(Some(path),
+selection)` accepts `RegionEmpty`, `RegionAll`, `RegionPoints`,
+`RegionHyperslab` and `RegionBlocks`, while `RegionReference(None, RegionEmpty)`
+writes the null reference. Region targets must be datasets in the same file and
+may be added after the reference. Region references can be stored directly or
+in compound fields, fixed arrays and attributes. `Datatype::write_integer`,
+`write_float`, `write_fixed_string`, `write_enum`, `write_array`,
+`write_compound`, `write_object_reference`, `write_region_reference`,
+`write_time`, `write_bitfield`, `write_opaque` and `write_vlen_sequence`
+construct supported structured writer types. Use
 `write_integer_with_order` and `write_float_with_order` when a
 structured value needs big-endian storage; the standard constructors remain
 little-endian. Variable-length sequences use a fixed-size base type, and empty,
@@ -339,13 +346,15 @@ preserve order and duplicates.
   `ScaleOffset(element_width * 8)` to store an integer chunk unfiltered. Writer
   floating-point data and fill values must be finite, and floating-point
   scale-offset cannot be combined with Fletcher32.
-- Custom variable-length sequence fills, other writer filters, region-reference
-  writing and complex-number writing are not supported. Variable-length
-  sequence bases must be fixed-size values.
+- Custom variable-length sequence fills, other writer filters and complex-number
+  writing are not supported. Variable-length sequence bases must be fixed-size;
+  a base that is or contains a region reference is rejected because HDF5 1.14.6
+  cannot safely consume that combination.
 - Reference resolution covers legacy object and dataset-region references under
   4- and 8-byte address widths. Region targets must be datasets in the same
-  file. Version-4 encoded references are not resolved, and region-reference
-  writing is not supported.
+  file. Version-4 encoded references are not resolved. Region-reference writing
+  covers the forms listed above; version-4 encoded references and region
+  references inside variable-length sequences are not written.
 - Variable-length writer datasets cannot use filters; HDF5 1.14.6 rejects this
   combination natively.
 
