@@ -207,6 +207,12 @@ pub fn EnumValue::equal(Self, Self) -> Bool
 pub fn EnumValue::not_equal(Self, Self) -> Bool
 pub fn EnumValue::to_repr(Self) -> @debug.Repr
 
+pub(all) struct Hdf5ExternalSlot {
+  file_name : String
+  file_offset : UInt64
+  data_size : UInt64
+}
+
 pub struct Hdf5File {
   // private fields
 }
@@ -338,6 +344,7 @@ pub fn Hdf5Writer::add_attribute(Self, String, String, Array[UInt64], Hdf5WriteV
 pub fn Hdf5Writer::add_chunked_dataset(Self, String, Array[UInt64], Array[UInt32], Hdf5WriteValues, fill_value? : Hdf5WriteValues, filters? : Array[Hdf5WriteFilter]) -> Unit raise Hdf5Error
 pub fn Hdf5Writer::add_dataset(Self, String, Array[UInt64], Hdf5WriteValues) -> Unit raise Hdf5Error
 pub fn Hdf5Writer::add_extensible_dataset(Self, String, Array[UInt64], Array[UInt64?], Array[UInt32], Hdf5WriteValues, fill_value? : Hdf5WriteValues, filters? : Array[Hdf5WriteFilter]) -> Unit raise Hdf5Error
+pub fn Hdf5Writer::add_external_dataset(Self, String, Array[UInt64], Hdf5WriteValues, Array[Hdf5ExternalSlot], fill_value? : Hdf5WriteValues) -> Unit raise Hdf5Error
 pub fn Hdf5Writer::add_external_link(Self, String, String, String, String) -> Unit raise Hdf5Error
 pub fn Hdf5Writer::add_group(Self, String) -> Unit raise Hdf5Error
 pub fn Hdf5Writer::add_soft_link(Self, String, String, String) -> Unit raise Hdf5Error

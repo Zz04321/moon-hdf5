@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -10,7 +11,45 @@ def filter_records(dataset):
     return [plist.get_filter(index) for index in range(plist.get_nfilters())]
 
 
+def external_slot_paths(path: Path) -> list[Path]:
+    return [
+        path.parent / "moon-hdf5-demo-external-0.bin",
+        path.parent / "moon-hdf5-demo-external-1.bin",
+    ]
+
+
+def write_external_slots(paths: list[Path]) -> None:
+    first = bytearray(12)
+    first[4:12] = np.asarray([10, 20], dtype="<i4").tobytes()
+    second = np.asarray([30, 40, 50, 60], dtype="<i4").tobytes()
+    paths[0].write_bytes(first)
+    paths[1].write_bytes(second)
+
+
 def verify(path: Path) -> None:
+    path = path.resolve()
+    external_paths = external_slot_paths(path)
+    originals = {
+        external_path: (
+            external_path.read_bytes() if external_path.exists() else None
+        )
+        for external_path in external_paths
+    }
+    write_external_slots(external_paths)
+    previous = Path.cwd()
+    os.chdir(path.parent)
+    try:
+        verify_file(path)
+    finally:
+        os.chdir(previous)
+        for external_path, original in originals.items():
+            if original is None:
+                external_path.unlink(missing_ok=True)
+            else:
+                external_path.write_bytes(original)
+
+
+def verify_file(path: Path) -> None:
     with h5py.File(path, "r") as handle:
         assert list(handle) == ["experiment", "metadata", "structured", "types"]
         assert sorted(handle["experiment"]) == [
@@ -20,6 +59,7 @@ def verify(path: Path) -> None:
             "counts",
             "events",
             "external",
+            "external_raw",
             "fill_names",
             "labels",
             "latest",
@@ -92,6 +132,18 @@ def verify(path: Path) -> None:
         assert isinstance(external, h5py.ExternalLink)
         assert external.filename == "external-target.h5"
         assert external.path == "/experiment/counts"
+        external_raw = handle["experiment/external_raw"]
+        assert external_raw.external == [
+            ("moon-hdf5-demo-external-0.bin", 4, 8),
+            ("moon-hdf5-demo-external-1.bin", 0, 16),
+        ]
+        assert external_raw.chunks is None
+        assert external_raw.id.get_create_plist().get_layout() == h5py.h5d.CONTIGUOUS
+        np.testing.assert_array_equal(
+            external_raw[:], [10, 20, 30, 40, 50, 60]
+        )
+        assert external_raw.dtype == np.dtype("<i4")
+        np.testing.assert_array_equal(external_raw[2:5], [30, 40, 50])
         assert handle["experiment/labels"].asstr()[:].tolist() == [
             "control",
             "sample",

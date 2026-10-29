@@ -293,6 +293,15 @@ priv enum WritableStorage {
   WritableContiguous
   WritableChunked(Array[UInt32], Array[Hdf5WriteFilter])
   WritableExtensible(Array[UInt32], Array[Hdf5WriteFilter], Int32)
+  WritableExternal(Array[Hdf5ExternalSlot])
+}
+
+///|
+/// One external raw-data slot stored outside the HDF5 file.
+pub(all) struct Hdf5ExternalSlot {
+  file_name : String
+  file_offset : UInt64
+  data_size : UInt64
 }
 
 ///|
@@ -399,6 +408,12 @@ priv struct WritableDenseMetadata {
 }
 
 ///|
+priv struct WritableExternalHeap {
+  path : String
+  address : UInt64
+}
+
+///|
 priv struct WritableDenseHeapEntry {
   name : String
   hash : UInt32
@@ -410,6 +425,7 @@ priv struct WritableLayout {
   objects : Array[WritableObject]
   heap : WritableGlobalHeap
   dense : Array[WritableDenseMetadata]
+  external : Array[WritableExternalHeap]
 }
 
 ///|
@@ -1350,6 +1366,86 @@ pub fn Hdf5Writer::add_dataset(
 }
 
 ///|
+fn validate_external_slots(
+  slots : Array[Hdf5ExternalSlot],
+  expected_size : UInt64,
+) -> Unit raise Hdf5Error {
+  guard slots.length() > 0 && slots.length() <= 65535 else {
+    raise InvalidArgument("external dataset requires 1 to 65535 slots")
+  }
+  let mut total = 0UL
+  for slot in slots {
+    let encoded = @utf8.encode(slot.file_name)
+    guard encoded.length() > 0 && encoded.length() <= 65535 else {
+      raise InvalidArgument("external data file name is empty or too long")
+    }
+    for byte in encoded {
+      guard byte != b'\x00' else {
+        raise InvalidArgument("external data file name cannot contain NUL")
+      }
+    }
+    guard slot.data_size > 0UL else {
+      raise InvalidArgument("external data slot is empty")
+    }
+    guard slot.file_offset <= 0xFFFFFFFFFFFFFFFFUL - slot.data_size else {
+      raise InvalidArgument("external data file offset is too large")
+    }
+    guard total <= 0xFFFFFFFFFFFFFFFFUL - slot.data_size else {
+      raise InvalidArgument("external data size is too large")
+    }
+    total = total + slot.data_size
+  }
+  guard total == expected_size else {
+    raise InvalidArgument("external data slots do not match the dataset size")
+  }
+}
+
+///|
+/// Adds an unfiltered dataset whose raw bytes live in external files.
+///
+/// Slots are concatenated in caller order to form the row-major element
+/// stream. Their sizes must add up exactly to the dataset byte size.
+pub fn Hdf5Writer::add_external_dataset(
+  self : Hdf5Writer,
+  path : String,
+  dimensions : Array[UInt64],
+  values : Hdf5WriteValues,
+  slots : Array[Hdf5ExternalSlot],
+  fill_value? : Hdf5WriteValues,
+) -> Unit raise Hdf5Error {
+  let normalized = canonical_writer_path(path)
+  guard normalized != "/" else {
+    raise InvalidArgument("a dataset cannot replace the root group")
+  }
+  guard !self.has_entry(normalized) else {
+    raise InvalidArgument("writer object path already exists")
+  }
+  validate_write_values(dimensions, values)
+  guard !writer_values_contain_vlen(values) else {
+    raise UnsupportedFeature(
+      "external storage cannot hold variable-length values",
+    )
+  }
+  let expected_size = writer_shape_count(dimensions).to_int64() *
+    writer_value_element_size(values).to_int64()
+  guard expected_size >= 0 else {
+    raise InvalidArgument("external dataset size is too large")
+  }
+  validate_external_slots(slots, expected_size.reinterpret_as_uint64())
+  let copied_fill = validated_write_fill(values, fill_value)
+  self.ensure_groups(writer_parent_path(normalized))
+  self.datasets.push({
+    path: normalized,
+    dimensions: dimensions.copy(),
+    maximum_dimensions: dimensions.copy(),
+    values: copy_write_values(values),
+    storage: WritableExternal(slots.copy()),
+    fill_value: copied_fill,
+    chunk_filter_masks: [],
+  })
+}
+
+///|
 fn same_write_datatype(
   left : Hdf5WriteValues,
   right : Hdf5WriteValues,
@@ -1626,7 +1722,7 @@ fn writer_dataset_chunk_grid(
       }
       (dimensions, filters, grid_dimensions)
     }
-    WritableContiguous =>
+    WritableContiguous | WritableExternal(_) =>
       raise InvalidArgument("dataset does not use chunked storage")
   }
 }
@@ -2837,6 +2933,100 @@ fn encode_contiguous_layout(address : UInt64, size : Int32) -> Bytes {
 }
 
 ///|
+fn encode_external_data_layout(size : UInt64) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=18)
+  buffer.write_byte(b'\x03')
+  buffer.write_byte(b'\x01')
+  buffer.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
+  buffer.write_uint64_le(size)
+  buffer.to_bytes()
+}
+
+///|
+fn external_slot_total(slots : Array[Hdf5ExternalSlot]) -> UInt64 {
+  let mut total = 0UL
+  for slot in slots {
+    total = total + slot.data_size
+  }
+  total
+}
+
+///|
+fn external_name_offsets(
+  slots : Array[Hdf5ExternalSlot],
+) -> (Array[UInt64], Int32) raise Hdf5Error {
+  let names : Array[String] = []
+  let offsets : Array[UInt64] = []
+  let mut data_size = 8
+  for slot in slots {
+    match names.search_by(name => name == slot.file_name) {
+      Some(index) => offsets.push(offsets[index])
+      None => {
+        let encoded = @utf8.encode(slot.file_name)
+        guard encoded.length() < 0x7FFFFFFF - data_size else {
+          raise InvalidArgument("external data file names are too long")
+        }
+        names.push(slot.file_name)
+        offsets.push(data_size.to_uint64())
+        data_size = data_size + encoded.length() + 1
+      }
+    }
+  }
+  (offsets, writer_align(data_size))
+}
+
+///|
+fn encode_external_local_heap(
+  slots : Array[Hdf5ExternalSlot],
+  address : UInt64,
+) -> Bytes raise Hdf5Error {
+  let (_, data_size) = external_name_offsets(slots)
+  let data = FixedArray::make(data_size, b'\x00')
+  let names : Array[String] = []
+  let mut cursor = 8
+  for slot in slots {
+    if names.search_by(name => name == slot.file_name) is None {
+      let encoded = @utf8.encode(slot.file_name)
+      data.blit_from_bytes(cursor, encoded, 0, encoded.length())
+      cursor = cursor + encoded.length() + 1
+      names.push(slot.file_name)
+    }
+  }
+  let buffer = @buffer.Buffer::Buffer(size_hint=32 + data_size)
+  writer_write_bytes(buffer, b"HEAP")
+  buffer.write_byte(b'\x00')
+  writer_write_zeros(buffer, 3)
+  buffer.write_uint64_le(data_size.to_uint64())
+  buffer.write_uint64_le(1UL)
+  buffer.write_uint64_le(address + 32UL)
+  writer_write_bytes(buffer, data.unsafe_reinterpret_as_bytes())
+  buffer.to_bytes()
+}
+
+///|
+fn encode_external_data_message(
+  slots : Array[Hdf5ExternalSlot],
+  heap_address : UInt64,
+) -> Bytes raise Hdf5Error {
+  let (offsets, _) = external_name_offsets(slots)
+  guard slots.length() <= 65535 else {
+    raise InvalidArgument("external dataset requires at most 65535 slots")
+  }
+  let buffer = @buffer.Buffer::Buffer()
+  buffer.write_byte(b'\x01')
+  writer_write_zeros(buffer, 3)
+  buffer.write_uint16_le(slots.length().to_uint16())
+  buffer.write_uint16_le(slots.length().to_uint16())
+  buffer.write_uint64_le(heap_address)
+  for index in 0..<slots.length() {
+    buffer.write_uint64_le(offsets[index])
+    buffer.write_uint64_le(slots[index].file_offset)
+    buffer.write_uint64_le(slots[index].data_size)
+  }
+  buffer.to_bytes()
+}
+
+///|
 fn encode_chunked_layout(
   address : UInt64,
   chunk_dimensions : Array[UInt32],
@@ -3598,7 +3788,8 @@ fn encode_dataset_chunks(
       }
       (dimensions, filters, order, grid_dimensions)
     }
-    WritableContiguous => raise InvalidField("expected chunked writer dataset")
+    WritableContiguous | WritableExternal(_) =>
+      raise InvalidField("expected chunked writer dataset")
   }
   let encoded = encode_write_values(dataset.values, heap~, objects~)
   let fill = match dataset.fill_value {
@@ -3709,7 +3900,8 @@ fn encode_fixed_array_storage(
   let (_, filters) = match dataset.storage {
     WritableChunked(dimensions, filters) => (dimensions, filters)
     WritableExtensible(dimensions, filters, _) => (dimensions, filters)
-    WritableContiguous => raise InvalidField("expected chunked writer dataset")
+    WritableContiguous | WritableExternal(_) =>
+      raise InvalidField("expected chunked writer dataset")
   }
   let entries = encode_dataset_chunks(dataset, heap, objects)
   let filtered = filters.length() > 0
@@ -4759,6 +4951,17 @@ fn writer_dense_addresses(
 }
 
 ///|
+fn writer_external_heap_address(
+  external : Array[WritableExternalHeap],
+  path : String,
+) -> UInt64 {
+  match external.search_by(heap => heap.path == path) {
+    Some(index) => external[index].address
+    None => 0xFFFFFFFFFFFFFFFFUL
+  }
+}
+
+///|
 fn write_header_message(
   buffer : @buffer.Buffer,
   message_type : Int32,
@@ -5108,6 +5311,8 @@ fn Hdf5Writer::object_payload(
   objects : Array[WritableObject],
   heap : WritableGlobalHeap,
   dense : Array[WritableDenseMetadata],
+  external : Array[WritableExternalHeap],
+  external_addresses_final : Bool,
 ) -> Bytes raise Hdf5Error {
   let buffer = @buffer.Buffer::Buffer()
   match object.kind {
@@ -5171,6 +5376,27 @@ fn Hdf5Writer::object_payload(
             buffer,
             msg_data_layout,
             encode_contiguous_layout(address, encoded.payload.length()),
+          )
+        }
+        WritableExternal(slots) => {
+          let heap_address = if external_addresses_final {
+            let address = writer_external_heap_address(external, object.path)
+            guard address != 0xFFFFFFFFFFFFFFFFUL else {
+              raise InvalidField("external data heap was not assigned")
+            }
+            address
+          } else {
+            0UL
+          }
+          write_header_message(
+            buffer,
+            msg_external_data_files,
+            encode_external_data_message(slots, heap_address),
+          )
+          write_header_message(
+            buffer,
+            msg_data_layout,
+            encode_external_data_layout(external_slot_total(slots)),
           )
         }
         WritableChunked(chunk_dimensions, filters) => {
@@ -5585,7 +5811,7 @@ fn assign_writable_addresses(
   for object in templates {
     lengths.push(
       encode_object_header(
-        writer.object_payload(object, templates, empty_heap, []),
+        writer.object_payload(object, templates, empty_heap, [], [], false),
         0UL,
       ).length(),
     )
@@ -5673,6 +5899,25 @@ fn assign_writable_addresses(
       }
     }
   }
+  let external : Array[WritableExternalHeap] = []
+  for object in objects {
+    match object.kind {
+      WritableDatasetObject(dataset_index) => {
+        let dataset = writer.datasets[dataset_index]
+        match dataset.storage {
+          WritableExternal(slots) => {
+            let address = offset.to_uint64()
+            external.push({ path: object.path, address, })
+            offset = writer_align(
+              offset + encode_external_local_heap(slots, address).length(),
+            )
+          }
+          _ => ()
+        }
+      }
+      WritableGroup => ()
+    }
+  }
   for index in 0..<objects.length() {
     match objects[index].kind {
       WritableDatasetObject(dataset_index) => {
@@ -5682,6 +5927,7 @@ fn assign_writable_addresses(
             encode_write_values(dataset.values, objects~).payload.length() > 0
           WritableChunked(_, _) => true
           WritableExtensible(_, _, _) => true
+          WritableExternal(_) => false
         }
         if has_storage {
           objects[index] = {
@@ -5717,13 +5963,14 @@ fn assign_writable_addresses(
                   objects,
                 ).length(),
               )
+            WritableExternal(_) => offset
           }
         }
       }
       WritableGroup => ()
     }
   }
-  { objects, heap, dense, }
+  { objects, heap, dense, external, }
 }
 
 ///|
@@ -5751,7 +5998,14 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
   let mut eof = 48
   for object in objects {
     let header = encode_object_header(
-      self.object_payload(object, objects, layout.heap, layout.dense),
+      self.object_payload(
+        object,
+        objects,
+        layout.heap,
+        layout.dense,
+        layout.external,
+        true,
+      ),
       object.address,
     )
     encoded_headers.push(header)
@@ -5785,6 +6039,17 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
     dense_payloads.push((metadata.index_address, index_bytes))
     eof = writer_align(metadata.index_address.to_int() + index_bytes.length())
   }
+  let external_payloads : Array[(UInt64, Bytes)] = []
+  for metadata in layout.external {
+    let dataset = self.datasets[self.writer_dataset_index(metadata.path)]
+    let slots = match dataset.storage {
+      WritableExternal(slots) => slots
+      _ => raise InvalidField("external data heap has the wrong dataset kind")
+    }
+    let payload = encode_external_local_heap(slots, metadata.address)
+    external_payloads.push((metadata.address, payload))
+    eof = writer_align(metadata.address.to_int() + payload.length())
+  }
   let raw_payloads : Array[(UInt64, Bytes)] = []
   for object in objects {
     match object.kind {
@@ -5807,6 +6072,7 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
               layout.heap,
               objects,
             )
+          WritableExternal(_) => b""
         }
         if payload.length() > 0 {
           raw_payloads.push((object.raw_address, payload))
@@ -5843,6 +6109,10 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
     writer_write_bytes(output, heap_payload)
   }
   for (address, payload) in dense_payloads {
+    writer_write_zeros(output, address.to_int() - output.length())
+    writer_write_bytes(output, payload)
+  }
+  for (address, payload) in external_payloads {
     writer_write_zeros(output, address.to_int() - output.length())
     writer_write_bytes(output, payload)
   }

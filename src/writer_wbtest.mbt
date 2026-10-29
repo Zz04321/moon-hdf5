@@ -963,6 +963,125 @@ test "writer round-trips external links" {
 }
 
 ///|
+test "writer emits external raw-data slots" {
+  let writer = Hdf5Writer::new()
+  writer.add_external_dataset(
+    "/external",
+    [6UL],
+    Int32Values([10, 20, 30, 40, 50, 60]),
+    [
+      { file_name: "external_0.bin", file_offset: 4UL, data_size: 8UL, },
+      { file_name: "external_1.bin", file_offset: 0UL, data_size: 16UL, },
+    ],
+  )
+  let bytes = writer.encode()
+  let direct = Hdf5File::parse(bytes)
+  let direct_error = try {
+    direct.read_dataset("/external") |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    direct_error,
+    Some(UnsupportedFeature("external dataset storage requires Hdf5Resolver")),
+  )
+
+  let first = @buffer.Buffer::Buffer(size_hint=12)
+  writer_write_zeros(first, 4)
+  first.write_uint_le(10U)
+  first.write_uint_le(20U)
+  let second = @buffer.Buffer::Buffer(size_hint=16)
+  for value in [30U, 40U, 50U, 60U] {
+    second.write_uint_le(value)
+  }
+  let resolver = Hdf5Resolver::new(bytes)
+  resolver.add_source("external_0.bin", first.to_bytes())
+  resolver.add_source("external_1.bin", second.to_bytes())
+  let dataset = resolver.read_dataset("/external")
+  assert_eq(dataset.layout.kind(), Contiguous)
+  assert_eq(integer_values(dataset), [10L, 20L, 30L, 40L, 50L, 60L])
+  let selected = resolver.read_dataset_selection(
+    "/external",
+    Points([[5UL], [1UL], [3UL]]),
+  )
+  match selected.values {
+    Integers(values) => assert_eq(values, [60L, 20L, 40L])
+    _ => abort("expected external integer selection")
+  }
+}
+
+///|
+test "writer validates external raw-data slots" {
+  let mismatch = try {
+    Hdf5Writer::new().add_external_dataset(
+      "/external",
+      [2UL],
+      Int32Values([1, 2]),
+      [{ file_name: "data.bin", file_offset: 0UL, data_size: 4UL, }],
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    mismatch,
+    Some(InvalidArgument("external data slots do not match the dataset size")),
+  )
+
+  let empty = try {
+    Hdf5Writer::new().add_external_dataset(
+      "/external",
+      [2UL],
+      Int32Values([1, 2]),
+      [{ file_name: "data.bin", file_offset: 0UL, data_size: 0UL, }],
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(empty, Some(InvalidArgument("external data slot is empty")))
+
+  let nul_name = try {
+    Hdf5Writer::new().add_external_dataset(
+      "/external",
+      [2UL],
+      Int32Values([1, 2]),
+      [{ file_name: "bad\u{0}.bin", file_offset: 0UL, data_size: 8UL, }],
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    nul_name,
+    Some(InvalidArgument("external data file name cannot contain NUL")),
+  )
+
+  let overflowing_offset = try {
+    Hdf5Writer::new().add_external_dataset(
+      "/external",
+      [2UL],
+      Int32Values([1, 2]),
+      [
+        {
+          file_name: "data.bin",
+          file_offset: 0xFFFFFFFFFFFFFFFFUL,
+          data_size: 8UL,
+        },
+      ],
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    overflowing_offset,
+    Some(InvalidArgument("external data file offset is too large")),
+  )
+}
+
+///|
 test "writer rejects invalid and conflicting external links" {
   let writer = Hdf5Writer::new()
   let empty_name = try {

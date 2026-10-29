@@ -44,7 +44,12 @@ even when a tile crosses external files. This post-v1.0 extension is limited to
 contiguous, unfiltered storage; remote URLs and external chunked layouts are
 rejected. A registered source shorter than its declared slot contributes its
 available prefix and zero-fills the remainder, matching HDF5 external-storage
-reads.
+reads. The writer exposes the same storage subset through
+`Hdf5Writer::add_external_dataset`. It validates fixed-size values and exact
+slot-size coverage, emits the external-data message plus a local filename heap,
+and gives the data-layout message an undefined address with the combined byte
+length. The caller owns, creates and populates the referenced external files;
+the encoder neither copies their bytes nor embeds them in the HDF5 file.
 
 `DatasetChunkIterator` divides a dataset into caller-selected tiles without
 materializing the complete dataset. Each tile is read through the same validated

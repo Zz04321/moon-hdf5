@@ -487,8 +487,9 @@ incorrectly. The fixed parser uses address-width filename offsets and validates
 that the message-level slot count is nonempty and within its allocation. A
 source shorter than a declared slot returns its available prefix and zero-fills
 the remainder, matching an h5py/HDF5 1.14.6 probe. Filters, external chunked
-layouts and remote URLs remain explicitly unsupported, as does writer output for
-external data.
+layouts and remote URLs remain explicitly unsupported. Writer output was not
+available at that point; the later writer review below adds the matching
+contiguous subset.
 
 The committed `external_storage.h5` fixture was generated with h5py
 3.13.0/HDF5 1.14.6. `/multi` splits `int32[8]` across two external files, while
@@ -688,3 +689,30 @@ builder changes. Wasm/native tests cover all four masks of a two-filter pipeline
 and both index types. The demo verifies the stored masks with h5py's
 `read_direct_chunk` under HDF5 1.14.6, which also confirms that the reference
 implementation decodes every skipped-filter combination.
+
+## External raw-data writer review — 2026-10-29
+
+`Hdf5Writer::add_external_dataset` now writes the reader-extension counterpart
+for fixed-size, unfiltered contiguous data. The API accepts 1–65,535 slots,
+requires nonempty NUL-free filenames and nonzero slot sizes, and verifies that
+the slot sizes exactly equal the dataset byte count. Variable-length values are
+rejected because their global-heap descriptors cannot live in the external byte
+stream. The caller remains responsible for creating and populating the external
+files.
+
+Encoding assigns a local filename heap after dense metadata, writes the
+version-one external-data message, and marks the data-layout address undefined
+while recording the combined slot size. The local heap uses HDF5's offset-one
+free-list sentinel; an initial zero value made HDF5 1.14.6 treat the reserved
+prefix as a zero-length free block and reject the dataset. Template-size
+estimation also runs before the heap address exists, so the payload encoder now
+enables address validation only for final encoding rather than accepting a
+placeholder in the output.
+
+Wasm and native tests cover multiple slots, in-file offsets, selection across a
+slot boundary, direct-reader rejection and invalid slot coverage. The demo
+contains `/experiment/external_raw`, and the h5py 3.13.0/HDF5 1.14.6 verifier
+checks both declared slots, the contiguous layout, complete values and a slice.
+Filtered or chunked external layouts, remote URLs, automatic
+external-file creation and in-place updates remain outside the supported
+extension.

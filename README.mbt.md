@@ -17,7 +17,8 @@ This is not a read-only library.
 - `Hdf5File` reads existing files without modifying them.
 - `Hdf5Writer` creates a complete new HDF5 file in memory and writes groups,
   datasets, attributes, soft and external links, fixed-size-value filters, fill
-  values, legacy object references and one extensible dimension.
+  values, legacy object references, contiguous external raw-data storage and one
+  extensible dimension.
 - In-place editing of an existing file is not implemented. `Hdf5File` parses
   external-link metadata without opening another file; `Hdf5Resolver` resolves
   those links and reads contiguous external raw-data storage when the target
@@ -52,14 +53,15 @@ an executable example.
   selection.
 - Resolves chained soft and external links across registered sources, with
   cycle and indirection limits.
-- Provides a resolver-only extension for contiguous external raw-data storage,
-  including multiple external files, in-file offsets, full reads and selections.
+- Reads and writes a post-v1.0 contiguous external raw-data extension, including
+  multiple external files, in-file offsets, full reads and selections.
 - Reads datasets through a bounded-memory chunk iterator for edge-clipped tiles
   and early termination.
 - Creates new files with groups, attributes, hard, soft and external links,
   compact or dense metadata, contiguous or chunked datasets, filters, fill
-  values, object references and one extensible dimension. Large chunk indexes
-  use fixed-array pages or extensible-array super blocks and data pages.
+  values, object references, external raw-data slots and one extensible
+  dimension. Large chunk indexes use fixed-array pages or extensible-array super
+  blocks and data pages.
 
 ## Quick Start
 
@@ -163,7 +165,9 @@ in declaration order and applies their file offsets, so full reads, hyperslabs
 and point selections work across slot boundaries under 4- or 8-byte addresses
 with 8-byte lengths. Slot boundaries need not align with element boundaries.
 This is a post-v1.0 extension: `Hdf5File` rejects external raw data, and
-filters, chunked external storage, and remote URLs are not supported for it.
+filters, chunked external storage, and remote URLs are not supported for it. The
+writer can create an unfiltered contiguous external dataset from caller-supplied
+slots, but it does not create or copy the referenced external files.
 `DatasetChunkIterator` reads edge-clipped tiles through the same selection
 path. As in HDF5, missing tail bytes in a declared slot are read as zeroes while
 the available prefix is returned unchanged.
@@ -212,6 +216,25 @@ writer.add_external_link(
 )
 
 ///|
+writer.add_external_dataset(
+  "/experiment/external_counts",
+  [6UL],
+  @lib.Int32Values([10, 20, 30, 40, 50, 60]),
+  [
+    {
+      file_name: "external_counts_0.bin",
+      file_offset: 4UL,
+      data_size: 8UL,
+    },
+    {
+      file_name: "external_counts_1.bin",
+      file_offset: 0UL,
+      data_size: 16UL,
+    },
+  ],
+)
+
+///|
 writer.add_extensible_dataset(
   "/experiment/series",
   [0UL, 2UL],
@@ -257,9 +280,14 @@ with one unlimited dimension. `add_soft_link` attaches a link to an absolute
 target or a target relative to the containing group; dangling links are allowed.
 `add_external_link` records a target file and object path. HDF5 readers resolve
 them, and `Hdf5Resolver` resolves them when the target source is registered;
-`Hdf5File` alone leaves the link unresolved. The
-writer rejects link messages whose encoded metadata exceeds HDF5's 16-bit message
-size. `ObjectReferenceValues` stores top-level legacy object references as paths
+`Hdf5File` alone leaves the link unresolved. The `add_external_dataset` API
+stores raw element bytes in caller-managed external
+files. Its slots are concatenated in order and each slot applies its own byte
+offset; their sizes must exactly match the dataset byte count. Only contiguous,
+unfiltered fixed-size values are accepted, and the writer does not create the
+external files themselves. The writer rejects link messages whose encoded
+metadata exceeds HDF5's 16-bit message size. `ObjectReferenceValues` stores
+top-level legacy object references as paths
 to objects in the same file; `None` writes the null reference.
 `Datatype::write_object_reference()` creates the matching 8-byte datatype, and
 `ObjectReference(Some(path))` or `ObjectReference(None)` supplies a value nested
@@ -335,10 +363,12 @@ preserve order and duplicates.
   BTHD/BTLF leaf index per collection; dense indirect/huge blocks,
   creation-order indexes and a free-space manager are not written. Larger sets
   fall back to compact OCHK continuation storage.
-- External raw-data storage is a resolver-only post-v1.0 extension. Every
-  external file must be registered as an `Hdf5Source`; `Hdf5File` rejects the
-  dataset. Only contiguous, unfiltered external slots are read, with no remote
-  URLs, chunked external storage or writer support. Tile iteration is supported.
+- External raw-data storage is a post-v1.0 extension. `Hdf5Resolver` reads it
+  when every external file is registered as an `Hdf5Source`; `Hdf5File` rejects
+  the dataset. The writer creates contiguous, unfiltered external datasets from
+  caller-supplied slots. Remote URLs, filtered or chunked external layouts and
+  automatic external-file creation are not supported. Tile iteration is
+  supported for reads.
 - The writer does not emit a SOHM table or shared-message wrappers. All writer
   metadata is stored inline; shared-message support is reader-only.
 - Numeric storage wider than 8 bytes and binary floating-point normalizations
@@ -387,7 +417,8 @@ The v1.0 release gate runs the writer demo and verifies its output with h5py
 3.13.0/HDF5 1.14.6, then verifies the numeric-layout, hard-link and MATLAB
 7.3-compatible fixtures. It also verifies the NetCDF-4 fixture produced by
 netCDF4 1.7.5/libnetcdf 4.10.1/HDF5 2.2.0, the post-v1.0 external raw-data
-fixture set and the shared-message fixture. The HDF5 1.14.6 default and `latest`
+fixture set, the writer's external slot declarations and values, and the
+shared-message fixture. The HDF5 1.14.6 default and `latest`
 datatype fixtures use the pinned environment documented in
 [testdata/README.md](testdata/README.md); fixture tests compare decoded
 semantics because binary hashes are not stable.

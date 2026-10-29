@@ -85,6 +85,23 @@ fn run(args : Array[String]) -> Int32 {
     writer.add_external_link(
       "/experiment", "external", "external-target.h5", "/experiment/counts",
     )
+    writer.add_external_dataset(
+      "/experiment/external_raw",
+      [6UL],
+      Int32Values([10, 20, 30, 40, 50, 60]),
+      [
+        {
+          file_name: "moon-hdf5-demo-external-0.bin",
+          file_offset: 4UL,
+          data_size: 8UL,
+        },
+        {
+          file_name: "moon-hdf5-demo-external-1.bin",
+          file_offset: 0UL,
+          data_size: 16UL,
+        },
+      ],
+    )
     writer.add_dataset(
       "/experiment/labels",
       [2UL],

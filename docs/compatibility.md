@@ -27,8 +27,8 @@ The HDF5 2.0 datatype rows in the reader table are forward-compatibility
 evidence and are not part of the HDF5 1.14.6 v1.0 baseline.
 
 The following are outside the v1.0 profile: virtual datasets, external data
-storage beyond the resolver-only extension described below, SWMR, parallel
-HDF5, third-party filters, in-place editing, external-link dereferencing in
+storage beyond the verified reader and writer extension described below, SWMR,
+parallel HDF5, third-party filters, in-place editing, external-link dereferencing in
 `Hdf5File` itself, version-4 encoded references,
 numeric storage wider than 8 bytes, binary-float normalizations other than
 implied MSB, MATLAB file semantics, and netCDF-4 data-model semantics beyond the
@@ -79,7 +79,7 @@ the release gate, so it can be relied on separately from the v1.0 promise.
 
 | Area | Verified input | Current boundary |
 | --- | --- | --- |
-| External raw data | `Hdf5Resolver` reads contiguous external data slots through registered `Hdf5Source` values under 4- or 8-byte addresses with 8-byte lengths, including multiple files, in-file offsets, element-unaligned slot boundaries, full values, hyperslabs, ordered points and edge-clipped chunk iteration | `Hdf5File` does not dereference external data; filters, chunked external layouts, remote URLs and writer output are unsupported; a short source returns its available bytes and zero-fills the declared remainder, matching HDF5 |
+| External raw data | `Hdf5Resolver` reads contiguous external data slots through registered `Hdf5Source` values under 4- or 8-byte addresses with 8-byte lengths, including multiple files, in-file offsets, element-unaligned slot boundaries, full values, hyperslabs, ordered points and edge-clipped chunk iteration. `Hdf5Writer::add_external_dataset` writes contiguous, unfiltered external slots for fixed-size values; h5py/HDF5 1.14.6 checks slot names, offsets, sizes, full reads and slices | `Hdf5File` does not dereference external data; filters, chunked external layouts and remote URLs are unsupported; the writer requires caller-managed external files whose slot sizes exactly match the dataset byte count; a short source returns its available bytes and zero-fills the declared remainder, matching HDF5 |
 
 The cross-version object matrix is stored in `interop_earliest.h5`,
 `interop_v108.h5`, `interop_v110.h5` and `interop_32.h5`. HDF5 1.14.6 default
@@ -102,7 +102,7 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | Groups | Nested groups, compact hard, soft and external links, dense links, and continued compact headers | Dense links use the dense-metadata limits below |
 | Attributes | Inline numeric, fixed/vlen string and structured attributes, plus dense attributes with a name index | Dense attributes use the dense-metadata limits below |
 | Dense metadata | Automatic dense link and attribute storage for 9–65,535 records when each encoded heap object is at most 4 KiB; FRHP/FHDB direct block and BTHD/BTLF name index | One direct block and one leaf index per collection; no indirect/huge heap blocks, creation-order index, free-space manager or SOHM table; out-of-bound sets use compact OCHK continuations |
-| Dataset layouts | Contiguous, paged fixed-array chunked and extensible-array chunked with inline, direct, super and paged data blocks | External and virtual dataset storage are absent |
+| Dataset layouts | Contiguous, contiguous external raw data, paged fixed-array chunked and extensible-array chunked with inline, direct, super and paged data blocks | Virtual dataset storage is absent; external storage is limited to unfiltered fixed-size values with caller-managed files |
 | Numeric values | Little- and big-endian int/uint1–8 and IEEE float32/64; standard widths and byte orders are checked by h5py and nonstandard integer widths by MoonBit round-trip | Nonstandard floating-point output is absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Other character encodings are absent |
 | Structured values | Packed compound, enum, fixed array, time, bitfield, opaque, legacy object-reference, legacy region-reference and variable-length sequence values, including mixed byte orders within compounds and big-endian enum bases | Complex output is absent; variable-length sequence bases must be fixed-size and cannot contain region references |
@@ -115,10 +115,11 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 The h5py verification also checks extensible-array super blocks and paged data
 blocks across 134200 chunks. Generated extensible datasets expose the expected
 maximum shape and can subsequently be resized and written by h5py. External-link
-output is checked for its link class, target filename and object path. MoonBit
-tests additionally resolve writer-produced external links through
-`Hdf5Resolver`; `Hdf5File` itself intentionally leaves external targets
-unresolved.
+output is checked for its link class, target filename and object path. External
+raw-data output is checked for both slot declarations and dereferenced values.
+MoonBit tests additionally resolve writer-produced external links and external
+raw data through `Hdf5Resolver`; `Hdf5File` itself intentionally leaves external
+targets unresolved.
 
 ## Reproduce
 
