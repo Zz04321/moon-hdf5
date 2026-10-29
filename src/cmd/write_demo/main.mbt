@@ -516,6 +516,56 @@ fn run(args : Array[String]) -> Int32 {
       [],
       StructuredValues(record_type, [first_record]),
     )
+    let object_ref = @lib.Datatype::write_object_reference()
+    let reference_pair = @lib.Datatype::write_array(object_ref, [2UL])
+    let reference_history = @lib.Datatype::write_vlen_sequence(object_ref)
+    let reference_record_type = @lib.Datatype::write_compound([
+      ("label", @lib.Datatype::write_fixed_string(6)),
+      ("target", object_ref),
+      ("pair", reference_pair),
+    ])
+    writer.add_dataset(
+      "/structured/reference_records",
+      [2UL],
+      StructuredValues(reference_record_type, [
+        @lib.Compound([
+          { name: "label", value: @lib.Text("first"), },
+          {
+            name: "target",
+            value: @lib.ObjectReference(Some("/experiment/reference_target")),
+          },
+          {
+            name: "pair",
+            value: @lib.Elements([
+              @lib.ObjectReference(Some("/experiment")),
+              @lib.ObjectReference(None),
+            ]),
+          },
+        ]),
+        @lib.Compound([
+          { name: "label", value: @lib.Text("second"), },
+          { name: "target", value: @lib.ObjectReference(Some("/")), },
+          {
+            name: "pair",
+            value: @lib.Elements([
+              @lib.ObjectReference(Some("/experiment/reference_target")),
+              @lib.ObjectReference(Some("/structured")),
+            ]),
+          },
+        ]),
+      ]),
+    )
+    writer.add_dataset(
+      "/structured/reference_sequences",
+      [2UL],
+      StructuredValues(reference_history, [
+        @lib.Sequence([
+          @lib.ObjectReference(Some("/experiment/reference_target")),
+          @lib.ObjectReference(Some("/experiment")),
+        ]),
+        @lib.Sequence([@lib.ObjectReference(None)]),
+      ]),
+    )
     let vector_type = @lib.Datatype::write_array(
       @lib.Datatype::write_float(4),
       [2UL],

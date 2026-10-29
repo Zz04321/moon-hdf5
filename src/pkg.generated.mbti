@@ -114,6 +114,7 @@ pub(all) enum DatasetValue {
   Opaque(Bytes)
   Compound(Array[CompoundFieldValue])
   Elements(Array[DatasetValue])
+  ObjectReference(String?)
   Reference(Bytes)
   Sequence(Array[DatasetValue])
   Time(UInt64)
@@ -185,6 +186,7 @@ pub fn Datatype::write_float(Int32) -> Self raise Hdf5Error
 pub fn Datatype::write_float_with_order(Int32, Bool) -> Self raise Hdf5Error
 pub fn Datatype::write_integer(Bool, Int32) -> Self raise Hdf5Error
 pub fn Datatype::write_integer_with_order(Bool, Int32, Bool) -> Self raise Hdf5Error
+pub fn Datatype::write_object_reference() -> Self
 pub fn Datatype::write_opaque(Int32, String) -> Self raise Hdf5Error
 pub fn Datatype::write_time(Int32, little_endian? : Bool) -> Self raise Hdf5Error
 pub fn Datatype::write_vlen_sequence(Self) -> Self raise Hdf5Error

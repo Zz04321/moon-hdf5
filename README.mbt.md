@@ -45,9 +45,9 @@ an executable example.
   selected values, including compact, contiguous or chunked target storage.
 - Supports compact, contiguous and chunked layouts with the common HDF5 chunk
   indexes.
-- Reads and writes deflate, shuffle, Fletcher32, integer scale-offset and
-  f32/f64 decimal floating-point scale-offset, including per-chunk masks and
-  fill markers.
+- Reads deflate, shuffle, Fletcher32, integer scale-offset and f32/f64 decimal
+  floating-point scale-offset, including per-chunk masks and fill markers;
+  writes shared fixed filter pipelines for fixed-size values.
 - Provides metadata-only access, hyperslab selection and ordered point
   selection.
 - Resolves chained soft and external links across registered sources, with
@@ -259,12 +259,15 @@ target or a target relative to the containing group; dangling links are allowed.
 them, and `Hdf5Resolver` resolves them when the target source is registered;
 `Hdf5File` alone leaves the link unresolved. The
 writer rejects link messages whose encoded metadata exceeds HDF5's 16-bit message
-size. `ObjectReferenceValues` stores legacy object references as paths to
-objects in the same file; `None` writes the null reference. References may be
-stored in datasets or attributes, and their targets may be added later because
-paths are resolved when the file is encoded. `Datatype::write_integer`,
-`write_float`, `write_fixed_string`, `write_enum`, `write_array`,
-`write_compound`, `write_time`, `write_bitfield`, `write_opaque` and
+size. `ObjectReferenceValues` stores top-level legacy object references as paths
+to objects in the same file; `None` writes the null reference.
+`Datatype::write_object_reference()` creates the matching 8-byte datatype, and
+`ObjectReference(Some(path))` or `ObjectReference(None)` supplies a value nested
+in a compound, fixed array or variable-length sequence. References may be stored
+in datasets or attributes, and their targets may be added later because paths
+are resolved when the file is encoded. `Datatype::write_integer`, `write_float`,
+`write_fixed_string`, `write_enum`, `write_array`, `write_compound`,
+`write_object_reference`, `write_time`, `write_bitfield`, `write_opaque` and
 `write_vlen_sequence` construct supported structured writer types. Use
 `write_integer_with_order` and `write_float_with_order` when a
 structured value needs big-endian storage; the standard constructors remain
@@ -336,10 +339,9 @@ preserve order and duplicates.
   `ScaleOffset(element_width * 8)` to store an integer chunk unfiltered. Writer
   floating-point data and fill values must be finite, and floating-point
   scale-offset cannot be combined with Fletcher32.
-- Custom variable-length sequence fills, other writer filters,
-  region-reference writing, references nested in compound writer values and
-  complex-number writing are not supported. Variable-length sequence bases must
-  be fixed-size values.
+- Custom variable-length sequence fills, other writer filters, region-reference
+  writing and complex-number writing are not supported. Variable-length
+  sequence bases must be fixed-size values.
 - Reference resolution covers legacy object and dataset-region references under
   4- and 8-byte address widths. Region targets must be datasets in the same
   file. Version-4 encoded references are not resolved, and region-reference

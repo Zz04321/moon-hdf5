@@ -252,8 +252,10 @@ order, IEEE float32/64 in either byte order, fixed-width or variable-length
 UTF-8 strings, time, bitfield, opaque, legacy object references and
 variable-length sequence values. Object-reference values hold target paths and
 the null reference; addresses are resolved after the final object layout is
-known, so forward references are valid. They can be stored in datasets and
-attributes.
+known, so forward references are valid. `Datatype::write_object_reference`
+emits the class-7 legacy object-reference datatype, and `ObjectReference`
+values can be nested in compounds, fixed arrays and variable-length sequences
+as well as stored directly in datasets and attributes.
 Variable strings and sequences use 16-byte descriptors and a shared global heap
 collection; empty values use the zero descriptor and repeated payloads share one
 heap object. Sequence bases must be fixed-size datatypes. Custom variable-length

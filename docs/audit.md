@@ -605,8 +605,9 @@ MoonBit tests cover dataset values, attribute values, group, root, self, null
 and forward references, plus relative and missing-target rejection. The writer
 demo stores object references in a dataset and a self-referencing attribute.
 The h5py 3.13.0/HDF5 1.14.6 verifier resolves every non-null reference by path
-and confirms the null reference. Region-reference writing and reference values
-nested inside compound writer values remain outside the current profile.
+and confirms the null reference. Region-reference writing remained outside the
+profile at that stage; nested structured references were added in the later
+review below.
 
 ## Hard-link traversal and MATLAB-compatible review — 2026-10-28
 
@@ -630,3 +631,30 @@ Tests cover scalar, vector, empty-array and hyperslab reads. This verifies the
 encoded HDF5 structures, not MATLAB orientation, type conversion or complete
 MAT file semantics. Both fixtures and their independent h5py checks are part of
 `scripts/release_check.sh`.
+
+## Structured object-reference writer review — 2026-10-29
+
+The writer now exposes `Datatype::write_object_reference()` and the writer-only
+`DatasetValue::ObjectReference(String?)` input. `None` emits the null
+reference; `Some(path)` is resolved after object addresses are assigned, so
+references can appear inside compound fields, fixed arrays and variable-length
+sequences, not only in top-level `ObjectReferenceValues`. The object table is
+threaded through recursive datatype encoding and global-heap sequence planning,
+keeping forward and self references valid at every nesting level.
+
+Wasm and native tests cover scalar compound members, reference arrays, vlen
+reference sequences, attributes, null references and forward targets. The
+writer demo contains the same compound, array and sequence cases. h5py
+3.13.0/HDF5 1.14.6 reads every field and dereferences each stored path back to
+the expected object; null references remain null. Region-reference writing,
+version-4 encoded references and references to objects outside the same file
+remain outside the profile.
+
+## Variable-length sequence fill boundary — 2026-10-29
+
+A trial removal of the writer and reader guards produced otherwise well-formed
+files with class-9 sequence fills backed by the global heap. HDF5 1.14.6
+aborted with a double-free while h5py opened and read the trial datasets.
+Custom variable-length sequence fills therefore remain an explicit rejection,
+rather than a best-effort encoding that can trigger a native crash in the
+reference implementation.

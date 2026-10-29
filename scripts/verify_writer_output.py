@@ -375,6 +375,26 @@ def verify(path: Path) -> None:
         assert records.compression == "gzip"
         assert records.fletcher32
         assert records.attrs["prototype"]["id"] == 7
+        reference_records = handle["structured/reference_records"][:]
+        assert reference_records.dtype.names == ("label", "target", "pair")
+        assert (
+            handle[reference_records[0]["target"]].name
+            == "/experiment/reference_target"
+        )
+        assert [
+            handle[value].name if value else None
+            for value in reference_records[0]["pair"]
+        ] == ["/experiment", None]
+        assert handle[reference_records[1]["target"]].name == "/"
+        assert [
+            handle[value].name if value else None
+            for value in reference_records[1]["pair"]
+        ] == ["/experiment/reference_target", "/structured"]
+        reference_sequences = handle["structured/reference_sequences"][:]
+        assert [
+            [handle[value].name if value else None for value in row]
+            for row in reference_sequences
+        ] == [["/experiment/reference_target", "/experiment"], [None]]
         vectors = handle["structured/vectors"]
         assert vectors.dtype.subdtype == (np.dtype("<f4"), (2,))
         np.testing.assert_array_equal(vectors[:], [[1.5, -2.0], [3.25, 4.5]])

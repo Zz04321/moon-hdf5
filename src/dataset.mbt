@@ -24,6 +24,8 @@ pub(all) enum DatasetValue {
   Opaque(Bytes)
   Compound(Array[CompoundFieldValue])
   Elements(Array[DatasetValue])
+  /// Writer input for a legacy object reference; readers return `Reference`.
+  ObjectReference(String?)
   Reference(Bytes)
   Sequence(Array[DatasetValue])
   Time(UInt64)

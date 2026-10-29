@@ -26,6 +26,7 @@ fn writer_datatype(
   size : Int32,
   signed~ : Bool = false,
   little_endian~ : Bool = true,
+  reference_kind~ : Int32 = 0,
   bit_offset~ : Int32 = 0,
   bit_precision~ : Int32 = 0,
   opaque_tag~ : String = "",
@@ -71,7 +72,7 @@ fn writer_datatype(
       0
     },
     opaque_tag,
-    reference_kind: 0,
+    reference_kind,
   }
 }
 
@@ -196,6 +197,12 @@ pub fn Datatype::write_fixed_string(width : Int32) -> Datatype raise Hdf5Error {
     raise InvalidArgument("fixed string width is invalid")
   }
   writer_datatype(3, width)
+}
+
+///|
+/// Creates a legacy object-reference datatype for structured writes.
+pub fn Datatype::write_object_reference() -> Datatype {
+  writer_datatype(7, 8)
 }
 
 ///|
@@ -725,6 +732,11 @@ fn validate_writer_datatype(
         }
       }
     }
+    7 => {
+      guard datatype.size == 8 && datatype.reference_kind == 0 else {
+        raise InvalidArgument("writer object reference datatype is unsupported")
+      }
+    }
     8 => {
       guard datatype.base_types.length() == 1 &&
         datatype.enum_members.length() > 0 &&
@@ -891,6 +903,15 @@ fn validate_structured_value(
           datatype.compound_members[index].datatype,
           depth + 1,
         )
+      }
+    }
+    7 => {
+      guard value is ObjectReference(path) else {
+        raise InvalidArgument("object reference value has the wrong kind")
+      }
+      match path {
+        Some(target) => canonical_writer_path(target) |> ignore
+        None => ()
       }
     }
     8 => {
@@ -1633,6 +1654,7 @@ fn default_structured_value(
           value: default_structured_value(field.datatype),
         }),
       )
+    7 => ObjectReference(None)
     8 => {
       let zero = datatype.enum_members.search_by(enum_item => {
         enum_item.value ==
@@ -2150,6 +2172,7 @@ fn encode_writer_datatype(datatype : Datatype) -> Bytes raise Hdf5Error {
       }
       buffer.to_bytes()
     }
+    7 => encode_object_reference_datatype()
     8 => {
       let buffer = @buffer.Buffer::Buffer()
       buffer.write_byte(b'\x38')
@@ -2209,6 +2232,7 @@ fn encode_structured_value(
   datatype : Datatype,
   value : DatasetValue,
   heap~ : WritableGlobalHeap = empty_writable_heap(),
+  objects~ : Array[WritableObject] = [],
 ) -> Bytes raise Hdf5Error {
   validate_structured_value(value, datatype, 0)
   let buffer = @buffer.Buffer::Buffer(size_hint=datatype.size)
@@ -2288,10 +2312,22 @@ fn encode_structured_value(
               field.datatype,
               fields[index].value,
               heap~,
+              objects~,
             )
             output.blit_from_bytes(field.offset, encoded, 0, encoded.length())
           }
           writer_write_bytes(buffer, output.unsafe_reinterpret_as_bytes())
+        }
+        _ => ()
+      }
+    7 =>
+      match value {
+        ObjectReference(path) => {
+          let address = match path {
+            None => 0UL
+            Some(target) => writer_reference_address(objects, target)
+          }
+          buffer.write_uint64_le(address)
         }
         _ => ()
       }
@@ -2327,7 +2363,7 @@ fn encode_structured_value(
             for item in items {
               writer_write_bytes(
                 encoded,
-                encode_structured_value(base, item, heap~),
+                encode_structured_value(base, item, heap~, objects~),
               )
             }
             let data = encoded.to_bytes()
@@ -2345,7 +2381,12 @@ fn encode_structured_value(
           for item in items {
             writer_write_bytes(
               buffer,
-              encode_structured_value(datatype.base_types[0], item, heap~),
+              encode_structured_value(
+                datatype.base_types[0],
+                item,
+                heap~,
+                objects~,
+              ),
             )
           }
         _ => ()
@@ -2535,7 +2576,7 @@ fn encode_write_values(
       for item in items {
         writer_write_bytes(
           payload,
-          encode_structured_value(datatype, item, heap~),
+          encode_structured_value(datatype, item, heap~, objects~),
         )
       }
       (encode_writer_datatype(datatype), datatype.size)
@@ -4876,6 +4917,7 @@ fn collect_heap_sequences(
   output : Array[Bytes],
   datatype : Datatype,
   value : DatasetValue,
+  objects : Array[WritableObject],
 ) -> Unit raise Hdf5Error {
   match datatype.class {
     6 =>
@@ -4886,6 +4928,7 @@ fn collect_heap_sequences(
               output,
               datatype.compound_members[index].datatype,
               fields[index].value,
+              objects,
             )
           }
         _ => ()
@@ -4897,7 +4940,10 @@ fn collect_heap_sequences(
             let base = datatype.base_types[0]
             let encoded = @buffer.Buffer::Buffer()
             for item in items {
-              writer_write_bytes(encoded, encode_structured_value(base, item))
+              writer_write_bytes(
+                encoded,
+                encode_structured_value(base, item, objects~),
+              )
             }
             let data = encoded.to_bytes()
             if !output.contains(data) {
@@ -4913,7 +4959,12 @@ fn collect_heap_sequences(
       match value {
         Elements(items) =>
           for item in items {
-            collect_heap_sequences(output, datatype.base_types[0], item)
+            collect_heap_sequences(
+              output,
+              datatype.base_types[0],
+              item,
+              objects,
+            )
           }
         _ => ()
       }
@@ -4942,20 +4993,21 @@ fn Hdf5Writer::global_heap_strings(
 ///|
 fn Hdf5Writer::global_heap_sequences(
   self : Hdf5Writer,
+  objects~ : Array[WritableObject],
 ) -> Array[Bytes] raise Hdf5Error {
   let sequences : Array[Bytes] = []
   for dataset in self.datasets {
     match dataset.values {
       StructuredValues(datatype, items) =>
         for item in items {
-          collect_heap_sequences(sequences, datatype, item)
+          collect_heap_sequences(sequences, datatype, item, objects)
         }
       _ => ()
     }
     match dataset.fill_value {
       Some(StructuredValues(datatype, items)) =>
         for item in items {
-          collect_heap_sequences(sequences, datatype, item)
+          collect_heap_sequences(sequences, datatype, item, objects)
         }
       _ => ()
     }
@@ -4964,7 +5016,7 @@ fn Hdf5Writer::global_heap_sequences(
     match attribute.values {
       StructuredValues(datatype, items) =>
         for item in items {
-          collect_heap_sequences(sequences, datatype, item)
+          collect_heap_sequences(sequences, datatype, item, objects)
         }
       _ => ()
     }
@@ -5064,7 +5116,7 @@ fn assign_writable_addresses(
     offset = writer_align(offset + lengths[index])
   }
   let strings = writer.global_heap_strings()
-  let sequences = writer.global_heap_sequences()
+  let sequences = writer.global_heap_sequences(objects~)
   let heap = {
     address: if strings.length() == 0 && sequences.length() == 0 {
       0UL

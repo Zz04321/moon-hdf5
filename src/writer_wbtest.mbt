@@ -231,6 +231,149 @@ test "writer round-trips object reference datasets and attributes" {
 }
 
 ///|
+test "writer writes object references nested in structured values" {
+  let writer = Hdf5Writer::new()
+  let object_ref = Datatype::write_object_reference()
+  let pair_type = Datatype::write_array(object_ref, [2UL])
+  let history_type = Datatype::write_vlen_sequence(object_ref)
+  let record_type = Datatype::write_compound([
+    ("label", Datatype::write_fixed_string(6)),
+    ("target", object_ref),
+    ("pair", pair_type),
+    ("history", history_type),
+  ])
+  writer.add_dataset("/target", [1UL], Int64Values([5L]))
+  writer.add_group("/group")
+  writer.add_dataset("/group/later", [], UInt64Values([9UL]))
+  let first = Compound([
+    { name: "label", value: Text("first"), },
+    { name: "target", value: ObjectReference(Some("/target")), },
+    {
+      name: "pair",
+      value: Elements([ObjectReference(Some("/group")), ObjectReference(None)]),
+    },
+    {
+      name: "history",
+      value: Sequence([
+        ObjectReference(Some("/target")),
+        ObjectReference(Some("/group/later")),
+      ]),
+    },
+  ])
+  let second = Compound([
+    { name: "label", value: Text("second"), },
+    { name: "target", value: ObjectReference(Some("/group/later")), },
+    {
+      name: "pair",
+      value: Elements([ObjectReference(None), ObjectReference(Some("/group"))]),
+    },
+    { name: "history", value: Sequence([]), },
+  ])
+  writer.add_dataset(
+    "/records",
+    [2UL],
+    StructuredValues(record_type, [first, second]),
+  )
+  writer.add_attribute(
+    "/records",
+    "prototype",
+    [],
+    StructuredValues(record_type, [first]),
+  )
+
+  let file = Hdf5File::parse(writer.encode())
+  let target = file.resolve("/target")
+  let group = file.resolve("/group")
+  let later = file.resolve("/group/later")
+  let records = match file.read_dataset("/records").values {
+    Structured(values) => values
+    _ => abort("expected structured reference records")
+  }
+  assert_eq(records.length(), 2)
+  let first_fields = match records[0] {
+    Compound(fields) => fields
+    _ => abort("expected first reference compound")
+  }
+  assert_eq(first_fields[0].value, Text("first"))
+  match first_fields[1].value {
+    Reference(bytes) =>
+      assert_eq(
+        file.resolve_object_reference(bytes),
+        Some({ address: target.address, kind: Dataset, path: Some("/target"), }),
+      )
+    _ => abort("expected compound object reference")
+  }
+  match first_fields[2].value {
+    Elements([Reference(first_ref), Reference(null_ref)]) => {
+      assert_eq(
+        file.resolve_object_reference(first_ref),
+        Some({ address: group.address, kind: Group, path: Some("/group"), }),
+      )
+      assert_eq(file.resolve_object_reference(null_ref), None)
+    }
+    _ => abort("expected reference array")
+  }
+  match first_fields[3].value {
+    Sequence([Reference(first_ref), Reference(forward_ref)]) => {
+      assert_eq(
+        file.resolve_object_reference(first_ref),
+        Some({ address: target.address, kind: Dataset, path: Some("/target"), }),
+      )
+      assert_eq(
+        file.resolve_object_reference(forward_ref),
+        Some({
+          address: later.address,
+          kind: Dataset,
+          path: Some("/group/later"),
+        }),
+      )
+    }
+    _ => abort("expected reference sequence")
+  }
+  let second_fields = match records[1] {
+    Compound(fields) => fields
+    _ => abort("expected second reference compound")
+  }
+  match second_fields[1].value {
+    Reference(bytes) =>
+      assert_eq(
+        file.resolve_object_reference(bytes),
+        Some({
+          address: later.address,
+          kind: Dataset,
+          path: Some("/group/later"),
+        }),
+      )
+    _ => abort("expected forward compound object reference")
+  }
+  match second_fields[3].value {
+    Sequence([]) => ()
+    _ => abort("expected empty reference sequence")
+  }
+  let attributes = file.attributes("/records")
+  match attributes.search_by(attribute => attribute.name == "prototype") {
+    Some(index) =>
+      match attributes[index].values {
+        Some(Structured([Compound(fields)])) =>
+          match fields[1].value {
+            Reference(bytes) =>
+              assert_eq(
+                file.resolve_object_reference(bytes),
+                Some({
+                  address: target.address,
+                  kind: Dataset,
+                  path: Some("/target"),
+                }),
+              )
+            _ => abort("expected prototype object reference")
+          }
+        _ => abort("expected structured prototype attribute")
+      }
+    None => abort("expected prototype attribute")
+  }
+}
+
+///|
 test "writer validates object reference paths and targets" {
   let relative = try {
     Hdf5Writer::new().add_dataset(
@@ -258,6 +401,46 @@ test "writer validates object reference paths and targets" {
   }
   assert_eq(
     missing,
+    Some(InvalidArgument("object reference target does not exist: /missing")),
+  )
+
+  let wrong_kind = try {
+    let writer = Hdf5Writer::new()
+    writer.add_dataset(
+      "/refs",
+      [1UL],
+      StructuredValues(Datatype::write_object_reference(), [
+        Reference(b"\x00\x00\x00\x00\x00\x00\x00\x00"),
+      ]),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    wrong_kind,
+    Some(InvalidArgument("object reference value has the wrong kind")),
+  )
+
+  let nested_missing = try {
+    let writer = Hdf5Writer::new()
+    let record_type = Datatype::write_compound([
+      ("target", Datatype::write_object_reference()),
+    ])
+    writer.add_dataset(
+      "/refs",
+      [1UL],
+      StructuredValues(record_type, [
+        Compound([{ name: "target", value: ObjectReference(Some("/missing")), }]),
+      ]),
+    )
+    writer.encode() |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    nested_missing,
     Some(InvalidArgument("object reference target does not exist: /missing")),
   )
 }
