@@ -244,6 +244,58 @@ test "writer indexes dense links and attributes by creation order" {
 }
 
 ///|
+fn writer_test_attribute_name(
+  payload : Bytes,
+) -> (String, Int32) raise Hdf5Error {
+  let reader = Reader::new(payload)
+  let version = reader.read_u8().to_int()
+  let flags = reader.read_u8().to_int()
+  let name_size = reader.read_u16_le().to_int()
+  let _datatype_size = reader.read_u16_le()
+  let _dataspace_size = reader.read_u16_le()
+  if version >= 3 {
+    let _encoding = reader.read_u8()
+  }
+  (decode_c_string(reader.read_bytes(name_size)), flags)
+}
+
+///|
+fn writer_test_dense_attribute_payloads(
+  bytes : Bytes,
+  address : UInt64,
+) -> Array[Bytes] raise Hdf5Error {
+  let header = parse_object_header(bytes, address, 8, 8, 0UL)
+  let info = match header.first(msg_attribute_info) {
+    Some(message) => message.data
+    None => raise InvalidField("dense attributes have no info message")
+  }
+  let reader = Reader::new(info)
+  let _version = reader.read_u8()
+  let flags = reader.read_u8().to_int()
+  if (flags & 0x01) != 0 {
+    reader.skip(2)
+  }
+  let heap_address = reader.read_uint_le(8)
+  let name_index_address = reader.read_uint_le(8)
+  let heap = parse_fractal_heap(bytes, heap_address, 8, 8, 0UL)
+  let records = read_metadata_btree_records(
+    bytes,
+    name_index_address,
+    8,
+    8,
+    0UL,
+    [8, 9],
+  )
+  let payloads : Array[Bytes] = []
+  for record in records {
+    if (record.flags.to_int() & shared_message_flag) == 0 {
+      payloads.push(heap.get_data(record.heap_id))
+    }
+  }
+  payloads
+}
+
+///|
 test "writer shares attributes through SOHM" {
   let writer = Hdf5Writer::new()
   writer.set_attribute_sharing(true)
@@ -272,6 +324,21 @@ test "writer shares attributes through SOHM" {
     [],
     FixedStringValues([large], 5000),
   )
+  writer.add_group("/shared/large")
+  let large_first = "a".repeat(5000)
+  let large_second = "b".repeat(5000)
+  writer.add_attribute(
+    "/shared/large",
+    "first",
+    [],
+    FixedStringValues([large_first], 5000),
+  )
+  writer.add_attribute(
+    "/shared/large",
+    "second",
+    [],
+    FixedStringValues([large_second], 5000),
+  )
   writer.add_group("/shared/all")
   for index in 0..<9 {
     writer.add_attribute(
@@ -280,6 +347,32 @@ test "writer shares attributes through SOHM" {
       [],
       UInt64Values([(index + 20).to_uint64()]),
     )
+  }
+  let layout = assign_writable_addresses(
+    writer,
+    initial_writable_objects(writer),
+  )
+  match layout.shared {
+    Some(shared) => {
+      assert_eq(shared.datatypes.length(), 1)
+      assert_eq(shared.dataspaces.length(), 1)
+      assert_eq(shared.fields.length(), 3)
+      for
+        (path, name) in [
+          ("/shared/dense", "large"),
+          ("/shared/large", "first"),
+          ("/shared/large", "second"),
+        ] {
+        match writer_attribute_sharing(shared.fields, path, name) {
+          Some(field) => {
+            assert_true(field.datatype_id is Some(_))
+            assert_true(field.dataspace_id is Some(_))
+          }
+          None => abort("expected internally shared attribute fields")
+        }
+      }
+    }
+    None => abort("expected shared-message metadata")
   }
 
   let bytes = writer.encode() catch {
@@ -299,6 +392,29 @@ test "writer shares attributes through SOHM" {
   match compact_header.first(msg_attribute) {
     Some(message) => assert_true((message.flags.to_int() & 0x02) != 0)
     None => abort("expected compact shared attribute")
+  }
+  for
+    entry in writer_test_dense_attribute_payloads(
+      bytes,
+      file.resolve("/shared/dense").address,
+    ) {
+    let (name, flags) = writer_test_attribute_name(entry)
+    if name == "large" {
+      assert_eq(flags & 0x03, 0x03)
+    }
+  }
+  let large_header = parse_object_header(
+    bytes,
+    file.resolve("/shared/large").address,
+    8,
+    8,
+    0UL,
+  )
+  let large_messages = large_header.find(msg_attribute)
+  assert_eq(large_messages.length(), 2)
+  for message in large_messages {
+    let (_, flags) = writer_test_attribute_name(message.data)
+    assert_eq(flags & 0x03, 0x03)
   }
   let attributes = file.attributes("/shared/dense") catch {
     error => abort("attributes failed: " + error.message())
@@ -334,6 +450,20 @@ test "writer shares attributes through SOHM" {
       }
     None => abort("expected large attribute")
   }
+  let large_attributes = file.attributes("/shared/large") catch {
+    error => abort("large attributes failed: " + error.message())
+  }
+  assert_eq(large_attributes.length(), 2)
+  for (name, value) in [("first", large_first), ("second", large_second)] {
+    match large_attributes.search_by(attribute => attribute.name == name) {
+      Some(position) =>
+        match large_attributes[position].values {
+          Some(Strings(values)) => assert_eq(values, [value])
+          _ => abort("expected shared-field large string")
+        }
+      None => abort("expected large shared-field attribute")
+    }
+  }
   let all_shared = file.attributes("/shared/all") catch {
     error => abort("all-shared attributes failed: " + error.message())
   }
@@ -352,6 +482,26 @@ test "writer shares attributes through SOHM" {
       None => abort("expected all-shared attribute")
     }
   }
+  let all_header = parse_object_header(
+    bytes,
+    file.resolve("/shared/all").address,
+    8,
+    8,
+    0UL,
+  )
+  let all_info = match all_header.first(msg_attribute_info) {
+    Some(message) => message.data
+    None => abort("expected all-shared attribute info")
+  }
+  let all_reader = Reader::new(all_info)
+  let _version = all_reader.read_u8()
+  let all_flags = all_reader.read_u8().to_int()
+  if (all_flags & 0x01) != 0 {
+    all_reader.skip(2)
+  }
+  let all_heap_address = all_reader.read_uint_le(8)
+  let all_heap = parse_fractal_heap(bytes, all_heap_address, 8, 8, 0UL)
+  assert_eq(all_heap.blocks.length(), 0)
 }
 
 ///|

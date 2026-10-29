@@ -322,12 +322,14 @@ round-trips. The writer does not emit dense indirect or huge heap blocks or a
 free-space manager.
 
 `set_attribute_sharing(true)` places encoded whole-attribute messages of at
-most 4 KiB in one file-wide SOHM attribute heap. Compact attributes store a
+most 4 KiB in one file-wide SOHM heap. Compact attributes store a
 shared-message wrapper in the object header; dense attribute B-tree records
 store the SOHM heap ID directly, and the object's local attribute heap contains
-only unshared messages. The writer emits one SMTB attribute index and its FRHP
-heap. Sharing is disabled by default; larger attributes and shared
-datatype/dataspace fields remain unshared.
+only unshared messages. Larger attributes remain inline or dense but share
+deduplicated datatype/dataspace messages, using attribute flags `0x01` and
+`0x02` and version-3 heap-ID wrappers for those fields. The writer emits one
+SMTB index carrying datatype, dataspace and whole-attribute messages. Sharing
+is disabled by default.
 Metadata outside those bounds remains compact and is split across checksummed
 OCHK continuation chunks. The writer demo includes a 2500-attribute object, a
 group with both dense links and dense attributes including a variable-length
@@ -391,10 +393,11 @@ preserve order and duplicates.
   caller-supplied slots. Remote URLs, filtered or chunked external layouts and
   automatic external-file creation are not supported. Tile iteration is
   supported for reads.
-- Optional writer SOHM support covers whole attributes up to 4 KiB through one
-  SMTB attribute index and one managed-object fractal heap. It does not emit
-  shared datatype/dataspace fields, shared fill values or committed-datatype
-  targets, and it does not deduplicate equal attributes.
+- Optional writer SOHM support covers whole attributes up to 4 KiB and
+  deduplicated datatype/dataspace fields for larger attributes through one
+  combined SMTB index and one managed-object fractal heap. It does not emit
+  shared fill values or committed-datatype targets, and it does not deduplicate
+  equal whole attributes.
 - Numeric storage wider than 8 bytes and binary floating-point normalizations
   other than implied MSB are not supported.
 - Floating-point scale-offset supports f32/f64 decimal scaling; other floating

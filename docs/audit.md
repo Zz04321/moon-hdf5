@@ -794,6 +794,26 @@ all-shared dense group with an empty local heap, and the writer demo's
 2,500-attribute object. The release verifier also requires an `SMTB` section in
 the generated file.
 
-The boundary remains encoded whole attributes of at most 4 KiB, one attribute
-index, no deduplication, and no writer output for shared datatype/dataspace
-fields, fills or committed targets.
+At that stage the boundary remained encoded whole attributes of at most 4 KiB,
+one attribute index, no deduplication, and no writer output for shared
+datatype/dataspace fields, fills or committed targets.
+
+## Shared-field writer review — 2026-10-29
+
+The SOHM writer now interns datatype and dataspace messages for attributes
+whose full encoded message exceeds the managed 4 KiB whole-attribute limit.
+Equal field messages are deduplicated across objects. The attribute payload
+sets flags `0x01` and `0x02` and replaces each field with a version-3 heap-ID
+wrapper. Datatype, dataspace and whole-attribute messages share one FRHP heap,
+and the single SMTB index advertises message types `0x100A`.
+
+Tests inspect the generated metadata rather than relying only on decoded
+values. They cover two compact 5 KB attributes with interned fields, a mixed
+dense collection containing a field-shared 5 KB attribute, an all-whole-shared
+dense collection with an empty local heap, and MoonBit round-trips. The writer
+demo's 9 KB and 20 × 60 KB attribute groups are read successfully by h5py
+3.13.0/HDF5 1.14.6, including every attribute value.
+
+The boundary remains one SOHM table and heap, managed messages of at most
+4 KiB, and no shared fills or committed-target messages. Whole attributes
+larger than 4 KiB are not deduplicated as complete messages.
