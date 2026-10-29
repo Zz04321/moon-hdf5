@@ -369,6 +369,7 @@ pub struct Hdf5Writer {
   priv external_links : Array[WritableExternalLink]
   priv link_orders : Array[WritableLinkOrder]
   priv link_order_counters : Array[WritableLinkOrderCounter]
+  priv mut share_attributes : Bool
 }
 
 ///|
@@ -437,6 +438,24 @@ priv struct WritableDenseHeapEntry {
   hash : UInt32
   data : Bytes
   creation_order : UInt64
+  flags : Byte
+  shared_id : Bytes?
+}
+
+///|
+priv struct WritableSharedAttribute {
+  path : String
+  name : String
+  data : Bytes
+  id : Bytes
+}
+
+///|
+priv struct WritableSharedMetadata {
+  extension_address : UInt64
+  table_address : UInt64
+  heap_address : UInt64
+  attributes : Array[WritableSharedAttribute]
 }
 
 ///|
@@ -445,6 +464,7 @@ priv struct WritableLayout {
   heap : WritableGlobalHeap
   dense : Array[WritableDenseMetadata]
   external : Array[WritableExternalHeap]
+  shared : WritableSharedMetadata?
 }
 
 ///|
@@ -458,7 +478,19 @@ pub fn Hdf5Writer::new() -> Hdf5Writer {
     external_links: [],
     link_orders: [],
     link_order_counters: [],
+    share_attributes: false,
   }
+}
+
+///|
+/// Enables or disables writing whole attributes through the shared-object
+/// header message (SOHM) table. Attributes whose serialized message is at most
+/// 4 KiB are shared; larger attributes remain inline or dense.
+pub fn Hdf5Writer::set_attribute_sharing(
+  self : Hdf5Writer,
+  enabled : Bool,
+) -> Unit {
+  self.share_attributes = enabled
 }
 
 ///|
@@ -4762,6 +4794,8 @@ fn Hdf5Writer::dense_link_entries(
           track_order,
         ),
         creation_order: self.link_creation_order(child.path),
+        flags: b'\x00',
+        shared_id: None,
       })
     }
   }
@@ -4781,6 +4815,8 @@ fn Hdf5Writer::dense_link_entries(
         creation_order: self.link_creation_order(
           writer_soft_link_path(link.parent_path, link.name),
         ),
+        flags: b'\x00',
+        shared_id: None,
       })
     }
   }
@@ -4801,10 +4837,39 @@ fn Hdf5Writer::dense_link_entries(
         creation_order: self.link_creation_order(
           writer_soft_link_path(link.parent_path, link.name),
         ),
+        flags: b'\x00',
+        shared_id: None,
       })
     }
   }
   entries
+}
+
+///|
+fn writer_shared_attribute(
+  attributes : Array[WritableSharedAttribute],
+  path : String,
+  name : String,
+) -> WritableSharedAttribute? {
+  match
+    attributes.search_by(attribute => {
+      attribute.path == path && attribute.name == name
+    }) {
+    Some(index) => Some(attributes[index])
+    None => None
+  }
+}
+
+///|
+fn encode_writer_shared_message(heap_id : Bytes) -> Bytes raise Hdf5Error {
+  guard heap_id.length() == 8 else {
+    raise InvalidField("writer shared-message heap ID has an invalid size")
+  }
+  let buffer = @buffer.Buffer::Buffer(size_hint=10)
+  buffer.write_byte(b'\x03')
+  buffer.write_byte(b'\x01')
+  writer_write_bytes(buffer, heap_id)
+  buffer.to_bytes()
 }
 
 ///|
@@ -4813,14 +4878,27 @@ fn Hdf5Writer::dense_attribute_entries(
   path : String,
   heap : WritableGlobalHeap,
   objects : Array[WritableObject],
+  shared~ : Array[WritableSharedAttribute] = [],
 ) -> Array[WritableDenseHeapEntry] raise Hdf5Error {
   let entries : Array[WritableDenseHeapEntry] = []
   for attribute in self.object_attributes(path) {
+    let (data, flags, shared_id) = match
+      writer_shared_attribute(shared, path, attribute.name) {
+      Some(shared_attribute) =>
+        (
+          encode_writer_shared_message(shared_attribute.id),
+          shared_message_flag.to_byte(),
+          Some(shared_attribute.id),
+        )
+      None => (encode_attribute(attribute, heap, objects), b'\x00', None)
+    }
     entries.push({
       name: attribute.name,
       hash: writer_name_hash(attribute.name),
-      data: encode_attribute(attribute, heap, objects),
+      data,
       creation_order: attribute.creation_order,
+      flags,
+      shared_id,
     })
   }
   entries
@@ -4876,10 +4954,12 @@ fn writer_next_power_of_two(
 fn encode_writer_dense_heap_header(
   root_address : UInt64,
   id_length : Int32,
-  block_size : Int32,
+  start_block_size : Int32,
+  managed_size : Int32,
   max_direct_size : Int32,
   max_heap_bits : Int32,
   record_count : Int32,
+  max_managed_size : Int32,
   table_width : Int32,
 ) -> Bytes {
   let buffer = @buffer.Buffer::Buffer(size_hint=146)
@@ -4888,13 +4968,13 @@ fn encode_writer_dense_heap_header(
   buffer.write_uint16_le(id_length.to_uint16())
   buffer.write_uint16_le(0)
   buffer.write_byte(b'\x02')
-  buffer.write_uint_le(writer_dense_max_managed_size.reinterpret_as_uint())
+  buffer.write_uint_le(max_managed_size.reinterpret_as_uint())
   buffer.write_uint64_le(0UL)
   buffer.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
   buffer.write_uint64_le(0UL)
   buffer.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
-  buffer.write_uint64_le(block_size.to_uint64())
-  buffer.write_uint64_le(block_size.to_uint64())
+  buffer.write_uint64_le(managed_size.to_uint64())
+  buffer.write_uint64_le(managed_size.to_uint64())
   buffer.write_uint64_le(0UL)
   buffer.write_uint64_le(record_count.to_uint64())
   buffer.write_uint64_le(0UL)
@@ -4902,7 +4982,7 @@ fn encode_writer_dense_heap_header(
   buffer.write_uint64_le(0UL)
   buffer.write_uint64_le(0UL)
   buffer.write_uint16_le(table_width.to_uint16())
-  buffer.write_uint64_le(block_size.to_uint64())
+  buffer.write_uint64_le(start_block_size.to_uint64())
   buffer.write_uint64_le(max_direct_size.to_uint64())
   buffer.write_uint16_le(max_heap_bits.to_uint16())
   buffer.write_uint16_le(1)
@@ -4952,23 +5032,56 @@ fn encode_writer_dense_direct_block(
   buffer.write_uint_le(0U)
   let ids : Array[Bytes] = []
   for entry in entries {
-    let offset = buffer.length()
-    guard offset.to_uint64() <= 0xFFFFFFFFUL &&
-      entry.data.length().to_uint64() <= 0xFFFFUL else {
-      raise InvalidField("writer dense heap object exceeds its identifier")
+    match entry.shared_id {
+      Some(id) => {
+        guard id.length() == 8 else {
+          raise InvalidField(
+            "writer shared-message heap ID has an invalid size",
+          )
+        }
+        ids.push(id)
+      }
+      None => {
+        let offset = buffer.length()
+        guard offset.to_uint64() <= 0xFFFFFFFFUL &&
+          entry.data.length().to_uint64() <= 0xFFFFUL else {
+          raise InvalidField("writer dense heap object exceeds its identifier")
+        }
+        let id = @buffer.Buffer::Buffer(size_hint=1 + heap_offset_size + 2)
+        id.write_byte(b'\x00')
+        write_uint_width(id, offset.to_uint64(), heap_offset_size)
+        id.write_uint16_le(entry.data.length().to_uint16())
+        ids.push(id.to_bytes())
+        writer_write_bytes(buffer, entry.data)
+      }
     }
-    let id = @buffer.Buffer::Buffer(size_hint=1 + heap_offset_size + 2)
-    id.write_byte(b'\x00')
-    write_uint_width(id, offset.to_uint64(), heap_offset_size)
-    id.write_uint16_le(entry.data.length().to_uint16())
-    ids.push(id.to_bytes())
-    writer_write_bytes(buffer, entry.data)
   }
   guard buffer.length() <= block_size else {
     raise InvalidField("writer dense heap block is too small")
   }
   writer_write_zeros(buffer, block_size - buffer.length())
   (patched_zeroed_checksum(buffer.to_bytes(), checksum_offset), ids)
+}
+
+///|
+fn encode_writer_dense_shared_ids(
+  entries : Array[WritableDenseHeapEntry],
+) -> Array[Bytes] raise Hdf5Error {
+  let ids : Array[Bytes] = []
+  for entry in entries {
+    match entry.shared_id {
+      Some(id) => {
+        guard id.length() == 8 else {
+          raise InvalidField(
+            "writer shared-message heap ID has an invalid size",
+          )
+        }
+        ids.push(id)
+      }
+      None => raise InvalidField("writer dense heap has an unallocated object")
+    }
+  }
+  ids
 }
 
 ///|
@@ -5021,6 +5134,127 @@ fn encode_writer_dense_btree_node(
 }
 
 ///|
+let writer_shared_max_managed_size : Int32 = 4096
+
+///|
+let writer_shared_table_size : Int32 = 38
+
+///|
+fn Hdf5Writer::shared_attribute_candidates(
+  self : Hdf5Writer,
+  objects : Array[WritableObject],
+  heap : WritableGlobalHeap,
+) -> Array[WritableSharedAttribute] raise Hdf5Error {
+  let attributes : Array[WritableSharedAttribute] = []
+  if !self.share_attributes {
+    return attributes
+  }
+  let empty_id = Bytes::make(8, b'\x00')
+  for object in objects {
+    for attribute in self.object_attributes(object.path) {
+      let data = encode_attribute(attribute, heap, objects)
+      if data.length() <= writer_shared_max_managed_size {
+        attributes.push({
+          path: object.path,
+          name: attribute.name,
+          data,
+          id: empty_id,
+        })
+      }
+    }
+  }
+  guard attributes.length() <= 65535 else {
+    raise InvalidArgument("writer has too many shared attributes")
+  }
+  attributes
+}
+
+///|
+fn encode_writer_shared_heap(
+  heap_address : UInt64,
+  attributes : Array[WritableSharedAttribute],
+) -> (Bytes, Array[Bytes]) raise Hdf5Error {
+  guard attributes.length() > 0 else { return (b"", []) }
+  let heap_offset_size = 5
+  let direct_overhead = 4 + 1 + 8 + heap_offset_size + metadata_checksum_size
+  let mut data_size = direct_overhead
+  for attribute in attributes {
+    guard attribute.data.length() <= writer_shared_max_managed_size else {
+      raise InvalidField("writer shared attribute exceeds its managed heap")
+    }
+    data_size = data_size + attribute.data.length()
+  }
+  let block_size = writer_next_power_of_two(data_size, 1024)
+  let max_direct_size = writer_next_power_of_two(block_size, 65536)
+  let root_address = heap_address + 146UL
+  let header = encode_writer_dense_heap_header(
+    root_address,
+    8,
+    block_size,
+    block_size,
+    max_direct_size,
+    40,
+    attributes.length(),
+    writer_shared_max_managed_size,
+    4,
+  )
+  let entries = attributes.map(attribute => {
+    name: attribute.name,
+    hash: 0U,
+    data: attribute.data,
+    creation_order: 0UL,
+    flags: b'\x00',
+    shared_id: None,
+  })
+  let (direct_block, ids) = encode_writer_dense_direct_block(
+    heap_address, block_size, heap_offset_size, entries,
+  )
+  let buffer = @buffer.Buffer::Buffer(
+    size_hint=header.length() + direct_block.length(),
+  )
+  writer_write_bytes(buffer, header)
+  writer_write_bytes(buffer, direct_block)
+  (buffer.to_bytes(), ids)
+}
+
+///|
+fn encode_writer_shared_table(heap_address : UInt64, count : Int32) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=writer_shared_table_size)
+  writer_write_bytes(buffer, b"SMTB")
+  buffer.write_byte(b'\x00')
+  buffer.write_byte(b'\x00')
+  buffer.write_uint16_le(0x1000U.to_uint16())
+  buffer.write_uint_le(0U)
+  buffer.write_uint16_le(65535U.to_uint16())
+  buffer.write_uint16_le(0U.to_uint16())
+  buffer.write_uint16_le(count.to_uint16())
+  buffer.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
+  buffer.write_uint64_le(heap_address)
+  buffer.write_uint_le(metadata_checksum(buffer.to_bytes(), 0, buffer.length()))
+  buffer.to_bytes()
+}
+
+///|
+fn encode_writer_superblock_extension(table_address : UInt64) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=40)
+  buffer.write_byte(b'\x01')
+  buffer.write_byte(b'\x00')
+  buffer.write_uint16_le(1U.to_uint16())
+  buffer.write_uint_le(1U)
+  buffer.write_uint_le(24U)
+  buffer.write_uint_le(0U)
+  buffer.write_uint16_le(0x000FU.to_uint16())
+  buffer.write_uint16_le(16U.to_uint16())
+  buffer.write_byte(b'\x00')
+  writer_write_zeros(buffer, 3)
+  buffer.write_byte(b'\x00')
+  buffer.write_uint64_le(table_address)
+  buffer.write_byte(b'\x01')
+  writer_write_zeros(buffer, 6)
+  buffer.to_bytes()
+}
+
+///|
 fn Hdf5Writer::encode_dense_metadata(
   self : Hdf5Writer,
   object : WritableObject,
@@ -5028,6 +5262,7 @@ fn Hdf5Writer::encode_dense_metadata(
   heap : WritableGlobalHeap,
   heap_address : UInt64,
   kind : WritableDenseKind,
+  shared~ : Array[WritableSharedAttribute] = [],
 ) -> (Bytes, Bytes, Bytes) raise Hdf5Error {
   let group = match kind {
     WritableDenseLinks => true
@@ -5036,7 +5271,7 @@ fn Hdf5Writer::encode_dense_metadata(
   let entries = if group {
     self.dense_link_entries(object, objects, track_order=true)
   } else {
-    self.dense_attribute_entries(object.path, heap, objects)
+    self.dense_attribute_entries(object.path, heap, objects, shared~)
   }
   guard writer_dense_entries_fit(entries) else {
     raise InvalidField("dense metadata is not available for this object")
@@ -5049,25 +5284,47 @@ fn Hdf5Writer::encode_dense_metadata(
   let minimum_block_size = if group { 512 } else { 1024 }
   let direct_overhead = 4 + 1 + 8 + heap_offset_size + metadata_checksum_size
   let mut data_size = direct_overhead
+  let mut local_count = 0
   for entry in entries {
-    data_size = data_size + entry.data.length()
+    if entry.shared_id is None {
+      local_count = local_count + 1
+      data_size = data_size + entry.data.length()
+    }
   }
   let block_size = writer_next_power_of_two(data_size, minimum_block_size)
   let max_direct_size = writer_next_power_of_two(block_size, 65536)
-  let root_address = heap_address + 146UL
-  let index_address = root_address + block_size.to_uint64()
+  let root_address = if local_count > 0 {
+    heap_address + 146UL
+  } else {
+    0xFFFFFFFFFFFFFFFFUL
+  }
+  let index_address = if local_count > 0 {
+    heap_address + 146UL + block_size.to_uint64()
+  } else {
+    heap_address + 146UL
+  }
   let heap_header = encode_writer_dense_heap_header(
     root_address,
     id_length,
     block_size,
+    if local_count > 0 {
+      block_size
+    } else {
+      0
+    },
     max_direct_size,
     max_heap_bits,
-    entries.length(),
+    local_count,
+    writer_dense_max_managed_size,
     4,
   )
-  let (direct_block, ids) = encode_writer_dense_direct_block(
-    heap_address, block_size, heap_offset_size, entries,
-  )
+  let (direct_block, ids) = if local_count > 0 {
+    encode_writer_dense_direct_block(
+      heap_address, block_size, heap_offset_size, entries,
+    )
+  } else {
+    (b"", encode_writer_dense_shared_ids(entries))
+  }
   let records : Array[Bytes] = []
   for index in 0..<entries.length() {
     let record = @buffer.Buffer::Buffer(size_hint=record_size)
@@ -5076,7 +5333,7 @@ fn Hdf5Writer::encode_dense_metadata(
       writer_write_bytes(record, ids[index])
     } else {
       writer_write_bytes(record, ids[index])
-      record.write_byte(b'\x00')
+      record.write_byte(entries[index].flags)
       record.write_uint_le(entries[index].creation_order.to_uint())
       record.write_uint_le(entries[index].hash)
     }
@@ -5113,7 +5370,7 @@ fn Hdf5Writer::encode_dense_metadata(
       writer_write_bytes(order_record, ids[index])
     } else {
       writer_write_bytes(order_record, ids[index])
-      order_record.write_byte(b'\x00')
+      order_record.write_byte(entries[index].flags)
       order_record.write_uint_le(entries[index].creation_order.to_uint())
     }
     guard order_record.length() == order_record_size else {
@@ -5251,6 +5508,22 @@ fn write_header_message_with_order(
   if creation_order {
     buffer.write_uint16_le(0)
   }
+  writer_write_bytes(buffer, data)
+}
+
+///|
+fn write_header_message_with_flags(
+  buffer : @buffer.Buffer,
+  message_type : Int32,
+  data : Bytes,
+  flags : Byte,
+) -> Unit raise Hdf5Error {
+  guard data.length() <= 65535 else {
+    raise InvalidField("object header message is too large")
+  }
+  buffer.write_byte(message_type.to_byte())
+  buffer.write_uint16_le(data.length().to_uint16())
+  buffer.write_byte(flags)
   writer_write_bytes(buffer, data)
 }
 
@@ -5614,6 +5887,7 @@ fn Hdf5Writer::object_payload(
   dense : Array[WritableDenseMetadata],
   external : Array[WritableExternalHeap],
   external_addresses_final : Bool,
+  shared~ : Array[WritableSharedAttribute] = [],
 ) -> Bytes raise Hdf5Error {
   let buffer = @buffer.Buffer::Buffer()
   match object.kind {
@@ -5765,7 +6039,12 @@ fn Hdf5Writer::object_payload(
   }
   let attributes = self.object_attributes(object.path)
   if attributes.length() > 0 {
-    let entries = self.dense_attribute_entries(object.path, heap, objects)
+    let entries = self.dense_attribute_entries(
+      object.path,
+      heap,
+      objects,
+      shared~,
+    )
     if writer_dense_entries_fit(entries) {
       let (heap_address, index_address, order_index_address) = writer_dense_addresses(
         dense,
@@ -5790,7 +6069,12 @@ fn Hdf5Writer::object_payload(
         encode_compact_attribute_info(),
       )
       for entry in entries {
-        write_header_message(buffer, msg_attribute, entry.data)
+        write_header_message_with_flags(
+          buffer,
+          msg_attribute,
+          entry.data,
+          entry.flags,
+        )
       }
     }
   }
@@ -6125,20 +6409,36 @@ fn assign_writable_addresses(
   templates : Array[WritableObject],
 ) -> WritableLayout raise Hdf5Error {
   let empty_heap = empty_writable_heap()
+  let shared_candidates = writer.shared_attribute_candidates(
+    templates, empty_heap,
+  )
   let lengths : Array[Int32] = []
   for object in templates {
     lengths.push(
       encode_object_header(
-        writer.object_payload(object, templates, empty_heap, [], [], false),
+        writer.object_payload(
+          object,
+          templates,
+          empty_heap,
+          [],
+          [],
+          false,
+          shared=shared_candidates,
+        ),
         0UL,
         creation_order=writer_dense_entries_fit(
-          writer.dense_attribute_entries(object.path, empty_heap, templates),
+          writer.dense_attribute_entries(
+            object.path,
+            empty_heap,
+            templates,
+            shared=shared_candidates,
+          ),
         ),
       ).length(),
     )
   }
   let objects : Array[WritableObject] = []
-  let mut offset = 48
+  let mut offset = if shared_candidates.length() > 0 { 88 } else { 48 }
   for index in 0..<templates.length() {
     let object = templates[index]
     objects.push({
@@ -6202,13 +6502,23 @@ fn assign_writable_addresses(
     candidates.push(
       (
         WritableDenseAttributes,
-        writer.dense_attribute_entries(object.path, heap, objects),
+        writer.dense_attribute_entries(
+          object.path,
+          heap,
+          objects,
+          shared=shared_candidates,
+        ),
       ),
     )
     for (kind, dense_entries) in candidates {
       if writer_dense_entries_fit(dense_entries) {
         let (placeholder_heap, placeholder_index, placeholder_order_index) = writer.encode_dense_metadata(
-          object, objects, heap, 0UL, kind,
+          object,
+          objects,
+          heap,
+          0UL,
+          kind,
+          shared=shared_candidates,
         )
         let heap_address = offset.to_uint64()
         let index_address = heap_address + placeholder_heap.length().to_uint64()
@@ -6300,11 +6610,60 @@ fn assign_writable_addresses(
       WritableGroup => ()
     }
   }
-  { objects, heap, dense, external, }
+  let shared = if shared_candidates.length() > 0 {
+    let table_address = offset.to_uint64()
+    let heap_address = writer_align(
+      table_address.to_int() + writer_shared_table_size,
+    ).to_uint64()
+    let attributes : Array[WritableSharedAttribute] = []
+    for candidate in shared_candidates {
+      let attribute = match
+        writer
+        .object_attributes(candidate.path)
+        .search_by(attribute => attribute.name == candidate.name) {
+        Some(index) => writer.object_attributes(candidate.path)[index]
+        None => raise InvalidField("writer shared attribute disappeared")
+      }
+      let data = encode_attribute(attribute, heap, objects)
+      guard data.length() <= writer_shared_max_managed_size else {
+        raise InvalidField("writer shared attribute changed size")
+      }
+      attributes.push({
+        path: candidate.path,
+        name: candidate.name,
+        data,
+        id: b"",
+      })
+    }
+    let (heap_bytes, ids) = encode_writer_shared_heap(heap_address, attributes)
+    let resolved : Array[WritableSharedAttribute] = []
+    for index in 0..<attributes.length() {
+      resolved.push({
+        path: attributes[index].path,
+        name: attributes[index].name,
+        data: attributes[index].data,
+        id: ids[index],
+      })
+    }
+    offset = writer_align(heap_address.to_int() + heap_bytes.length())
+    Some({
+      extension_address: 48UL,
+      table_address,
+      heap_address,
+      attributes: resolved,
+    })
+  } else {
+    None
+  }
+  { objects, heap, dense, external, shared, }
 }
 
 ///|
-fn encode_superblock(root_address : UInt64, eof : UInt64) -> Bytes {
+fn encode_superblock(
+  root_address : UInt64,
+  extension_address : UInt64,
+  eof : UInt64,
+) -> Bytes {
   let buffer = @buffer.Buffer::Buffer(size_hint=48)
   writer_write_bytes(buffer, b"\x89HDF\r\n\x1a\n")
   buffer.write_byte(b'\x03')
@@ -6312,7 +6671,7 @@ fn encode_superblock(root_address : UInt64, eof : UInt64) -> Bytes {
   buffer.write_byte(b'\x08')
   buffer.write_byte(b'\x00')
   buffer.write_uint64_le(0UL)
-  buffer.write_uint64_le(0xFFFFFFFFFFFFFFFFUL)
+  buffer.write_uint64_le(extension_address)
   buffer.write_uint64_le(eof)
   buffer.write_uint64_le(root_address)
   buffer.write_uint_le(metadata_checksum(buffer.to_bytes(), 0, buffer.length()))
@@ -6324,6 +6683,10 @@ fn encode_superblock(root_address : UInt64, eof : UInt64) -> Bytes {
 pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
   let layout = assign_writable_addresses(self, initial_writable_objects(self))
   let objects = layout.objects
+  let shared_attributes = match layout.shared {
+    Some(shared) => shared.attributes
+    None => []
+  }
   let encoded_headers : Array[Bytes] = []
   let mut eof = 48
   for object in objects {
@@ -6339,6 +6702,7 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
         layout.dense,
         layout.external,
         true,
+        shared=shared_attributes,
       ),
       object.address,
       creation_order~,
@@ -6365,6 +6729,7 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
       layout.heap,
       metadata.heap_address,
       metadata.kind,
+      shared=shared_attributes,
     )
     guard heap_bytes.length().to_uint64() ==
       metadata.index_address - metadata.heap_address else {
@@ -6424,14 +6789,54 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
       WritableGroup => ()
     }
   }
+  let shared_payloads : Array[(UInt64, Bytes)] = []
+  if layout.shared is Some(shared) {
+    let table = encode_writer_shared_table(
+      shared.heap_address,
+      shared.attributes.length(),
+    )
+    let (heap_bytes, ids) = encode_writer_shared_heap(
+      shared.heap_address,
+      shared.attributes,
+    )
+    for index in 0..<ids.length() {
+      guard ids[index] == shared.attributes[index].id else {
+        raise InvalidField("shared-message heap ID changed during encoding")
+      }
+    }
+    guard table.length() <=
+      shared.heap_address.to_int() - shared.table_address.to_int() else {
+      raise InvalidField("shared-message table overlaps its heap")
+    }
+    shared_payloads.push((shared.table_address, table))
+    shared_payloads.push((shared.heap_address, heap_bytes))
+    let end = writer_align(shared.heap_address.to_int() + heap_bytes.length())
+    if end > eof {
+      eof = end
+    }
+  }
   let output = @buffer.Buffer::Buffer(size_hint=eof)
   writer_write_bytes(
     output,
     encode_superblock(
       find_writable_object(objects, "/").address,
+      match layout.shared {
+        Some(shared) => shared.extension_address
+        None => 0xFFFFFFFFFFFFFFFFUL
+      },
       eof.to_uint64(),
     ),
   )
+  if layout.shared is Some(shared) {
+    writer_write_zeros(
+      output,
+      shared.extension_address.to_int() - output.length(),
+    )
+    writer_write_bytes(
+      output,
+      encode_writer_superblock_extension(shared.table_address),
+    )
+  }
   for index in 0..<objects.length() {
     writer_write_zeros(
       output,
@@ -6459,6 +6864,10 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
     writer_write_bytes(output, payload)
   }
   for (address, payload) in raw_payloads {
+    writer_write_zeros(output, address.to_int() - output.length())
+    writer_write_bytes(output, payload)
+  }
+  for (address, payload) in shared_payloads {
     writer_write_zeros(output, address.to_int() - output.length())
     writer_write_bytes(output, payload)
   }

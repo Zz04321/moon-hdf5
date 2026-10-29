@@ -244,6 +244,117 @@ test "writer indexes dense links and attributes by creation order" {
 }
 
 ///|
+test "writer shares attributes through SOHM" {
+  let writer = Hdf5Writer::new()
+  writer.set_attribute_sharing(true)
+  writer.add_group("/shared")
+  writer.add_dataset("/shared/value", [1UL], UInt64Values([7UL]))
+  writer.add_attribute("/shared/value", "compact", [], UInt64Values([7UL]))
+  writer.add_group("/shared/dense")
+  for index in 0..<10 {
+    writer.add_attribute(
+      "/shared/dense",
+      "shared_" + index.to_string(),
+      [],
+      UInt64Values([index.to_uint64()]),
+    )
+  }
+  writer.add_attribute(
+    "/shared/dense",
+    "text",
+    [],
+    VariableStringValues(["共享属性"]),
+  )
+  let large = "l".repeat(5000)
+  writer.add_attribute(
+    "/shared/dense",
+    "large",
+    [],
+    FixedStringValues([large], 5000),
+  )
+  writer.add_group("/shared/all")
+  for index in 0..<9 {
+    writer.add_attribute(
+      "/shared/all",
+      "all_" + index.to_string(),
+      [],
+      UInt64Values([(index + 20).to_uint64()]),
+    )
+  }
+
+  let bytes = writer.encode() catch {
+    error => abort("encode failed: " + error.message())
+  }
+  assert_true(bytes.find(b"SMTB") is Some(_))
+  let file = Hdf5File::parse(bytes) catch {
+    error => abort("parse failed: " + error.message())
+  }
+  let compact_header = parse_object_header(
+    bytes,
+    file.resolve("/shared/value").address,
+    8,
+    8,
+    0UL,
+  )
+  match compact_header.first(msg_attribute) {
+    Some(message) => assert_true((message.flags.to_int() & 0x02) != 0)
+    None => abort("expected compact shared attribute")
+  }
+  let attributes = file.attributes("/shared/dense") catch {
+    error => abort("attributes failed: " + error.message())
+  }
+  assert_eq(attributes.length(), 12)
+  for index in 0..<10 {
+    match
+      attributes.search_by(attribute => {
+        attribute.name == "shared_" + index.to_string()
+      }) {
+      Some(position) =>
+        match attributes[position].values {
+          Some(UnsignedIntegers(values)) =>
+            assert_eq(values, [index.to_uint64()])
+          _ => abort("expected shared integer attribute")
+        }
+      None => abort("expected shared attribute")
+    }
+  }
+  match attributes.search_by(attribute => attribute.name == "text") {
+    Some(position) =>
+      match attributes[position].values {
+        Some(Strings(values)) => assert_eq(values, ["共享属性"])
+        _ => abort("expected shared variable string")
+      }
+    None => abort("expected shared text attribute")
+  }
+  match attributes.search_by(attribute => attribute.name == "large") {
+    Some(position) =>
+      match attributes[position].values {
+        Some(Strings(values)) => assert_eq(values, [large])
+        _ => abort("expected unshared large string")
+      }
+    None => abort("expected large attribute")
+  }
+  let all_shared = file.attributes("/shared/all") catch {
+    error => abort("all-shared attributes failed: " + error.message())
+  }
+  assert_eq(all_shared.length(), 9)
+  for index in 0..<9 {
+    match
+      all_shared.search_by(attribute => {
+        attribute.name == "all_" + index.to_string()
+      }) {
+      Some(position) =>
+        match all_shared[position].values {
+          Some(UnsignedIntegers(values)) =>
+            assert_eq(values, [(index + 20).to_uint64()])
+          _ => abort("expected all-shared integer attribute")
+        }
+      None => abort("expected all-shared attribute")
+    }
+  }
+}
+
+///|
 test "writer round-trips object reference datasets and attributes" {
   let writer = Hdf5Writer::new()
   writer.add_dataset(
@@ -879,7 +990,14 @@ test "writer validates object reference paths and targets" {
 
 ///|
 test "writer enforces exact dense metadata limits" {
-  let entry = { name: "item", hash: 0U, data: b"", creation_order: 0UL, }
+  let entry = {
+    name: "item",
+    hash: 0U,
+    data: b"",
+    creation_order: 0UL,
+    flags: b'\x00',
+    shared_id: None,
+  }
   assert_true(!writer_dense_entries_fit(Array::make(8, entry)))
   assert_true(writer_dense_entries_fit(Array::make(9, entry)))
   assert_true(writer_dense_entries_fit(Array::make(65535, entry)))
@@ -890,12 +1008,16 @@ test "writer enforces exact dense metadata limits" {
     hash: 0U,
     data: Bytes::makei(65535, _ => b'\x00'),
     creation_order: 0UL,
+    flags: b'\x00',
+    shared_id: None,
   }
   let over_limit = {
     name: "item",
     hash: 0U,
     data: Bytes::makei(65536, _ => b'\x00'),
     creation_order: 0UL,
+    flags: b'\x00',
+    shared_id: None,
   }
   assert_true(writer_dense_entries_fit(Array::make(9, at_limit)))
   assert_true(!writer_dense_entries_fit(Array::make(9, over_limit)))

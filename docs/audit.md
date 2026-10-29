@@ -467,7 +467,8 @@ internally shared datatype/dataspace fields, whole shared attributes, shared
 fills, committed datatype targets, 13-record dense attribute indexes in two
 groups, a chunked dataset and both read paths. The verifier also checks the raw
 SOHM signatures and shared flags in the object header and dense B-tree records.
-Writing SOHM metadata remains unsupported; the writer emits inline metadata.
+At the time of this reader review, writing SOHM metadata was unsupported and
+the writer emitted inline metadata only.
 
 ## External raw-data storage review — 2026-10-27
 
@@ -772,4 +773,27 @@ group, reads the attribute values and resolves the link targets, confirming the
 larger direct block and the 16-bit heap IDs. The boundary test now checks
 65,535/65,536-byte managed objects instead of 4,096/4,097. Objects above 65,535
 bytes still require huge IDs; indirect heap blocks, a free-space manager and
-SOHM writing remain outside this writer profile.
+SOHM writing were still outside the writer profile at that point.
+
+## Shared-attribute writer review — 2026-10-29
+
+The writer now emits a superblock-extension SOHM table, one SMTB attribute
+index and an FRHP managed-object heap. Compact shared attributes use the
+10-byte version-3 heap-ID wrapper. Dense shared attributes use the SOHM heap ID
+directly in the attribute B-tree record and set the shared flag; their local
+dense attribute heap is omitted when every attribute is shared. Mixed dense
+collections keep only unshared messages in the local heap.
+
+Byte-level comparison with HDF5 1.14.6 fixture output caught an initial layout
+error: the B-tree record pointed at the local dense heap's wrapper instead of
+the SOHM heap, so the first dense read started inside an attribute and failed
+with EOF. The corrected writer was checked with MoonBit round-trip tests and
+h5py 3.13.0/HDF5 1.14.6. Coverage includes compact attributes, mixed dense
+attributes with a variable-length string and a 5 KB unshared value, an
+all-shared dense group with an empty local heap, and the writer demo's
+2,500-attribute object. The release verifier also requires an `SMTB` section in
+the generated file.
+
+The boundary remains encoded whole attributes of at most 4 KiB, one attribute
+index, no deduplication, and no writer output for shared datatype/dataspace
+fields, fills or committed targets.

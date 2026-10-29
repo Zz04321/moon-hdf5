@@ -50,6 +50,7 @@ def verify(path: Path) -> None:
 
 
 def verify_file(path: Path) -> None:
+    assert b"SMTB" in path.read_bytes()
     with h5py.File(path, "r") as handle:
         assert list(handle) == ["experiment", "metadata", "structured", "types"]
         assert sorted(handle["experiment"]) == [

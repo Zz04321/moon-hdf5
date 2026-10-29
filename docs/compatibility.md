@@ -18,8 +18,9 @@ indexes, Deflate/Shuffle/Fletcher32 and integer or floating-point scale-offset
 pipelines, fixed-point and normalized binary numeric layouts, string layouts,
 the structured datatypes listed below, fill
 values, and hyperslab and ordered-point selections. It also resolves shared
-object header messages (SOHM) for the structures exercised below. The writer profile covers
-new-file writing of the structures listed in its table. Known unsupported
+object header messages (SOHM) for the structures exercised below. The writer
+profile covers new-file writing of the structures listed in its table,
+including optional whole-attribute sharing. Known unsupported
 structures raise `UnsupportedFeature`; profile-external inputs are not a v1.0
 compatibility promise.
 
@@ -66,7 +67,7 @@ wasm and native MoonBit tests.
 | References | Legacy object references under 4- and 8-byte address widths, including datasets, groups, the root group, committed datatypes and attribute values. Legacy dataset-region references cover compact, contiguous and filtered chunk targets, with none/all, point and regular or irregular hyperslab selections, selected-value reads and null or dangling rejection | Object path discovery needs a named hard link. Region targets must be datasets in the same file. Region results are memory resident; version-4 encoded references are not resolved |
 | Fill values | Default, fixed-size and custom variable-length string fills for unallocated contiguous or chunked storage, including global-heap descriptors from producer files | Undefined/disabled policies and custom variable-length sequence fills are rejected when decoding requires them |
 | Selections | Hyperslabs and ordered points across supported layouts and chunk indexes; `DatasetChunkIterator` reads edge-clipped tiles with early termination | A single selection result is memory resident; streaming memory is bounded by one tile plus intersecting storage chunks |
-| Shared messages | Superblock-extension SOHM table, SMTB indexes, fractal-heap heap IDs, wrapper versions 1–3, committed object-header targets, shared fills and dense-attribute shared records | Writer output is absent; stored shared messages are rejected; filter-pipeline sharing follows the same resolver but is not fixture-verified |
+| Shared messages | Superblock-extension SOHM table, SMTB indexes, fractal-heap heap IDs, wrapper versions 1–3, committed object-header targets, shared fills and dense-attribute shared records | Writer output covers whole attributes only; shared datatype/dataspace fields, shared fills and committed targets are not written; filter-pipeline sharing follows the same resolver but is not fixture-verified |
 | Dense metadata | Managed/tiny/direct-huge/indirect-huge fractal-heap objects and metadata v2 B-trees, including SOHM heap IDs in dense attribute records | Broader non-matrix interoperability remains to be tested |
 | NetCDF-4 producer files | A real netCDF4 1.7.5/libnetcdf 4.10.1/HDF5 2.2.0 file with groups, dimension variables, shuffled/deflated chunks with a v1 B-tree index, UTF-8 strings and NetCDF dimension-reference attributes | Verifies the encoded HDF5 structures in this fixture, not complete netCDF-4 or CF-convention semantics |
 | MATLAB 7.3-compatible producer files | An hdf5storage 0.2.2 file with `MATLAB_class`, `MATLAB_int_decode`, `MATLAB_fields` and `MATLAB_empty` metadata; double, int32, logical, char and struct storage; scalar, vector, empty-array and hyperslab reads | Verifies only the encoded HDF5 structures and attributes; MATLAB array orientation, type conversion and higher-level MAT-file semantics remain the caller's responsibility |
@@ -100,8 +101,8 @@ earlier writer stages were also checked with h5py 3.16.0 and HDF5 2.0.0.
 | --- | --- | --- |
 | File framing | Superblock v3 and object headers v2 with OCHK continuations | Writer does not select older format versions |
 | Groups | Nested groups, compact hard, soft and external links, dense links with name and creation-order indexes, and continued compact headers; non-alphabetical insertion order round-trips | Dense links use the dense-metadata limits below |
-| Attributes | Inline numeric, fixed/vlen string and structured attributes, plus dense attributes with name and creation-order indexes; non-alphabetical insertion order round-trips | Dense attributes use the dense-metadata limits below |
-| Dense metadata | Automatic dense link and attribute storage for 9–65,535 records when each encoded heap object is at most 65,535 bytes; FRHP/FHDB direct block, BTHD/BTLF name index and creation-order index (types 6 and 9) | One direct block and one leaf per index; huge objects, indirect heap blocks, a free-space manager and a SOHM table are not written; out-of-bound sets use compact OCHK continuations |
+| Attributes | Inline numeric, fixed/vlen string and structured attributes, plus dense attributes with name and creation-order indexes; non-alphabetical insertion order round-trips. Optional whole-attribute sharing writes compact wrappers or direct SOHM heap IDs in dense records | Dense attributes use the dense-metadata limits below; sharing covers attributes up to 4 KiB and does not deduplicate equal values |
+| Dense metadata | Automatic dense link and attribute storage for 9–65,535 records when each encoded heap object is at most 65,535 bytes; FRHP/FHDB direct block, BTHD/BTLF name index and creation-order index (types 6 and 9). Optional SOHM output adds one SMTB attribute index and a managed-object FRHP heap | One direct block and one leaf per index; huge objects, indirect heap blocks and a free-space manager are not written; out-of-bound sets use compact OCHK continuations |
 | Dataset layouts | Contiguous, contiguous external raw data, paged fixed-array chunked and extensible-array chunked with inline, direct, super and paged data blocks | Virtual dataset storage is absent; external storage is limited to unfiltered fixed-size values with caller-managed files |
 | Numeric values | Little- and big-endian int/uint1–8 and IEEE float32/64; standard widths and byte orders are checked by h5py and nonstandard integer widths by MoonBit round-trip | Nonstandard floating-point output is absent |
 | Strings | Fixed-width and variable-length UTF-8, including empty and repeated strings | Other character encodings are absent |

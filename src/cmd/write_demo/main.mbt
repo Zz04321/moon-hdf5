@@ -5,6 +5,7 @@ fn run(args : Array[String]) -> Int32 {
     return 2
   }
   let writer = @lib.Hdf5Writer::new()
+  writer.set_attribute_sharing(true)
   try {
     writer.add_group("/experiment")
     writer.add_dataset(
