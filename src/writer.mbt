@@ -294,7 +294,7 @@ pub extend Hdf5WriteFilter with @debug.Debug::{to_repr}
 priv enum WritableStorage {
   WritableContiguous
   WritableChunked(Array[UInt32], Array[Hdf5WriteFilter])
-  WritableExtensible(Array[UInt32], Array[Hdf5WriteFilter], Int32)
+  WritableExtensible(Array[UInt32], Array[Hdf5WriteFilter], Array[Int32])
   WritableExternal(Array[Hdf5ExternalSlot])
 }
 
@@ -1883,10 +1883,10 @@ fn writer_dataset_chunk_grid(
   match dataset.storage {
     WritableChunked(dimensions, filters) =>
       (dimensions, filters, dataset.dimensions.copy())
-    WritableExtensible(dimensions, filters, unlimited_axis) => {
+    WritableExtensible(dimensions, filters, unlimited_axes) => {
       let grid_dimensions = dataset.dimensions.copy()
       for axis in 0..<grid_dimensions.length() {
-        if axis != unlimited_axis {
+        if !unlimited_axes.contains(axis) {
           grid_dimensions[axis] = dataset.maximum_dimensions[axis]
         }
       }
@@ -1960,7 +1960,7 @@ fn validate_extensible_dimensions(
   dimensions : Array[UInt64],
   maximum_dimensions : Array[UInt64?],
   chunk_dimensions : Array[UInt32],
-) -> (Array[UInt64], Int32) raise Hdf5Error {
+) -> (Array[UInt64], Array[Int32]) raise Hdf5Error {
   guard dimensions.length() > 0 &&
     maximum_dimensions.length() == dimensions.length() &&
     chunk_dimensions.length() == dimensions.length() else {
@@ -1969,7 +1969,7 @@ fn validate_extensible_dimensions(
     )
   }
   let encoded_maximum : Array[UInt64] = []
-  let mut unlimited_axis = -1
+  let unlimited_axes : Array[Int32] = []
   for axis in 0..<dimensions.length() {
     guard dimensions[axis] <= 0x7FFFFFFFUL &&
       chunk_dimensions[axis] > 0U &&
@@ -1988,27 +1988,24 @@ fn validate_extensible_dimensions(
         encoded_maximum.push(maximum)
       }
       None => {
-        guard unlimited_axis == -1 else {
-          raise InvalidArgument(
-            "extensible dataset requires one unlimited dimension",
-          )
-        }
-        unlimited_axis = axis
+        unlimited_axes.push(axis)
         encoded_maximum.push(0xFFFFFFFFFFFFFFFFUL)
       }
     }
   }
-  guard unlimited_axis >= 0 else {
-    raise InvalidArgument("extensible dataset requires one unlimited dimension")
+  guard unlimited_axes.length() > 0 else {
+    raise InvalidArgument(
+      "extensible dataset requires at least one unlimited dimension",
+    )
   }
-  (encoded_maximum, unlimited_axis)
+  (encoded_maximum, unlimited_axes)
 }
 
 ///|
-/// Adds a chunked dataset with exactly one unlimited dimension.
+/// Adds a chunked dataset with one or more unlimited dimensions.
 ///
-/// A `None` maximum marks the unlimited axis. Other maximum dimensions are
-/// finite and reserve a stable chunk-grid width for later resizes.
+/// A `None` maximum marks an unlimited axis. One unlimited axis uses an
+/// extensible-array index; multiple unlimited axes use a v2 B-tree.
 pub fn Hdf5Writer::add_extensible_dataset(
   self : Hdf5Writer,
   path : String,
@@ -2027,7 +2024,7 @@ pub fn Hdf5Writer::add_extensible_dataset(
     raise InvalidArgument("writer object path already exists")
   }
   validate_write_values(dimensions, values)
-  let (encoded_maximum, unlimited_axis) = validate_extensible_dimensions(
+  let (encoded_maximum, unlimited_axes) = validate_extensible_dimensions(
     dimensions, maximum_dimensions, chunk_dimensions,
   )
   validate_writer_chunk_size(
@@ -2039,7 +2036,7 @@ pub fn Hdf5Writer::add_extensible_dataset(
   let copied_fill = validated_write_fill(values, fill_value)
   let grid_dimensions = dimensions.copy()
   for axis in 0..<grid_dimensions.length() {
-    if axis != unlimited_axis {
+    if !unlimited_axes.contains(axis) {
       grid_dimensions[axis] = encoded_maximum[axis]
     }
   }
@@ -2054,7 +2051,7 @@ pub fn Hdf5Writer::add_extensible_dataset(
     storage: WritableExtensible(
       chunk_dimensions.copy(),
       filters.copy(),
-      unlimited_axis,
+      unlimited_axes,
     ),
     fill_value: copied_fill,
     chunk_filter_masks: [],
@@ -2222,8 +2219,8 @@ pub fn Hdf5Writer::resize_dataset(
 ) -> Unit raise Hdf5Error {
   let index = self.writer_dataset_index(path)
   let dataset = self.datasets[index]
-  let (chunk_dimensions, filters, unlimited_axis) = match dataset.storage {
-    WritableExtensible(chunks, pipeline, axis) => (chunks, pipeline, axis)
+  let (chunk_dimensions, filters, unlimited_axes) = match dataset.storage {
+    WritableExtensible(chunks, pipeline, axes) => (chunks, pipeline, axes)
     _ => raise InvalidArgument("only extensible datasets can be resized")
   }
   guard dimensions.length() == dataset.dimensions.length() else {
@@ -2240,7 +2237,7 @@ pub fn Hdf5Writer::resize_dataset(
   }
   let grid_dimensions = dimensions.copy()
   for axis in 0..<grid_dimensions.length() {
-    if axis != unlimited_axis {
+    if !unlimited_axes.contains(axis) {
       grid_dimensions[axis] = dataset.maximum_dimensions[axis]
     }
   }
@@ -2262,7 +2259,7 @@ pub fn Hdf5Writer::resize_dataset(
     dimensions: dimensions.copy(),
     maximum_dimensions: dataset.maximum_dimensions,
     values,
-    storage: WritableExtensible(chunk_dimensions, filters, unlimited_axis),
+    storage: WritableExtensible(chunk_dimensions, filters, unlimited_axes),
     fill_value: dataset.fill_value,
     chunk_filter_masks: dataset.chunk_filter_masks,
   }
@@ -2420,10 +2417,16 @@ pub fn Hdf5Writer::append_dataset(
 ) -> Unit raise Hdf5Error {
   let index = self.writer_dataset_index(path)
   let dataset = self.datasets[index]
-  let unlimited_axis = match dataset.storage {
-    WritableExtensible(_, _, axis) => axis
+  let unlimited_axes = match dataset.storage {
+    WritableExtensible(_, _, axes) => axes
     _ => raise InvalidArgument("only extensible datasets can be appended")
   }
+  guard unlimited_axes.length() == 1 else {
+    raise InvalidArgument(
+      "append_dataset requires one unlimited dimension; use resize_dataset for multiple unlimited dimensions",
+    )
+  }
+  let unlimited_axis = unlimited_axes[0]
   guard dimensions.length() == dataset.dimensions.length() else {
     raise InvalidArgument("appended dataset rank does not match")
   }
@@ -3245,6 +3248,7 @@ fn encode_chunked_layout(
   chunk_dimensions : Array[UInt32],
   element_size : Int32,
   extensible~ : Bool = false,
+  btree_v2~ : Bool = false,
 ) -> Bytes {
   let mut largest = element_size.to_uint64()
   for dimension in chunk_dimensions {
@@ -3278,14 +3282,20 @@ fn encode_chunked_layout(
       ((element_size.to_uint64() >> (shift * 8)) & 0xFFUL).to_byte(),
     )
   }
-  buffer.write_byte(if extensible { b'\x04' } else { b'\x03' })
-  if extensible {
+  if btree_v2 {
+    buffer.write_byte(b'\x05')
+    buffer.write_uint_le(writer_btree_v2_node_size.reinterpret_as_uint())
+    buffer.write_byte(writer_btree_v2_split_percent.to_byte())
+    buffer.write_byte(writer_btree_v2_merge_percent.to_byte())
+  } else if extensible {
+    buffer.write_byte(b'\x04')
     buffer.write_byte(b'\x20')
     buffer.write_byte(b'\x04')
     buffer.write_byte(b'\x04')
     buffer.write_byte(b'\x10')
     buffer.write_byte(b'\x0a')
   } else {
+    buffer.write_byte(b'\x03')
     buffer.write_byte(b'\x0a')
   }
   buffer.write_uint64_le(address)
@@ -3990,12 +4000,21 @@ fn encode_dataset_chunks(
       }
       (dimensions, filters, order, dataset.dimensions)
     }
-    WritableExtensible(dimensions, filters, unlimited_axis) => {
-      let order = [unlimited_axis]
+    WritableExtensible(dimensions, filters, unlimited_axes) => {
+      let order : Array[Int32] = []
       let grid_dimensions = dataset.dimensions.copy()
-      for axis in 0..<dimensions.length() {
-        if axis != unlimited_axis {
+      if unlimited_axes.length() == 1 {
+        order.push(unlimited_axes[0])
+      } else {
+        for axis in 0..<dimensions.length() {
           order.push(axis)
+        }
+      }
+      for axis in 0..<dimensions.length() {
+        if !unlimited_axes.contains(axis) {
+          if unlimited_axes.length() == 1 {
+            order.push(axis)
+          }
           grid_dimensions[axis] = dataset.maximum_dimensions[axis]
         }
       }
@@ -4359,9 +4378,14 @@ fn encode_extensible_array_storage(
   heap : WritableGlobalHeap,
   objects : Array[WritableObject],
 ) -> Bytes raise Hdf5Error {
-  let (_, filters, _) = match dataset.storage {
-    WritableExtensible(dimensions, filters, axis) => (dimensions, filters, axis)
+  let (_, filters, unlimited_axes) = match dataset.storage {
+    WritableExtensible(dimensions, filters, axes) => (dimensions, filters, axes)
     _ => raise InvalidField("expected extensible writer dataset")
+  }
+  guard unlimited_axes.length() == 1 else {
+    raise InvalidField(
+      "extensible-array storage requires one unlimited dimension",
+    )
   }
   let entries = encode_dataset_chunks(dataset, heap, objects)
   let filtered = filters.length() > 0
@@ -4652,6 +4676,473 @@ fn encode_extensible_array_storage(
     }
   }
   writer_write_zeros(output, chunk_address - start.to_int() - output.length())
+  output.to_bytes()
+}
+
+///|
+let writer_btree_v2_node_size : Int32 = 2048
+
+///|
+let writer_btree_v2_split_percent : Int32 = 100
+
+///|
+let writer_btree_v2_merge_percent : Int32 = 40
+
+///|
+priv struct WriterBTreeV2Node {
+  depth : Int32
+  records : Array[Bytes]
+  children : Array[Int32]
+  total : UInt64
+  mut address : UInt64
+}
+
+///|
+fn writer_write_uint_width(
+  buffer : @buffer.Buffer,
+  value : UInt64,
+  width : Int32,
+) -> Unit {
+  for shift in 0..<width {
+    buffer.write_byte(((value >> (shift * 8)) & 0xFFUL).to_byte())
+  }
+}
+
+///|
+fn writer_btree_capacities(
+  node_size : Int32,
+  record_size : Int32,
+  offset_size : Int32,
+) -> (Array[Int32], Array[Int32], Int32) raise Hdf5Error {
+  let leaf_capacity = (node_size - 10) / record_size
+  guard leaf_capacity > 0 && leaf_capacity <= 65535 else {
+    raise InvalidArgument("writer v2 B-tree record is too large")
+  }
+  let count_width = btree_integer_width(leaf_capacity.to_uint64())
+  let capacities : Array[Int32] = [leaf_capacity]
+  let total_widths : Array[Int32] = [0]
+  let mut cumulative = leaf_capacity.to_uint64()
+  for level in 1..<32 {
+    let pointer_size = offset_size + count_width + total_widths[level - 1]
+    let capacity = (node_size - 10 - pointer_size) /
+      (record_size + pointer_size)
+    if capacity <= 0 {
+      break
+    }
+    if cumulative >
+      (0xFFFFFFFFFFFFFFFFUL - capacity.to_uint64()) / (capacity + 1).to_uint64() {
+      break
+    }
+    cumulative = cumulative * (capacity + 1).to_uint64() + capacity.to_uint64()
+    capacities.push(capacity)
+    total_widths.push(btree_integer_width(cumulative))
+  }
+  (capacities, total_widths, count_width)
+}
+
+///|
+fn writer_btree_max_records(
+  depth : Int32,
+  capacities : Array[Int32],
+) -> UInt64 raise Hdf5Error {
+  guard depth >= 0 && depth < capacities.length() else {
+    raise InvalidArgument("writer v2 B-tree depth is too large")
+  }
+  let mut maximum = capacities[0].to_uint64()
+  for level in 1..<=depth {
+    let capacity = capacities[level].to_uint64()
+    guard maximum <= (0xFFFFFFFFFFFFFFFFUL - capacity) / (capacity + 1UL) else {
+      raise InvalidArgument("writer v2 B-tree is too large")
+    }
+    maximum = maximum * (capacity + 1UL) + capacity
+  }
+  maximum
+}
+
+///|
+fn writer_btree_depth(
+  count : UInt64,
+  capacities : Array[Int32],
+) -> Int32 raise Hdf5Error {
+  guard count > 0UL else { return 0 }
+  for depth in 0..<capacities.length() {
+    if count <= writer_btree_max_records(depth, capacities) {
+      return depth
+    }
+  }
+  raise InvalidArgument("writer v2 B-tree needs too many levels")
+}
+
+///|
+fn writer_btree_slice(
+  records : Array[Bytes],
+  start : Int32,
+  end : Int32,
+) -> Array[Bytes] {
+  let result : Array[Bytes] = []
+  for index in start..<end {
+    result.push(records[index])
+  }
+  result
+}
+
+///|
+fn writer_btree_build_node(
+  records : Array[Bytes],
+  depth : Int32,
+  capacities : Array[Int32],
+  nodes : Array[WriterBTreeV2Node],
+) -> Int32 raise Hdf5Error {
+  if depth == 0 {
+    guard records.length() <= capacities[0] else {
+      raise InvalidArgument("writer v2 B-tree leaf is too large")
+    }
+    let index = nodes.length()
+    nodes.push({
+      depth: 0,
+      records,
+      children: [],
+      total: records.length().to_uint64(),
+      address: 0UL,
+    })
+    return index
+  }
+  let capacity = capacities[depth]
+  let child_maximum = writer_btree_max_records(depth - 1, capacities)
+  let minimum_child_size = if depth - 1 == 0 { 1 } else { 2 }
+  let count = records.length().to_int64()
+  let mut group_count = 0
+  for offset in 0..<capacity {
+    let groups = offset + 2
+    let minimum_total = minimum_child_size.to_int64() * groups.to_int64()
+    let maximum_total = (groups - 1).to_int64() *
+      (child_maximum.reinterpret_as_int64() + 1L) +
+      child_maximum.reinterpret_as_int64()
+    if count >= minimum_total && count <= maximum_total {
+      group_count = groups
+      break
+    }
+  }
+  guard group_count > 0 else {
+    raise InvalidArgument("writer v2 B-tree node cannot be balanced")
+  }
+  let sizes : Array[Int32] = Array::make(group_count, minimum_child_size)
+  let remaining = records.length() - minimum_child_size * group_count
+  let extra_each = remaining / group_count
+  let extra_remainder = remaining % group_count
+  for group in 0..<group_count {
+    sizes[group] = sizes[group] + extra_each
+    if group < extra_remainder {
+      sizes[group] = sizes[group] + 1
+    }
+  }
+  let separators : Array[Bytes] = []
+  let children : Array[Int32] = []
+  let mut cursor = 0
+  let mut total = 0UL
+  for group in 0..<group_count {
+    let start = cursor
+    let end = start + sizes[group]
+    guard end <= records.length() else {
+      raise InvalidArgument("writer v2 B-tree group exceeds its records")
+    }
+    let child_end = if group < group_count - 1 { end - 1 } else { end }
+    let child_records = writer_btree_slice(records, start, child_end)
+    let child = writer_btree_build_node(
+      child_records,
+      depth - 1,
+      capacities,
+      nodes,
+    )
+    children.push(child)
+    total = total + nodes[child].total
+    if group < group_count - 1 {
+      separators.push(records[end - 1])
+      total = total + 1UL
+    }
+    cursor = end
+  }
+  guard cursor == records.length() else {
+    raise InvalidArgument("writer v2 B-tree consumed the wrong record count")
+  }
+  let index = nodes.length()
+  nodes.push({ depth, records: separators, children, total, address: 0UL, })
+  index
+}
+
+///|
+fn writer_btree_record(
+  entry : EncodedChunkEntry,
+  coordinates : Array[UInt64],
+  filtered : Bool,
+  size_width : Int32,
+) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(
+    size_hint=8 +
+      (if filtered { size_width + 4 } else { 0 }) +
+      8 * coordinates.length(),
+  )
+  buffer.write_uint64_le(entry.address)
+  if filtered {
+    writer_write_uint_width(buffer, entry.data.length().to_uint64(), size_width)
+    writer_write_uint_width(buffer, entry.filter_mask.to_uint64(), 4)
+  }
+  for coordinate in coordinates {
+    buffer.write_uint64_le(coordinate)
+  }
+  buffer.to_bytes()
+}
+
+///|
+fn writer_btree_coordinates(
+  index : Int32,
+  grid : Array[Int32],
+) -> Array[UInt64] {
+  let coordinates = Array::make(grid.length(), 0UL)
+  let mut remaining = index
+  let mut axis = grid.length()
+  while axis > 0 {
+    axis = axis - 1
+    let width = grid[axis]
+    coordinates[axis] = (remaining % width).to_uint64()
+    remaining = remaining / width
+  }
+  coordinates
+}
+
+///|
+fn encode_writer_btree_header(
+  root : UInt64,
+  root_count : Int32,
+  depth : Int32,
+  total : UInt64,
+  node_size : Int32,
+  record_size : Int32,
+  client : Int32,
+) -> Bytes {
+  let buffer = @buffer.Buffer::Buffer(size_hint=38)
+  writer_write_bytes(buffer, b"BTHD")
+  buffer.write_byte(b'\x00')
+  buffer.write_byte(client.to_byte())
+  buffer.write_uint_le(node_size.reinterpret_as_uint())
+  buffer.write_uint16_le(record_size.to_uint16())
+  buffer.write_uint16_le(depth.to_uint16())
+  buffer.write_byte(writer_btree_v2_split_percent.to_byte())
+  buffer.write_byte(writer_btree_v2_merge_percent.to_byte())
+  buffer.write_uint64_le(root)
+  buffer.write_uint16_le(root_count.to_uint16())
+  buffer.write_uint64_le(total)
+  buffer.write_uint_le(metadata_checksum(buffer.to_bytes(), 0, buffer.length()))
+  buffer.to_bytes()
+}
+
+///|
+fn encode_writer_btree_node(
+  node : WriterBTreeV2Node,
+  nodes : Array[WriterBTreeV2Node],
+  node_size : Int32,
+  record_size : Int32,
+  count_width : Int32,
+  total_widths : Array[Int32],
+  client : Int32,
+) -> Bytes raise Hdf5Error {
+  let buffer = @buffer.Buffer::Buffer(size_hint=node_size)
+  writer_write_bytes(buffer, if node.depth == 0 { b"BTLF" } else { b"BTIN" })
+  buffer.write_byte(b'\x00')
+  buffer.write_byte(client.to_byte())
+  for record in node.records {
+    guard record.length() == record_size else {
+      raise InvalidField("writer v2 B-tree record size changed")
+    }
+    writer_write_bytes(buffer, record)
+  }
+  if node.depth > 0 {
+    for child_index in node.children {
+      let child = nodes[child_index]
+      buffer.write_uint64_le(child.address)
+      writer_write_uint_width(
+        buffer,
+        child.records.length().to_uint64(),
+        count_width,
+      )
+      if node.depth > 1 {
+        writer_write_uint_width(
+          buffer,
+          child.total,
+          total_widths[node.depth - 1],
+        )
+      }
+    }
+  }
+  guard buffer.length() + 4 <= node_size else {
+    raise InvalidArgument("writer v2 B-tree node exceeds its configured size")
+  }
+  buffer.write_uint_le(metadata_checksum(buffer.to_bytes(), 0, buffer.length()))
+  writer_write_zeros(buffer, node_size - buffer.length())
+  buffer.to_bytes()
+}
+
+///|
+fn encode_btree_v2_chunk_storage(
+  start : UInt64,
+  dataset : WritableDataset,
+  heap : WritableGlobalHeap,
+  objects : Array[WritableObject],
+) -> Bytes raise Hdf5Error {
+  let (chunk_dimensions, filters, unlimited_axes) = match dataset.storage {
+    WritableExtensible(chunks, pipeline, axes) => (chunks, pipeline, axes)
+    _ => raise InvalidField("expected extensible writer dataset")
+  }
+  guard unlimited_axes.length() > 1 else {
+    raise InvalidField(
+      "v2 B-tree storage requires multiple unlimited dimensions",
+    )
+  }
+  let entries = encode_dataset_chunks(dataset, heap, objects)
+  let grid_dimensions = dataset.dimensions.copy()
+  for axis in 0..<grid_dimensions.length() {
+    if !unlimited_axes.contains(axis) {
+      grid_dimensions[axis] = dataset.maximum_dimensions[axis]
+    }
+  }
+  let (grid, _) = chunk_grid(grid_dimensions, chunk_dimensions)
+  let filtered = filters.length() > 0
+  let chunk_size = writer_chunk_element_count(chunk_dimensions) *
+    writer_value_element_size(dataset.values)
+  let mut maximum_stored = 0
+  for entry in entries {
+    if entry.allocated && entry.data.length() > maximum_stored {
+      maximum_stored = entry.data.length()
+    }
+  }
+  let size_width = if filtered {
+    let largest = if maximum_stored > chunk_size {
+      maximum_stored
+    } else {
+      chunk_size
+    }
+    let width = btree_integer_width(largest.to_uint64()) + 1
+    if width > 8 {
+      8
+    } else {
+      width
+    }
+  } else {
+    0
+  }
+  let record_size = 8 +
+    (if filtered { size_width + 4 } else { 0 }) +
+    8 * dataset.dimensions.length()
+  let (capacities, total_widths, count_width) = writer_btree_capacities(
+    writer_btree_v2_node_size, record_size, 8,
+  )
+  let indices : Array[Int32] = []
+  let coordinates : Array[Array[UInt64]] = []
+  let placeholder : Array[Bytes] = []
+  for index in 0..<entries.length() {
+    if entries[index].allocated {
+      let coordinate = writer_btree_coordinates(index, grid)
+      indices.push(index)
+      coordinates.push(coordinate)
+      placeholder.push(
+        writer_btree_record(entries[index], coordinate, filtered, size_width),
+      )
+    }
+  }
+  let header_length = 38
+  let node_count = if placeholder.length() == 0 {
+    0
+  } else {
+    let draft : Array[WriterBTreeV2Node] = []
+    let depth = writer_btree_depth(placeholder.length().to_uint64(), capacities)
+    writer_btree_build_node(placeholder, depth, capacities, draft) |> ignore
+    draft.length()
+  }
+  let node_start = writer_align(header_length)
+  let data_start = writer_align(
+    node_start + node_count * writer_btree_v2_node_size,
+  )
+  let updated = entries.copy()
+  let mut address = start + data_start.to_uint64()
+  for index in indices {
+    updated[index] = {
+      allocated: true,
+      data: entries[index].data,
+      address,
+      filter_mask: entries[index].filter_mask,
+    }
+    address = writer_align(address.to_int() + entries[index].data.length()).to_uint64()
+  }
+  let records : Array[Bytes] = []
+  for entry_index in 0..<indices.length() {
+    records.push(
+      writer_btree_record(
+        updated[indices[entry_index]],
+        coordinates[entry_index],
+        filtered,
+        size_width,
+      ),
+    )
+  }
+  let nodes : Array[WriterBTreeV2Node] = []
+  let mut root = -1
+  let mut depth = 0
+  if records.length() > 0 {
+    depth = writer_btree_depth(records.length().to_uint64(), capacities)
+    root = writer_btree_build_node(records, depth, capacities, nodes)
+    guard nodes.length() == node_count else {
+      raise InvalidField("writer v2 B-tree shape changed during encoding")
+    }
+    for index in 0..<nodes.length() {
+      nodes[index].address = start +
+        node_start.to_uint64() +
+        writer_btree_v2_node_size.to_uint64() * index.to_uint64()
+    }
+  }
+  let client = if filtered { 11 } else { 10 }
+  let root_address = if root >= 0 {
+    nodes[root].address
+  } else {
+    0xFFFFFFFFFFFFFFFFUL
+  }
+  let root_count = if root >= 0 { nodes[root].records.length() } else { 0 }
+  let header = encode_writer_btree_header(
+    root_address,
+    root_count,
+    depth,
+    records.length().to_uint64(),
+    writer_btree_v2_node_size,
+    record_size,
+    client,
+  )
+  let total_chunks = address.to_int() - start.to_int()
+  let output = @buffer.Buffer::Buffer(size_hint=total_chunks)
+  writer_write_bytes(output, header)
+  writer_write_zeros(output, node_start - output.length())
+  for index in 0..<nodes.length() {
+    let relative = nodes[index].address.to_int() - start.to_int()
+    writer_write_zeros(output, relative - output.length())
+    writer_write_bytes(
+      output,
+      encode_writer_btree_node(
+        nodes[index],
+        nodes,
+        writer_btree_v2_node_size,
+        record_size,
+        count_width,
+        total_widths,
+        client,
+      ),
+    )
+  }
+  for index in indices {
+    if updated[index].allocated {
+      let relative = updated[index].address.to_int() - start.to_int()
+      writer_write_zeros(output, relative - output.length())
+      writer_write_bytes(output, updated[index].data)
+    }
+  }
+  writer_write_zeros(output, total_chunks - output.length())
   output.to_bytes()
 }
 
@@ -6176,7 +6667,7 @@ fn Hdf5Writer::object_payload(
             ),
           )
         }
-        WritableExtensible(chunk_dimensions, filters, _) => {
+        WritableExtensible(chunk_dimensions, filters, unlimited_axes) => {
           if filters.length() > 0 {
             write_header_message(
               buffer,
@@ -6197,7 +6688,8 @@ fn Hdf5Writer::object_payload(
               object.raw_address,
               chunk_dimensions,
               encoded.element_size,
-              extensible=true,
+              extensible=unlimited_axes.length() == 1,
+              btree_v2=unlimited_axes.length() > 1,
             ),
           )
         }
@@ -6780,16 +7272,24 @@ fn assign_writable_addresses(
                   objects,
                 ).length(),
               )
-            WritableExtensible(_, _, _) =>
-              writer_align(
-                offset +
+            WritableExtensible(_, _, unlimited_axes) => {
+              let payload_length = if unlimited_axes.length() == 1 {
                 encode_extensible_array_storage(
                   offset.to_uint64(),
                   dataset,
                   heap,
                   objects,
-                ).length(),
-              )
+                ).length()
+              } else {
+                encode_btree_v2_chunk_storage(
+                  offset.to_uint64(),
+                  dataset,
+                  heap,
+                  objects,
+                ).length()
+              }
+              writer_align(offset + payload_length)
+            }
             WritableExternal(_) => offset
           }
         }
@@ -7010,13 +7510,22 @@ pub fn Hdf5Writer::encode(self : Hdf5Writer) -> Bytes raise Hdf5Error {
               layout.heap,
               objects,
             )
-          WritableExtensible(_, _, _) =>
-            encode_extensible_array_storage(
-              object.raw_address,
-              dataset,
-              layout.heap,
-              objects,
-            )
+          WritableExtensible(_, _, unlimited_axes) =>
+            if unlimited_axes.length() == 1 {
+              encode_extensible_array_storage(
+                object.raw_address,
+                dataset,
+                layout.heap,
+                objects,
+              )
+            } else {
+              encode_btree_v2_chunk_storage(
+                object.raw_address,
+                dataset,
+                layout.heap,
+                objects,
+              )
+            }
           WritableExternal(_) => b""
         }
         if payload.length() > 0 {

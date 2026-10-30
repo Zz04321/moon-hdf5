@@ -75,9 +75,12 @@ blocks and a free-space manager are not emitted.
 
 Finite chunked datasets use fixed-array indexes; one unlimited dimension uses
 extensible-array indexes, including inline entries, direct/super blocks and paged
-data blocks. Fill-only chunks keep undefined addresses, except that variable-length
-datasets allocate in-shape chunks so empty strings do not depend on undefined
-vlen fill storage.
+data blocks. Multiple unlimited dimensions use bulk-built v2 B-tree chunk indexes
+with client type 10/11 records, including internal nodes. `append_dataset` is
+limited to one unlimited dimension; multi-unlimited growth uses
+`resize_dataset`. Fill-only chunks keep undefined addresses, except that
+variable-length datasets allocate in-shape chunks so empty strings do not depend
+on undefined vlen fill storage.
 
 Integer and floating-point scale-offset, filter masks and fixed-size filter
 pipelines are encoded in the index. Variable-length datasets reject filters,
@@ -115,6 +118,8 @@ heaps and heap extension across multiple blocks are not emitted.
 - External raw data requires caller registration and caller-managed files.
 - Dense and SOHM output use compact single-block writer forms; larger producer
   structures are reader-side features unless explicitly listed as writer output.
+- V2 B-tree output is bulk-built for a completed in-memory shape; incremental
+  insertion and `append_dataset` for multiple unlimited axes are not exposed.
 - Version-4 encoded references and high-level netCDF-4/MATLAB semantics remain
   outside the profile.
 
@@ -131,3 +136,5 @@ heaps and heap extension across multiple blocks are not emitted.
 - 2026-10-29: structured references, region references, chunk masks, external
   slots, creation order, complex values, large dense objects, SOHM output,
   fill/attribute deduplication and committed datatypes.
+- 2026-10-30: multi-unlimited writer storage with v2 B-tree chunk indexes,
+  filtered records and internal-node coverage.

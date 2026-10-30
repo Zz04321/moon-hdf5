@@ -64,14 +64,14 @@ h5py 3.13.0/HDF5 1.14.6.
 | Framing | Superblock v3 and v2 object headers with OCHK continuations | Older output formats are not selected |
 | Groups and attributes | Compact/dense collections, creation order, continued headers, inline/dense attributes | Dense limits below |
 | Dense metadata | 9–65,535 records with encoded objects up to 65,535 bytes; FRHP/FHDB, BTHD/BTLF and type 6/9 indexes; optional one SOHM table/heap | One direct block and leaf per index; no huge/indirect blocks or free-space manager; larger compact sets use OCHK |
-| Datasets | Contiguous, external raw data, paged fixed-array and extensible-array chunks | No virtual storage; external storage is unfiltered fixed-size only |
+| Datasets | Contiguous, external raw data, paged fixed-array, extensible-array and v2 B-tree chunks | No virtual storage; external storage is unfiltered fixed-size only |
 | Numeric values | int/uint 1–8 bytes and IEEE float32/64 in either byte order | Nonstandard floating-point output is absent |
 | Strings and structures | Fixed/vlen UTF-8; compound, enum, array, time, bitfield, opaque, references, complex and sequences | Complex output is little-endian canonical `r`/`i`; sequence bases are fixed-size and cannot contain region references |
 | References | Legacy 8-byte objects and 12-byte regions in datasets, attributes, compounds and arrays | Same-file targets only; version-4 references and regions inside sequences are absent |
 | Filters | Shuffle, deflate, Fletcher32, integer and f32/f64 decimal scale-offset, per-chunk masks | Fixed-size values only; scale-offset must lead; floating scale-offset cannot use Fletcher32 |
 | Fills | Default, fixed-size/structured and vlen-string fills; optional SOHM | Sequence fills are rejected |
 | Shared messages | One SOHM table/heap for whole attributes and fills; equal attributes reuse one message; committed datatypes use wrapper v3 type 2 | Multiple SOHM tables/heaps are not written |
-| Extension | One unlimited axis with in-memory resize/append | Existing files are not edited in place |
+| Extension | One or more unlimited axes with in-memory resize; append for one unlimited axis | Multiple unlimited axes use a v2 B-tree and require `resize_dataset`; existing files are not edited in place |
 
 ## Reproduce
 

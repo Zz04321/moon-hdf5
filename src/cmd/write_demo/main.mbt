@@ -146,6 +146,37 @@ fn run(args : Array[String]) -> Int32 {
       Int64Values([30L, 31L]),
     )
     writer.resize_dataset("/experiment/series", [4UL, 2UL])
+    writer.add_extensible_dataset(
+      "/experiment/multi_growth",
+      [2UL, 2UL],
+      [None, None],
+      [1U, 2U],
+      Int64Values([1L, 2L, 3L, 4L]),
+      fill_value=Int64Values([-1L]),
+    )
+    writer.resize_dataset("/experiment/multi_growth", [3UL, 3UL])
+    writer.add_extensible_dataset(
+      "/experiment/multi_filtered",
+      [2UL, 2UL],
+      [None, None],
+      [1U, 2U],
+      Int64Values([11L, 12L, 21L, 22L]),
+      fill_value=Int64Values([0L]),
+      filters=[Shuffle, Deflate(6), Fletcher32],
+    )
+    writer.resize_dataset("/experiment/multi_filtered", [4UL, 3UL])
+    let deep = Array::make(256, 0L)
+    for index in 0..<deep.length() {
+      deep[index] = (index + 1).to_int64()
+    }
+    writer.add_extensible_dataset(
+      "/experiment/multi_deep",
+      [16UL, 16UL],
+      [None, None],
+      [1U, 1U],
+      Int64Values(deep),
+      fill_value=Int64Values([-1L]),
+    )
     let paged = Array::make(134200, 0U)
     paged[0] = 1U
     paged[243] = 2U

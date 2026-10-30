@@ -31,6 +31,18 @@ def write_external_slots(paths: list[Path]) -> None:
     paths[1].write_bytes(second)
 
 
+def layout_index_type(data: bytes, dataset) -> int:
+    address = h5py.h5o.get_info(dataset.id).addr
+    layout = next(
+        payload
+        for message_type, _, payload in object_header_messages(data, address)
+        if message_type == 0x08
+    )
+    rank_plus_one = layout[3]
+    width = layout[4]
+    return layout[5 + rank_plus_one * width]
+
+
 def verify(path: Path) -> None:
     path = path.resolve()
     external_paths = external_slot_paths(path)
@@ -71,6 +83,9 @@ def verify_file(path: Path) -> None:
             "labels",
             "latest",
             "metrics",
+            "multi_deep",
+            "multi_filtered",
+            "multi_growth",
             "names",
             "paged_series",
             "reference_target",
@@ -200,6 +215,36 @@ def verify_file(path: Path) -> None:
         assert series.compression == "gzip"
         assert series.compression_opts == 6
         assert series.fletcher32
+        multi_growth = handle["experiment/multi_growth"]
+        np.testing.assert_array_equal(
+            multi_growth[:], [[1, 2, -1], [3, 4, -1], [-1, -1, -1]]
+        )
+        assert multi_growth.maxshape == (None, None)
+        assert multi_growth.chunks == (1, 2)
+        assert multi_growth.fillvalue == -1
+        assert multi_growth.id.get_num_chunks() == 2
+        assert layout_index_type(data, multi_growth) == 5
+        multi_filtered = handle["experiment/multi_filtered"]
+        np.testing.assert_array_equal(
+            multi_filtered[:],
+            [[11, 12, 0], [21, 22, 0], [0, 0, 0], [0, 0, 0]],
+        )
+        assert multi_filtered.maxshape == (None, None)
+        assert multi_filtered.chunks == (1, 2)
+        assert multi_filtered.fillvalue == 0
+        assert multi_filtered.shuffle
+        assert multi_filtered.compression == "gzip"
+        assert multi_filtered.fletcher32
+        assert multi_filtered.id.get_num_chunks() == 2
+        assert layout_index_type(data, multi_filtered) == 5
+        multi_deep = handle["experiment/multi_deep"]
+        np.testing.assert_array_equal(
+            multi_deep[:], np.arange(1, 257, dtype="<i8").reshape(16, 16)
+        )
+        assert multi_deep.maxshape == (None, None)
+        assert multi_deep.chunks == (1, 1)
+        assert multi_deep.id.get_num_chunks() == 256
+        assert layout_index_type(data, multi_deep) == 5
         names = handle["experiment/names"]
         assert h5py.check_string_dtype(names.dtype).encoding == "utf-8"
         assert names.asstr()[:].tolist() == ["月亮", "HDF5", "", "月亮"]

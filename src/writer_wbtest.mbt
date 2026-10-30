@@ -2537,6 +2537,76 @@ test "writer appends resizes and fills extensible datasets" {
 }
 
 ///|
+test "writer grows multiple unlimited dimensions through a v2 b-tree" {
+  let writer = Hdf5Writer::new()
+  writer.add_extensible_dataset(
+    "/multi",
+    [2UL, 2UL],
+    [None, None],
+    [1U, 2U],
+    Int64Values([1L, 2L, 3L, 4L]),
+    fill_value=Int64Values([-1L]),
+  )
+  writer.resize_dataset("/multi", [3UL, 3UL])
+  let encoded = writer.encode()
+  let dataset = Hdf5File::parse(encoded).read_dataset("/multi")
+  assert_eq(dataset.dataspace.dimensions, [3UL, 3UL])
+  assert_eq(dataset.dataspace.maximum_dimensions, [
+    0xFFFFFFFFFFFFFFFFUL, 0xFFFFFFFFFFFFFFFFUL,
+  ])
+  assert_true(dataset.layout.chunk_index is BTreeV2(_))
+  assert_eq(integer_values(dataset), [1L, 2L, -1L, 3L, 4L, -1L, -1L, -1L, -1L])
+}
+
+///|
+test "writer filters multiple unlimited dimensions through a v2 b-tree" {
+  let writer = Hdf5Writer::new()
+  writer.add_extensible_dataset(
+    "/filtered_multi",
+    [2UL, 2UL],
+    [None, None],
+    [1U, 2U],
+    UInt64Values([1UL, 2UL, 3UL, 4UL]),
+    fill_value=UInt64Values([0UL]),
+    filters=[Shuffle, Deflate(6), Fletcher32],
+  )
+  writer.resize_dataset("/filtered_multi", [4UL, 3UL])
+  let dataset = Hdf5File::parse(writer.encode()).read_dataset("/filtered_multi")
+  assert_true(dataset.layout.chunk_index is BTreeV2(_))
+  assert_eq(unsigned_values(dataset), [
+    1UL, 2UL, 0UL, 3UL, 4UL, 0UL, 0UL, 0UL, 0UL, 0UL, 0UL, 0UL,
+  ])
+}
+
+///|
+test "writer v2 b-tree chunk storage handles internal nodes" {
+  let values : Array[Int64] = []
+  for index in 0..<256 {
+    values.push((index + 1).to_int64())
+  }
+  let writer = Hdf5Writer::new()
+  writer.add_extensible_dataset(
+    "/deep_multi",
+    [16UL, 16UL],
+    [None, None],
+    [1U, 1U],
+    Int64Values(values),
+    fill_value=Int64Values([-1L]),
+  )
+  let encoded = writer.encode()
+  let dataset = Hdf5File::parse(encoded).read_dataset("/deep_multi")
+  assert_true(dataset.layout.chunk_index is BTreeV2(_))
+  let selected = Hdf5File::parse(encoded).read_dataset_selection(
+    "/deep_multi",
+    Points([[15UL, 15UL], [8UL, 8UL], [1UL, 0UL], [0UL, 1UL]]),
+  )
+  match selected.values {
+    Integers(items) => assert_eq(items, [256L, 137L, 17L, 2L])
+    _ => fail("expected internal v2 B-tree node values")
+  }
+}
+
+///|
 test "writer extensible arrays use direct data blocks" {
   let values = Array::make(300, 0L)
   values[0] = 1L
@@ -2665,7 +2735,11 @@ test "writer validates extensible shapes and mutations" {
   }
   assert_eq(
     missing_unlimited,
-    Some(InvalidArgument("extensible dataset requires one unlimited dimension")),
+    Some(
+      InvalidArgument(
+        "extensible dataset requires at least one unlimited dimension",
+      ),
+    ),
   )
   let oversized_chunk = try {
     writer.add_extensible_dataset(
@@ -2706,6 +2780,27 @@ test "writer validates extensible shapes and mutations" {
   assert_eq(
     append_shape,
     Some(InvalidArgument("appended block must match fixed dataset dimensions")),
+  )
+  writer.add_extensible_dataset(
+    "/multi_append",
+    [1UL, 1UL],
+    [None, None],
+    [1U, 1U],
+    Int64Values([1L]),
+  )
+  let multi_append = try {
+    writer.append_dataset("/multi_append", [1UL, 1UL], Int64Values([2L]))
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(
+    multi_append,
+    Some(
+      InvalidArgument(
+        "append_dataset requires one unlimited dimension; use resize_dataset for multiple unlimited dimensions",
+      ),
+    ),
   )
 }
 

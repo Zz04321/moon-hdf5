@@ -33,8 +33,8 @@ moon-hdf5 implements a documented subset of HDF5. The
 - SOHM reading and optional writing: shared attributes, datatype/dataspace
   fields, fills and named committed datatypes.
 - New-file output for groups, datasets, attributes, links, committed datatypes,
-  filters, fills, references, contiguous external raw-data slots and one
-  unlimited dataset dimension.
+  filters, fills, references, contiguous external raw-data slots and one or more
+  unlimited dataset dimensions.
 
 ## Quick Start
 
@@ -158,8 +158,11 @@ let output = writer.encode()
 ```
 
 - `add_dataset` writes contiguous storage. `add_chunked_dataset`,
-  `add_extensible_dataset`, `resize_dataset` and `append_dataset` cover finite
-  and one-unlimited-dimension chunked storage.
+  `add_extensible_dataset` and `resize_dataset` cover finite and multi-unlimited
+  chunked storage. One unlimited dimension uses an extensible-array index;
+  multiple unlimited dimensions use a v2 B-tree. `append_dataset` appends along
+  a single unlimited dimension; use `resize_dataset` for multiple unlimited
+  dimensions.
 - `add_external_dataset` stores raw bytes in caller-managed external files. Slot
   sizes must match the dataset byte count; the writer does not create those
   files.
@@ -211,6 +214,8 @@ errors and 2 for invalid arguments.
   fills and region references inside sequences are rejected.
 - Reference support covers legacy object and dataset-region forms under 4- and
   8-byte addresses. Version-4 encoded references are unsupported.
+- `append_dataset` requires exactly one unlimited dimension. Multi-unlimited
+  datasets are resized with `resize_dataset`.
 
 Unsupported structures raise `UnsupportedFeature`; malformed input raises
 `InvalidField` or `UnexpectedEof`; invalid caller input raises

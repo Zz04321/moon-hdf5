@@ -108,17 +108,19 @@ use OCHK continuation when needed. Indirect/huge heap blocks and a free-space
 manager are not emitted.
 
 The writer supports contiguous datasets, contiguous external raw-data slots,
-finite chunked datasets with fixed-array indexes, and datasets with one unlimited
-dimension using extensible-array indexes. Large indexes use paged or super-block
-forms. Fill-only chunks keep undefined addresses except for variable-length
-datasets, which allocate in-shape chunks so empty strings do not depend on
-undefined vlen storage.
+finite chunked datasets with fixed-array indexes, one-unlimited-dimension
+datasets with extensible-array indexes, and multi-unlimited datasets with v2
+B-tree chunk indexes. Extensible arrays use inline, direct, super-block or paged
+forms. The v2 B-tree is bulk-built in row-major chunk order, with client type 10
+for unfiltered chunks and 11 for filtered chunks. Fill-only chunks keep undefined
+addresses except for variable-length datasets, which allocate in-shape chunks so
+empty strings do not depend on undefined vlen storage.
 
 Integer scale-offset supports automatic or fixed bit widths; floating-point
 scale-offset supports f32/f64 decimal digits. Scale-offset must lead the
 pipeline, and floating-point scale-offset cannot be combined with Fletcher32.
-`set_chunk_filter_mask` records per-chunk skips in the fixed-array or
-extensible-array index.
+`set_chunk_filter_mask` records per-chunk skips in the fixed-array,
+extensible-array or v2 B-tree index.
 
 Structured values use one recursive encoder. Validation covers nesting depth,
 member names and offsets, enum values, array dimensions, compound bounds and
