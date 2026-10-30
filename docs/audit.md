@@ -54,9 +54,10 @@ raw-data slots across file and element boundaries. `Hdf5File` intentionally does
 not dereference external targets or external raw data.
 
 Numeric storage wider than 8 bytes and binary-float normalizations other than
-implied MSB are rejected. Unsupported attribute datatypes may be reported without
-values. HDF5 2.0 datatype-message v5 is accepted as forward-compatibility
-evidence and is outside the 1.14.6 baseline.
+implied MSB are rejected. Attribute value decoding propagates unsupported
+datatype errors instead of reporting an empty value. HDF5 2.0 datatype-message
+v5 is accepted as forward-compatibility evidence and is outside the 1.14.6
+baseline.
 
 ## Writer findings
 

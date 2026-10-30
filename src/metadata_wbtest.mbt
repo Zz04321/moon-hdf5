@@ -87,6 +87,30 @@ test "invalid integer storage and bit layouts are rejected" {
 }
 
 ///|
+test "unsupported attribute datatypes are not reported as empty values" {
+  let name = b"x\x00"
+  let datatype = b"\x0c\x00\x00\x00\x04\x00\x00\x00"
+  let dataspace = b"\x01\x00\x00\x00\x00\x00\x00\x00"
+  let buffer = @buffer.Buffer::Buffer(size_hint=32)
+  buffer.write_byte(b'\x03')
+  buffer.write_byte(b'\x00')
+  buffer.write_uint16_le(name.length().to_uint16())
+  buffer.write_uint16_le(datatype.length().to_uint16())
+  buffer.write_uint16_le(dataspace.length().to_uint16())
+  buffer.write_byte(b'\x00')
+  buffer.write_bytes(name)
+  buffer.write_bytes(datatype)
+  buffer.write_bytes(dataspace)
+  let error = try {
+    parse_attribute_data(buffer.to_bytes(), b'\x00', b"", 8, 8, 0UL) |> ignore
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(error, Some(UnsupportedFeature("unknown datatype class")))
+}
+
+///|
 test "numeric datatype property truncation is rejected" {
   for
     data in [

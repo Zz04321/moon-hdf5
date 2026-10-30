@@ -109,10 +109,7 @@ fn parse_attribute_data(
       base_address,
       source~,
     ),
-  ) catch {
-    UnsupportedFeature(_) => None
-    error => raise error
-  }
+  )
   { name: decode_c_string(name_bytes), dataspace, datatype, values, }
 }
 
